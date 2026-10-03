@@ -95,6 +95,8 @@ let source = null
 const sources = []
 /** Flip to make the next /api/prompt answer 403 + needPin (elevation expired). */
 let promptNeedsPin = false
+/** Flip to make /api/answer report the question as already finished (409). */
+let answerExpired = false
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -125,7 +127,10 @@ function stubFetch(input, options = {}) {
 	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
 	requests.push({ url: full, path, options })
 	if (path.startsWith('/api/login')) return jsonResponse({ ok: true })
-	if (path.startsWith('/api/answer')) return jsonResponse({ ok: true })
+	if (path.startsWith('/api/answer')) {
+		if (answerExpired) return jsonResponse({ error: '这条提问已经失效（可能超时，或已在别处回答）' }, 409)
+		return jsonResponse({ ok: true })
+	}
 	if (path.startsWith('/api/bootstrap')) return jsonResponse({ sessions: SESSIONS, failure: null })
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	if (path.startsWith('/api/prompt')) {
@@ -584,6 +589,53 @@ check('第三张卡片出现', window.getComputedStyle($('ask')).display !== 'no
 source.emit({ t: 'interaction-end', id: 'ask-3' })
 await wait(70)
 check('interaction-end 撤掉卡片（超时或别人先答了）', window.getComputedStyle($('ask')).display === 'none')
+
+// 卡片必须挂在 main【外面】。放进 #view-task 里的话，用户切到「余额」就完全看不到
+// 提问 —— 而 agent 正在那儿等，只能干等到超时回到桌面。
+check('提问卡片不在 #view-task 里面（切页签也看得见）',
+	$('ask').closest('#view-task') === null && $('ask').parentElement?.id === 'app',
+	$('ask').parentElement?.id)
+
+// 重推同一个 id 必须保住草稿：重连、多开一条流，宿主都会重推；直接覆盖会把勾选清光。
+const QA = { questions: [{ id: 'q1', question: '再问一次', options: [{ label: '甲' }, { label: '乙' }] }] }
+source.emit({ t: 'interaction', kind: 'question', id: 'ask-4', payload: QA })
+await wait(80)
+click($('ask').querySelectorAll('.opt')[0])
+await wait(40)
+check('单选点击后选项高亮', $('ask').querySelectorAll('.opt')[0].classList.contains('on'))
+source.emit({ t: 'interaction', kind: 'question', id: 'ask-4', payload: QA })
+await wait(80)
+check('同一个 id 重推后勾选还在（草稿没被清掉）',
+	$('ask').querySelectorAll('.opt')[0].classList.contains('on'))
+
+// 单选下填自定义文字要清掉已选：服务端编码就是 custom 非空时丢弃 selected，
+// 界面不跟上就会"看着选中了，提交的却是另一回事"。
+const box4 = $('ask')
+const custom4 = box4.querySelector('.custom')
+custom4.value = '我自己写'
+custom4.dispatchEvent(new window.Event('input', { bubbles: true }))
+await wait(50)
+check('单选下填自定义会清掉已选（与官方语义一致）', box4.querySelectorAll('.opt.on').length === 0)
+
+// 反过来：点了选项要把自定义文字撤掉，否则 custom 非空让服务端丢掉 selected，
+// 用户会以为"点了没用"。
+click(box4.querySelectorAll('.opt')[1])
+await wait(50)
+check('单选下点选项会撤回自定义文字',
+	box4.querySelector('.custom').value === '' && box4.querySelectorAll('.opt.on').length === 1)
+source.emit({ t: 'interaction-end', id: 'ask-4' })
+await wait(60)
+
+// 提问在服务端已经结束（超时 / 已在别处回答）→ 卡片必须撤掉。
+// 不撤的话它会永远赖在屏幕上，用户点一次报一次错，还不知道该干什么。
+source.emit({ t: 'interaction', kind: 'approval', id: 'ask-6', payload: { toolName: 'read' } })
+await wait(80)
+answerExpired = true
+click($('ask').querySelector('.row button'))
+await wait(160)
+check('提问已结束时撤掉卡片，而不是永远报错',
+	window.getComputedStyle($('ask')).display === 'none')
+answerExpired = false
 
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build

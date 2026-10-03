@@ -512,6 +512,60 @@ async function readInteraction(reader) {
 	await reader.cancel().catch(() => {})
 }
 
+// 手机刷新 / 重连时，还没答的提问必须【补推】。提问只在发生时推一次的话，
+// 手机一刷新卡片就永远消失了，而宿主还挂在 waterfall 上等。
+{
+	const streamA = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
+	const readerA = streamA.body.getReader()
+
+	const pendingQ = askHandlers[0](
+		{ agent: { id: 'session-test' }, questions: [{ id: 'q9', question: '刷新后还看得到吗？' }] },
+		() => Promise.resolve({ answers: [] }),
+	)
+	const first = await readInteraction(readerA)
+	check('重推测试：第一次推送到达', first?.payload?.questions?.[0]?.id === 'q9',
+		JSON.stringify(first)?.slice(0, 120))
+
+	// 模拟"手机刷新"：开一条新流。
+	const streamB = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
+	const readerB = streamB.body.getReader()
+	const replay = await readInteraction(readerB)
+	check('新开的流会补推还没答的提问（手机刷新不丢卡片）',
+		replay?.id === first?.id && replay?.payload?.questions?.[0]?.id === 'q9',
+		JSON.stringify(replay)?.slice(0, 120))
+
+	// 收尾：答掉它，别让挂着的 waiter 影响后面的测试。
+	await fetch(`${base}/api/answer`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ id: first?.id, answers: [{ id: 'q9', selected: ['看得到'] }] }),
+	})
+	await pendingQ
+	await readerA.cancel().catch(() => {})
+	await readerB.cancel().catch(() => {})
+}
+
+// 请求被【取消】（agent 停了、会话结束）时不能去惊动桌面：那会弹出一个已经作废的
+// 批准框，用户点了也毫无意义。取消和超时必须分开处理。
+{
+	const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
+	const reader = stream.body.getReader()
+	const controller = new AbortController()
+	let delegated = false
+	const pending = approveHandlers[0](
+		{ agent: { id: 'session-test' }, toolName: 'pwsh', signal: controller.signal },
+		() => { delegated = true; return Promise.resolve('rejected') },
+	)
+	const frame = await readInteraction(reader)
+	check('取消测试：审批确实推到了手机', frame?.kind === 'approval', JSON.stringify(frame)?.slice(0, 100))
+	controller.abort()
+	const outcome = await pending
+	check('请求被取消时不去惊动桌面（不弹作废的批准框）', delegated === false)
+	check('取消时给出 cancelled 这个合法结果（调用方按不允许处理）',
+		outcome === 'cancelled', String(outcome))
+	await reader.cancel().catch(() => {})
+}
+
 /* --- surviving a restart ------------------------------------------------- */
 /*
  * Tokens used to live only in the bridge's memory, so every `dsh web` restart

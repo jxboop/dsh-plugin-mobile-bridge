@@ -275,7 +275,7 @@
 	}
 	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
 	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */
-	#ask { margin: 0 10px 8px; display: grid; gap: 8px; }
+	#ask { flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
 	.askcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
 	.askcard h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
 	.askcard .q { margin: 0 0 4px; font-size: 15px; }
@@ -316,7 +316,6 @@
 			<div class="sessionbar"><select id="session"></select></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
-			<div id="ask" data-display="grid" style="display:none"></div>
 			<div id="composer">
 				<div id="thumbs"></div>
 				<div id="compose">
@@ -371,6 +370,11 @@
 			</div>
 		</section>
 	</main>
+
+	<!-- 提问/审批卡片放在 main【外面】：它属于所有页签。
+	     放在 #view-task 里面时，用户切到「余额」就完全看不到提问 —— 而 agent
+	     正在那儿等着，只能干等到超时回到桌面。 -->
+	<div id="ask" data-display="grid" style="display:none"></div>
 
 	<nav id="tabs">
 		<button data-tab="task" class="active"><span class="glyph">💬</span>任务</button>
@@ -444,9 +448,16 @@
 	function show(node) { node.style.display = node.dataset.display || '' }
 	function hide(node) { node.style.display = 'none' }
 
+	/** 带上 HTTP 状态码的错误：调用方要据此分辨"网络抖了"和"这条已经作废"。 */
+	function apiError(status, message) {
+		const error = new Error(message)
+		error.status = status
+		return error
+	}
+
 	function api(path, options) {
 		return fetch(path, Object.assign({ credentials: 'same-origin' }, options)).then(async (response) => {
-			if (response.status === 401) { showGate(); throw new Error('unauthorized') }
+			if (response.status === 401) { showGate(); throw apiError(401, 'unauthorized') }
 			const body = await response.json().catch(() => ({}))
 			// 401 是"令牌无效"；403 + needPin 是"令牌有效，但这台机器要你重新证明是本人"
 			// —— 宿主重启后恢复的会话**故意**不带提权，读没问题，一动手就会被拒。
@@ -455,9 +466,9 @@
 			// 而 PIN 输入框根本不在屏幕上，用户只能靠点「退出」绕回门口。
 			if (response.status === 403 && body.needPin === true) {
 				showGate('登录已过期，请重新输入 PIN')
-				throw new Error(body.error || '需要重新输入 PIN')
+				throw apiError(403, body.error || '需要重新输入 PIN')
 			}
-			if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status))
+			if (!response.ok) throw apiError(response.status, body.error || ('HTTP ' + response.status))
 			return body
 		})
 	}
@@ -847,7 +858,17 @@
 			else if (payload.t === 'error') flash(payload.message)
 			else if (payload.t === 'end') setStatus('live')
 			else if (payload.t === 'interaction') {
-				state.asks.set(payload.id, { kind: payload.kind, payload: payload.payload, draft: {}, error: '' })
+				// 已经存在的卡片必须【保住草稿】。重连、或又开了一条流，宿主都会把
+				// 同一个 id 重推一次；直接覆盖会把用户勾到一半的选择清光 ——
+				// 而那句"草稿存在 state 上就不会丢"的注释正是为这个写的。
+				const existing = state.asks.get(payload.id)
+				const keepDraft = existing !== undefined && existing.kind === payload.kind
+				state.asks.set(payload.id, {
+					kind: payload.kind,
+					payload: payload.payload,
+					draft: keepDraft ? existing.draft : {},
+					error: '',
+				})
 				renderAsks()
 			} else if (payload.t === 'interaction-end') {
 				state.asks.delete(payload.id)
@@ -1181,8 +1202,15 @@
 			})
 			state.asks.delete(id)
 		} catch (error) {
-			const ask = state.asks.get(id)
-			if (ask !== undefined) ask.error = '提交失败：' + error.message
+			// 404/409 = 这条提问已经结束了（超时、或已在别处回答）。卡片必须撤掉：
+			// 否则它会永远赖在屏幕上，用户点一次报一次错，还不知道该干什么。
+			if (error.status === 404 || error.status === 409) {
+				state.asks.delete(id)
+				flash('这条提问已经结束了（超时，或已在别处回答）')
+			} else {
+				const ask = state.asks.get(id)
+				if (ask !== undefined) ask.error = '提交失败：' + error.message
+			}
 		}
 		renderAsks()
 	}
@@ -1231,36 +1259,52 @@
 			holder.card.appendChild(mk('p', 'q', String(question?.question ?? '')))
 			if (question?.detail) holder.card.appendChild(mk('div', 'qd', String(question.detail)))
 
+			const multi = question?.multiSelect === true
+			const optionButtons = []
+
+			// 先建输入框（要放在选项下面显示），再建选项 —— 两者的联动见下面。
+			const custom = mk('input', 'plain custom')
+			custom.type = 'text'
+			custom.placeholder = (Array.isArray(question?.options) && question.options.length > 0) ? '或自己写一个答案' : '写你的答案'
+			custom.value = draft.custom
+			custom.addEventListener('input', () => {
+				draft.custom = custom.value
+				// 与官方客户端同一套语义（dsh-client-ui-user-questions 的 draftCustom）：
+				// 单选框里填了自定义文字就清掉已选项。服务端编码也是 custom 非空时丢弃
+				// selected —— 界面必须跟上，否则用户看着"乙"高亮，提交的却是自定义文字。
+				if (!multi && custom.value.trim() !== '') {
+					draft.selected.clear()
+					for (const item of optionButtons) item.button.classList.remove('on')
+				}
+			})
+
 			const options = Array.isArray(question?.options) ? question.options : []
 			if (options.length > 0) {
 				const opts = mk('div', 'opts')
-				const buttons = []
 				for (const option of options) {
 					const label = String(option?.label ?? '')
 					const button = mk('button', 'opt', label)
 					if (option?.description) button.appendChild(mk('small', undefined, String(option.description)))
 					if (draft.selected.has(label)) button.classList.add('on')
 					button.addEventListener('click', () => {
-						if (question?.multiSelect === true) {
+						if (multi) {
 							if (draft.selected.has(label)) draft.selected.delete(label)
 							else draft.selected.add(label)
 						} else {
 							draft.selected.clear()
 							draft.selected.add(label)
+							// 单选时点了选项就把自定义文字撤掉：不然 custom 非空会让服务端
+							// 丢掉 selected，用户会以为"点了没用"。
+							draft.custom = ''
+							custom.value = ''
 						}
-						for (const item of buttons) item.button.classList.toggle('on', draft.selected.has(item.label))
+						for (const item of optionButtons) item.button.classList.toggle('on', draft.selected.has(item.label))
 					})
-					buttons.push({ button, label })
+					optionButtons.push({ button, label })
 					opts.appendChild(button)
 				}
 				holder.card.appendChild(opts)
 			}
-
-			const custom = mk('input', 'plain custom')
-			custom.type = 'text'
-			custom.placeholder = options.length > 0 ? '或自己写一个答案' : '写你的答案'
-			custom.value = draft.custom
-			custom.addEventListener('input', () => { draft.custom = custom.value })
 			holder.card.appendChild(custom)
 		}
 
