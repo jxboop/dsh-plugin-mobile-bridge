@@ -171,7 +171,11 @@ if (!await waitForPort(PORT)) {
 }
 
 const config = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
-const base = `http://127.0.0.1:${config.port}`
+// 每条路由都藏在一个随机密钥段后面（loadConfig 生成后写回本文件）。测试必须带上它：
+// 少了这一段，所有 `${base}/api/...` 都会 404 —— 那正是这个 harness 曾经整份烂掉的原因
+// （37 条断言全废，只因为 base 里没有这个前缀）。
+const secret = `/${config.pathSecret}`
+const base = `http://127.0.0.1:${config.port}${secret}`
 const results = []
 const check = (name, ok, detail = '') => {
 	results.push({ name, ok, detail })
@@ -349,7 +353,7 @@ function rawGet(path, cookie, host) {
 }
 
 const CABLE = '172.20.10.2'
-await rawGet('/api/bootstrap', cookie, `${CABLE}:${config.port}`)
+await rawGet(`${secret}/api/bootstrap`, cookie, `${CABLE}:${config.port}`)
 await new Promise((resolve) => setTimeout(resolve, 250))
 const learned = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 check('the address a phone reached us on is remembered from the Host header',
@@ -363,7 +367,7 @@ check('bootstrap reports labelled candidates, not bare strings',
 
 // A loopback Host must never stick: it would advertise an address no phone can
 // reach, and would then outrank the real one forever.
-await rawGet('/api/bootstrap', cookie, `127.0.0.1:${config.port}`)
+await rawGet(`${secret}/api/bootstrap`, cookie, `127.0.0.1:${config.port}`)
 await new Promise((resolve) => setTimeout(resolve, 200))
 const afterLoopback = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, String(afterLoopback.phoneHost ?? null))
@@ -378,9 +382,16 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 const tokensFile = join(scratch, 'mobile-bridge.tokens.json')
 let persistedTokens = {}
 try { persistedTokens = JSON.parse(await readFile(tokensFile, 'utf8')).tokens ?? {} } catch { /* absent */ }
+// 落盘的是 { expiresAt, ip } 对象（旧版本存的是裸数字，加载器两种都认）。
+// 这里两种形态都接受，但必须断言"确实是一个未来时间"，否则格式再变一次测试会假过。
+const issuedRecord = Object.values(persistedTokens)[0]
+const issuedExpiry = typeof issuedRecord === 'number' ? issuedRecord : Number(issuedRecord?.expiresAt)
 check('an issued token is written to disk',
-	Object.keys(persistedTokens).length === 1 && Object.values(persistedTokens)[0] > Date.now(),
-	`${Object.keys(persistedTokens).length} token(s)`)
+	Object.keys(persistedTokens).length === 1 && Number.isFinite(issuedExpiry) && issuedExpiry > Date.now(),
+	`${Object.keys(persistedTokens).length} token(s), expiresAt=${issuedExpiry}`)
+check('the persisted token also records the address it was issued to',
+	typeof issuedRecord === 'object' && issuedRecord !== null && typeof issuedRecord.ip === 'string',
+	JSON.stringify(issuedRecord ?? null))
 
 // Regression: stopping the plugin ends every open SSE response, and `res.write`
 // on an ended response emits an 'error' event rather than throwing. An unhandled
