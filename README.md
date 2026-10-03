@@ -23,11 +23,14 @@
 ### 1. 装插件
 
 ```bash
-# 从本地目录
-dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
+# 从 GitHub 安装（`link:` 只接受本地路径，网址要用 git+https 或 github: 简写）
+dsh plugin --profile web add git+https://github.com/jxboop/dsh-plugin-mobile-bridge.git
 
-# 或从 GitHub（把 <user> 换成实际账号）
-dsh plugin --profile web add link:https://github.com/<user>/dsh-plugin-mobile-bridge
+# 等价写法
+dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
+
+# 从本地目录（改代码时用）
+dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 ```
 
 装完**重启 DSH**，日志里会出现：
