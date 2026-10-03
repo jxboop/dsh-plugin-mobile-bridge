@@ -274,8 +274,21 @@
 		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 60; max-width: 80vw; text-align: center;
 	}
 	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
-	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */
-	#ask { flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
+	/* ---- 断线提示条：站在所有页签上方，讲清楚出了什么事 ---- */
+	#linkbar {
+		flex: none; padding: 9px 12px; background: var(--banner-bg); color: var(--banner-ink);
+		border-bottom: 1px solid var(--banner-line); font-size: 13px; line-height: 1.55;
+	}
+	#linkbar .lg { font-weight: 600; margin-bottom: 3px; }
+	#linkbar .acts { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
+	#linkbar .acts button {
+		flex: 1 1 40%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--banner-line);
+		background: var(--panel); color: var(--text); font: inherit; font-size: 13px;
+	}
+	#linkbar .acts button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+	#linkbar code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+
+	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */	#ask { flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
 	.askcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
 	.askcard h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
 	.askcard .q { margin: 0 0 4px; font-size: 15px; }
@@ -310,6 +323,11 @@
 		<button class="iconbtn" id="reload">刷新</button>
 		<button class="iconbtn" id="logout">退出</button>
 	</header>
+
+	<!-- 断线提示条。以前断线只是把一个 9 像素的圆点变红，一个字都不说 ——
+	     用户只能自己发现"怎么不动了"。现在它站在所有页签上方，直接讲清楚
+	     发生了什么、以及能怎么办。 -->
+	<div id="linkbar" style="display:none"></div>
 
 	<main>
 		<section class="view" id="view-task" data-display="flex" style="display:none">
@@ -422,6 +440,12 @@
 		 * draft 必须留在这里：卡片每次重建都从它恢复，否则用户勾到一半会被清空。
 		 */
 		asks: new Map(),
+		/** 宿主编出来的局域网候选地址（含密钥段的完整 URL），断线时拿来兜底。 */
+		addresses: [],
+		/** 连接状态 live / stale / down —— 决定顶部那条提示说什么。 */
+		link: 'live',
+		/** 最后一次从流里收到数据的时刻，用来发现"连接还在、但没动静了"。 */
+		lastFrameAt: 0,
 	}
 
 	/* ------------------------------------------------------------ helpers */
@@ -499,6 +523,62 @@
 	function flash(message) {
 		banner.textContent = message
 		show(banner)
+	}
+
+	/* --------------------------------------------------------- 连接状态 */
+
+	/**
+	 * 断线时把话说清楚。
+	 *
+	 * 以前这里是 `setStatus('down')` —— 只把一个 9 像素的圆点变红，一个字都不说。
+	 * 用户看到"不动了"，却分不清是电脑睡了、隧道换了新网址、还是自己断网了，
+	 * 只能自己刷新撞运气。现在明确写出来，并给出两条能点的出路。
+	 */
+	function setLink(kind) {
+		if (state.link === kind) return
+		state.link = kind
+		setStatus(kind === 'down' ? 'down' : (state.running ? 'busy' : 'live'))
+		renderLink()
+	}
+
+	function renderLink() {
+		const bar = $('linkbar')
+		if (state.link === 'live') { bar.textContent = ''; hide(bar); return }
+		show(bar)
+		bar.textContent = ''
+
+		const stale = state.link === 'stale'
+		bar.appendChild(mk('div', 'lg', stale ? '⚠️ 好像和电脑失去联系了' : '⚠️ 和电脑断开了'))
+
+		const seconds = state.lastFrameAt === 0 ? 0 : Math.round((Date.now() - state.lastFrameAt) / 1000)
+		const ago = seconds < 90 ? seconds + ' 秒' : Math.round(seconds / 60) + ' 分钟'
+		bar.appendChild(mk('div', undefined,
+			(stale ? '最后收到电脑的消息是在 ' + ago + '前。' : '现在连不上电脑。')
+			+ '常见原因：电脑睡眠 / 合盖了，或者隧道换了新网址（免费隧道每次重启都会变）。'))
+
+		// 同一 WiFi 下的兜底：局域网地址不受隧道死活影响。
+		const lan = state.addresses.find((entry) => entry && typeof entry.url === 'string' && entry.url !== '')
+		const acts = mk('div', 'acts')
+		if (lan !== undefined && lan.url.startsWith(location.origin) === false) {
+			const go = mk('button', 'primary', '改用局域网地址' + (lan.label ? '（' + lan.label + '）' : ''))
+			go.addEventListener('click', () => { location.href = lan.url })
+			acts.appendChild(go)
+			const hint = mk('div', undefined, '')
+			hint.appendChild(mk('code', undefined, lan.url))
+			// 换 origin 就是换站点，cookie 带不过去 —— 老实说清楚，别让人以为坏了。
+			hint.appendChild(document.createTextNode(' —— 换地址后要重新输一次 PIN'))
+			bar.appendChild(hint)
+		}
+		const retry = mk('button', lan === undefined ? 'primary' : undefined, '重试连接')
+		retry.addEventListener('click', () => { connect() })
+		acts.appendChild(retry)
+		bar.appendChild(acts)
+
+		const tip = mk('div', undefined, '')
+		tip.appendChild(document.createTextNode('在电脑上跑 '))
+		tip.appendChild(mk('code', undefined, 'tools\\tunnel-status.ps1'))
+		tip.appendChild(document.createTextNode(' 能看到隧道到底是死是活。'))
+		bar.appendChild(tip)
 	}
 
 	/* --------------------------------------------------------------- tabs */
@@ -846,11 +926,16 @@
 		setStatus('busy')
 		const source = new EventSource('api/stream?sessionId=' + encodeURIComponent(state.sessionId))
 		state.source = source
-		source.onopen = () => setStatus(state.running ? 'busy' : 'live')
-		source.onerror = () => setStatus('down')
+		source.onopen = () => { state.lastFrameAt = Date.now(); setLink('live') }
+		source.onerror = () => { setLink('down') }
 		source.onmessage = (message) => {
 			let payload
 			try { payload = JSON.parse(message.data) } catch { return }
+			// 宿主每 20 秒发一个 ping：连接"还在但已经半死"（比如电脑睡了）时，
+			// onerror 是不会响的，只有这个心跳能证明对面真的还在说话。
+			state.lastFrameAt = Date.now()
+			if (state.link !== 'live') setLink('live')
+			if (payload.t === 'ping') return
 			state.stick = atBottom()
 			if (payload.t === 'snapshot') { checkPageTag(payload.tag); applySnapshot(payload) }
 			else if (payload.t === 'event') applyEvent(payload.event)
@@ -883,6 +968,9 @@
 	function loadSessions() {
 		return api('api/bootstrap').then((body) => {
 			checkPageTag(body.pageTag)
+			// 宿主早就把这些候选地址发过来了，以前页面收下就扔 —— 断线时就少了
+			// 最有用的一条出路（同一 WiFi 下走局域网，完全不依赖隧道）。
+			if (Array.isArray(body.addresses)) state.addresses = body.addresses
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
 			state.sessions = body.sessions || []
@@ -1129,6 +1217,13 @@
 	$('logout').addEventListener('click', () => {
 		api('api/logout', { method: 'POST' }).catch(() => {}).finally(() => showGate())
 	})
+
+	// 哨兵：连接还在、但已经不再来数据（电脑睡眠最典型）时，onerror 不会响，
+	// 手机上看着就是"卡住了"。靠宿主每 20 秒的 ping 判断，超过 45 秒没动静就报警。
+	setInterval(() => {
+		if (state.link !== 'live' || state.source === null || state.lastFrameAt === 0) return
+		if (Date.now() - state.lastFrameAt > 45000) setLink('stale')
+	}, 5000)
 
 	sessionSelect.addEventListener('change', () => {
 		state.sessionId = sessionSelect.value

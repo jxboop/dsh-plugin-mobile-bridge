@@ -131,7 +131,12 @@ function stubFetch(input, options = {}) {
 		if (answerExpired) return jsonResponse({ error: '这条提问已经失效（可能超时，或已在别处回答）' }, 409)
 		return jsonResponse({ ok: true })
 	}
-	if (path.startsWith('/api/bootstrap')) return jsonResponse({ sessions: SESSIONS, failure: null })
+	if (path.startsWith('/api/bootstrap')) return jsonResponse({
+		sessions: SESSIONS,
+		failure: null,
+		// 真宿主也会发这个：断线时它是同 WiFi 下的兜底出路。
+		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
+	})
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	if (path.startsWith('/api/prompt')) {
 		// 提权过期：令牌有效，但这台机器要你重新证明是本人（宿主重启后即是此态）。
@@ -636,6 +641,31 @@ await wait(160)
 check('提问已结束时撤掉卡片，而不是永远报错',
 	window.getComputedStyle($('ask')).display === 'none')
 answerExpired = false
+
+/* --- 断线必须【说出来】，不能只把一个 9px 的圆点变红 --------------------- */
+/*
+ * 以前就是 `source.onerror = () => setStatus('down')`：用户看到"不动了"，
+ * 却分不清是电脑睡了、隧道换了新网址、还是自己断网，只能自己刷新撞运气。
+ */
+const linkText = () => ($('linkbar')?.textContent ?? '')
+check('提示条存在且默认收起',
+	$('linkbar') !== null && window.getComputedStyle($('linkbar')).display === 'none')
+check('提示条不在 #view-task 里（切页签也看得见）', $('linkbar')?.closest('#view-task') === null)
+
+source.onerror?.()
+await wait(90)
+check('断线时弹出提示条（不再只有一个变色的圆点）',
+	$('linkbar') !== null && window.getComputedStyle($('linkbar')).display !== 'none')
+check('提示条说清可能的原因', linkText().includes('电脑睡眠') || linkText().includes('隧道'))
+check('提示条给出局域网兜底地址（同一 WiFi 下不依赖隧道）',
+	linkText().includes('192.168.1.20') && linkText().includes('改用局域网地址'))
+check('提示条告诉用户去电脑上跑体检脚本', linkText().includes('tunnel-status.ps1'))
+
+// 收到心跳就说明对面还在，提示条自己收起。
+source.emit({ t: 'ping' })
+await wait(70)
+check('收到宿主心跳后提示条自动收起',
+	$('linkbar') !== null && window.getComputedStyle($('linkbar')).display === 'none')
 
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build

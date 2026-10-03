@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-mobile-bridge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Mobile surface for DeepSeek Harness: send photos from a phone, drive a Session, watch live output. Works over LAN, USB tethering, or a Cloudflare quick tunnel.",
   "keywords": ["dsh", "dsh-plugin", "mobile", "remote", "cloudflare-tunnel"],
   "license": "MIT",

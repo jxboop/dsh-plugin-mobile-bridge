@@ -12,6 +12,7 @@
  */
 
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
 import { request } from 'node:http'
 import net from 'node:net'
 import { tmpdir } from 'node:os'
@@ -118,7 +119,17 @@ const stubController = {
 	},
 }
 
+/** installBadge 通过 webServer.tapIndex 注册的 HTML 变换函数。 */
+let badgeTap = null
+
 const services = {
+	// 桌面角标靠 webServer.tapIndex 注入。以前 harness 里没有这个服务，于是
+	// installBadge 整个走不到 —— 一个作用域写错（模块级函数里用了 createBridge
+	// 内的 record()）就让 start() 抛错：角标消失、隧道自检永不启动，
+	// 而当时 236 条测试全绿。给个假的把它覆盖上。
+	webServer: {
+		tapIndex: (transform) => { badgeTap = transform; return () => { badgeTap = null } },
+	},
 	workspaceRegistry: {
 		list: () => [
 			{ id: 'ws-1', title: 'deepseek学习', path: 'D:\\learn\\deepseek学习' },
@@ -385,6 +396,23 @@ await rawGet(`${secret}/api/bootstrap`, cookie, `127.0.0.1:${config.port}`)
 await new Promise((resolve) => setTimeout(resolve, 200))
 const afterLoopback = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, String(afterLoopback.phoneHost ?? null))
+
+/* --- 桌面角标 / 启动完整性 ------------------------------------------------ */
+/*
+ * 这条路径以前完全没有测试覆盖。结果一个作用域写错 —— 模块级的 installBadge 里
+ * 用了定义在 createBridge 内的 record() —— 就让 start() 在最后一行抛 ReferenceError：
+ * 角标从界面上消失、隧道自检永不启动，而当时 236 条测试全绿。
+ */
+{
+	check('角标注入函数已注册（installBadge 真的跑到了）', typeof badgeTap === 'function')
+	const injected = typeof badgeTap === 'function' ? badgeTap('<html><body>hi</body></html>') : ''
+	check('角标 HTML 被塞进 index 页',
+		typeof injected === 'string' && injected.includes('dsh-mobile-bridge-badge'))
+	check('角标里带着 PIN，用户不用翻文件', injected.includes('123456'))
+	// apply() 里的 catch 会把 start() 的异常写进这个文件 —— 它不存在 = 启动没抛错。
+	check('start() 没有抛异常（抛了就会留下 start-error 日志）',
+		!existsSync(join(scratch, 'mobile-bridge-start-error.log')))
+}
 
 /* --- 手机上回答提问 / 批准操作 ------------------------------------------- */
 /*
