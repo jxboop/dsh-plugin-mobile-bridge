@@ -7,8 +7,8 @@
  *
  *   node test/ui.mjs
  *
- * jsdom is borrowed from ..\_verify (the scratch install used by the other
- * plugins here); nothing else is required.
+ * 需要 jsdom（仅测试依赖，不是插件依赖）：在仓库根目录跑一次 `npm install` 即可。
+ * 若本机已有临时安装（`..\_verify`），会自动回退使用，无需额外操作。
  */
 
 import { readFile } from 'node:fs/promises'
@@ -17,9 +17,36 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = fileURLToPath(new URL('.', import.meta.url))
-const VERIFY = join(HERE, '..', '..', '_verify')
-const require = createRequire(join(VERIFY, 'anchor.cjs'))
-const { JSDOM, VirtualConsole } = require('jsdom')
+
+/**
+ * jsdom 只是这个测试的依赖，**不是插件的运行时依赖**（插件只用 Node 内置模块）。
+ *
+ * 先按正常方式解析（仓库根目录装了 devDependencies 就能用），再退回开发机上的
+ * `..\_verify` 临时安装。两条都不通时给出能照做的提示 —— 之前这里直接抛
+ * `Cannot find module 'jsdom'`，陌生人在自己的克隆里只会看到一个没头没尾的崩溃，
+ * 而 README 又把这份测试列成"可以直接跑"。
+ */
+function loadJsdom() {
+	const attempts = [
+		join(HERE, '..', 'anchor.cjs'),                  // 仓库自身（npm install 之后）
+		join(HERE, '..', '..', '_verify', 'anchor.cjs'), // 开发机上的临时安装
+	]
+	const tried = []
+	for (const anchor of attempts) {
+		try {
+			return createRequire(anchor)('jsdom')
+		} catch (error) {
+			tried.push(`${anchor}  (${error.code ?? error.message})`)
+		}
+	}
+	console.error('这个测试需要 jsdom（仅测试依赖，不是插件依赖）。先装一次：\n')
+	console.error('    npm install\n')
+	console.error('尝试过的解析位置：')
+	for (const line of tried) console.error(`  - ${line}`)
+	process.exit(2)
+}
+
+const { JSDOM, VirtualConsole } = loadJsdom()
 
 /** Stand-in for the server-computed page tag; the marker ships once. */
 const PAGE_TAG = 'testtag000001'

@@ -20,6 +20,8 @@
 
 ## 安装
 
+**前置条件**：你得先有一个能正常运行的 DSH —— 这是个扩展插件，不是独立程序。需要 Node 22 以上（用的都是内置模块，没有构建步骤）。
+
 ### 1. 装插件
 
 ```bash
@@ -136,15 +138,25 @@ $env:BRIDGE_TUNNEL_URL='https://<你的隧道域名>'
 node test/security.mjs
 ```
 
-其它测试：
+其它测试。先装一次测试依赖（`jsdom`，只有 UI 测试用它；插件本身零运行时依赖）：
 
-| 文件 | 内容 |
-|---|---|
-| `test/harness.mjs` | 桥的端到端行为（43 项） |
-| `test/ui.mjs` | 手机页面的 DOM 与交互（56 项） |
-| `test/addresses.mjs` | 地址排序与分类（16 项） |
-| `test/shot.mjs` | 真浏览器截图 + 布局测量 |
-| `test/phone-diag.mjs` | 真浏览器诊断：抓页面异常、控制台、网络状态码 |
+```bash
+npm install
+```
+
+| 文件 | 内容 | 需要 |
+|---|---|---|
+| `test/crashprobe.mjs` | 崩溃探针开关：默认不碰宿主全局状态、开启后能在配置重写中存活（17 项） | — |
+| `test/harness.mjs` | 桥的端到端行为：PIN 门、cookie、prompt 组装、SSE 扇出、取消、附件、新建会话、余额缓存、重启保活、注销（44 项） | — |
+| `test/ui.mjs` | 手机页面的 DOM 与交互，并断言"没有请求跑出密钥段"（58 项） | jsdom |
+| `test/addresses.mjs` | 地址排序与分类（16 项） | — |
+| `test/shot.mjs` | 真浏览器截图 + 布局测量 | Windows + Edge |
+| `test/phone-diag.mjs` | 真浏览器诊断：抓页面异常、控制台、网络状态码 | Windows + Edge |
+
+```bash
+npm test          # security 50 + crashprobe 17 + harness 44 + addresses 16 = 127 项，无需浏览器
+npm run test:all  # 再加上 ui 的 58 项，共 185 项
+```
 
 ### 仍未消除的风险（如实列出）
 
