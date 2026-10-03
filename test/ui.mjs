@@ -125,6 +125,7 @@ function stubFetch(input, options = {}) {
 	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
 	requests.push({ url: full, path, options })
 	if (path.startsWith('/api/login')) return jsonResponse({ ok: true })
+	if (path.startsWith('/api/answer')) return jsonResponse({ ok: true })
 	if (path.startsWith('/api/bootstrap')) return jsonResponse({ sessions: SESSIONS, failure: null })
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	if (path.startsWith('/api/prompt')) {
@@ -509,6 +510,80 @@ check('重新输入 PIN 后回到会话界面',
 	`gate=${window.getComputedStyle($('gate')).display} app=${window.getComputedStyle($('app')).display}`)
 check('重新登录后 SSE 重新连上（否则页面静默不再更新）',
 	sources.length === streamsBefore + 1, `${streamsBefore} -> ${sources.length}`)
+
+/* --- 手机上回答提问 / 批准操作 ------------------------------------------- */
+/*
+ * 宿主把 agent 的提问和工具审批推到这条流上。手机上必须能直接答，否则用户只能
+ * 干看着 agent 停在那里，或者被迫跑回电脑前面点。
+ */
+
+// 问题文本来自模型 —— 必须当【文本】渲染，绝不能当 HTML 解析。
+const XSS = '<img src=x onerror="window.__pwned=1">'
+source.emit({
+	t: 'interaction',
+	kind: 'question',
+	id: 'ask-1',
+	payload: {
+		questions: [
+			{ id: 'q1', header: '方案', question: '用哪个？' + XSS, options: [{ label: '甲', description: '快' }, { label: '乙' }] },
+			{ id: 'q2', question: '还有什么要补充？' },
+		],
+	},
+})
+await wait(90)
+
+const askBox = $('ask')
+check('提问卡片出现在输入框上方', window.getComputedStyle(askBox).display !== 'none')
+check('问题文本渲染出来了', askBox.textContent.includes('用哪个？'))
+check('选项渲染成按钮', askBox.querySelectorAll('.opt').length === 2)
+check('模型给的 HTML 只当文本，不当标记（防 XSS）',
+	askBox.querySelectorAll('img').length === 0 && window.__pwned === undefined,
+	`imgs=${askBox.querySelectorAll('img').length}`)
+
+const answerCalls = () => requests.filter((entry) => entry.path.startsWith('/api/answer'))
+
+// 第一个问题没答就不许提交，并且要说清差哪个。
+click(askBox.querySelector('.row .go'))
+await wait(70)
+check('没答完不让提交，并说明还差哪个问题',
+	answerCalls().length === 0 && askBox.textContent.includes('还有问题没答'))
+
+// 选第二个选项 + 给【第二题】填自定义文字，再提交。
+click(askBox.querySelectorAll('.opt')[1])
+const customInputs = askBox.querySelectorAll('.custom')
+check('每题都有自己的自定义输入框', customInputs.length === 2, `${customInputs.length}`)
+customInputs[1].value = '补充一句'
+customInputs[1].dispatchEvent(new window.Event('input', { bubbles: true }))
+click(askBox.querySelector('.row .go'))
+await wait(140)
+
+const answerCall = answerCalls().pop()
+const answerBody = answerCall ? JSON.parse(answerCall.options.body) : null
+check('提交后发出 POST api/answer', answerCall !== undefined)
+check('答案编码与桌面端一致（单选且填了自定义时 selected 让位给 custom）',
+	answerBody?.answers?.[0]?.selected?.[0] === '乙' && answerBody?.answers?.[1]?.custom === '补充一句',
+	JSON.stringify(answerBody))
+check('答完卡片自动消失', window.getComputedStyle($('ask')).display === 'none')
+
+// 审批卡片：两个按钮，点了就把 outcome 交出去。
+source.emit({ t: 'interaction', kind: 'approval', id: 'ask-2', payload: { toolName: 'pwsh', reason: '要删文件' } })
+await wait(90)
+check('审批卡片说明是哪个工具、为什么',
+	$('ask').textContent.includes('pwsh') && $('ask').textContent.includes('要删文件'))
+const denyButton = Array.from($('ask').querySelectorAll('.row button')).find((node) => node.textContent.includes('拒绝'))
+denyButton.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+await wait(140)
+check('「拒绝」提交 rejected',
+	JSON.parse(answerCalls().pop()?.options?.body ?? '{}').outcome === 'rejected',
+	answerCalls().pop()?.options?.body)
+
+// interaction-end：超时、或已经被别的手机答了，卡片要撤掉。
+source.emit({ t: 'interaction', kind: 'approval', id: 'ask-3', payload: { toolName: 'read' } })
+await wait(70)
+check('第三张卡片出现', window.getComputedStyle($('ask')).display !== 'none')
+source.emit({ t: 'interaction-end', id: 'ask-3' })
+await wait(70)
+check('interaction-end 撤掉卡片（超时或别人先答了）', window.getComputedStyle($('ask')).display === 'none')
 
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build

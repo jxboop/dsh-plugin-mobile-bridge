@@ -274,6 +274,23 @@
 		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 60; max-width: 80vw; text-align: center;
 	}
 	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
+	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */
+	#ask { margin: 0 10px 8px; display: grid; gap: 8px; }
+	.askcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
+	.askcard h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
+	.askcard .q { margin: 0 0 4px; font-size: 15px; }
+	.askcard .qd { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
+	.askcard .opts { display: grid; gap: 6px; }
+	.askcard .opt { text-align: left; padding: 9px 11px; border: 1px solid var(--field-line); border-radius: 8px; background: transparent; color: var(--text); font: inherit; }
+	.askcard .opt.on { border-color: var(--accent); background: var(--panel); box-shadow: inset 0 0 0 1px var(--accent); }
+	.askcard .opt small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+	.askcard .custom { width: 100%; box-sizing: border-box; margin-top: 8px; }
+	.askcard .row { display: flex; gap: 8px; margin-top: 10px; }
+	.askcard .row button { flex: 1; padding: 10px 14px; border: 0; border-radius: 8px; font: inherit; font-weight: 600; }
+	.askcard .go { background: var(--accent); color: var(--accent-ink); }
+	.askcard .ok { background: var(--ok); color: #05230f; }
+	.askcard .no { background: var(--err); color: var(--err-ink); }
+	.askcard .err { margin-top: 6px; min-height: 16px; font-size: 12.5px; color: var(--err); }
 </style>
 </head>
 <body>
@@ -299,6 +316,7 @@
 			<div class="sessionbar"><select id="session"></select></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
+			<div id="ask" data-display="grid" style="display:none"></div>
 			<div id="composer">
 				<div id="thumbs"></div>
 				<div id="compose">
@@ -395,6 +413,11 @@
 		pickedWorkspace: null,
 		balance: null,
 		balanceBusy: false,
+		/**
+		 * 等手机回答的提问/审批：id -> { kind, payload, draft, error }。
+		 * draft 必须留在这里：卡片每次重建都从它恢复，否则用户勾到一半会被清空。
+		 */
+		asks: new Map(),
 	}
 
 	/* ------------------------------------------------------------ helpers */
@@ -823,6 +846,13 @@
 			else if (payload.t === 'delta') applyDelta(payload.frame)
 			else if (payload.t === 'error') flash(payload.message)
 			else if (payload.t === 'end') setStatus('live')
+			else if (payload.t === 'interaction') {
+				state.asks.set(payload.id, { kind: payload.kind, payload: payload.payload, draft: {}, error: '' })
+				renderAsks()
+			} else if (payload.t === 'interaction-end') {
+				state.asks.delete(payload.id)
+				renderAsks()
+			}
 			scheduleRender()
 		}
 	}
@@ -1114,6 +1144,157 @@
 		const url = (state.balance && state.balance.topUpUrl) || 'https://platform.deepseek.com/top_up'
 		window.open(url, '_blank', 'noopener')
 	})
+
+	/* ------------------------------------------------- 提问 / 审批（作答） */
+
+	/**
+	 * agent 需要人拍板时，宿主会把问题推到这条流上。手机上必须能直接答 ——
+	 * 否则用户只能干看着 agent 停在那里，或者被迫跑回电脑前面点。
+	 *
+	 * 问题文本来自模型，所以一律用 createElement + textContent 构造，
+	 * 绝不拼 innerHTML：那是白送给模型的 XSS 口子。
+	 */
+	function mk(tag, className, text) {
+		const node = document.createElement(tag)
+		if (className !== undefined) node.className = className
+		if (text !== undefined) node.textContent = text
+		return node
+	}
+
+	function renderAsks() {
+		const box = $('ask')
+		if (state.asks.size === 0) { box.textContent = ''; hide(box); return }
+		show(box)
+		box.textContent = ''
+		for (const [id, ask] of state.asks) {
+			box.appendChild(ask.kind === 'approval' ? approvalCard(id, ask) : questionCard(id, ask))
+		}
+	}
+
+	/** 把答案交给宿主。失败就把原因写在卡片上，不静默吞掉。 */
+	async function submitAsk(id, body) {
+		try {
+			await api('api/answer', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify(Object.assign({ id }, body)),
+			})
+			state.asks.delete(id)
+		} catch (error) {
+			const ask = state.asks.get(id)
+			if (ask !== undefined) ask.error = '提交失败：' + error.message
+		}
+		renderAsks()
+	}
+
+	function askCard(id, ask, title) {
+		const card = mk('div', 'askcard')
+		card.appendChild(mk('h4', undefined, title))
+		const err = mk('div', 'err', ask.error || '')
+		return { card, err }
+	}
+
+	function approvalCard(id, ask) {
+		const holder = askCard(id, ask, 'agent 要动你的电脑，需要你点头')
+		holder.card.appendChild(mk('p', 'q', '允许它执行 ' + String(ask.payload?.toolName ?? '某个工具') + ' 吗？'))
+		if (ask.payload?.reason) holder.card.appendChild(mk('div', 'qd', String(ask.payload.reason)))
+
+		const row = mk('div', 'row')
+		const allow = mk('button', 'ok', '允许一次')
+		const deny = mk('button', 'no', '拒绝')
+		allow.addEventListener('click', () => {
+			allow.disabled = true; deny.disabled = true
+			submitAsk(id, { outcome: 'allowed-once' })
+		})
+		deny.addEventListener('click', () => {
+			allow.disabled = true; deny.disabled = true
+			submitAsk(id, { outcome: 'rejected' })
+		})
+		row.appendChild(allow)
+		row.appendChild(deny)
+		holder.card.appendChild(row)
+		holder.card.appendChild(holder.err)
+		return holder.card
+	}
+
+	function questionCard(id, ask) {
+		const holder = askCard(id, ask, 'agent 在问你')
+		const questions = Array.isArray(ask.payload?.questions) ? ask.payload.questions : []
+
+		for (const question of questions) {
+			const qid = String(question?.id ?? '')
+			// 草稿存在 state 上：卡片重建（比如又来一条流事件）不会清掉用户勾到一半的选择。
+			let draft = ask.draft[qid]
+			if (draft === undefined) { draft = { selected: new Set(), custom: '' }; ask.draft[qid] = draft }
+
+			if (question?.header) holder.card.appendChild(mk('div', 'qd', String(question.header)))
+			holder.card.appendChild(mk('p', 'q', String(question?.question ?? '')))
+			if (question?.detail) holder.card.appendChild(mk('div', 'qd', String(question.detail)))
+
+			const options = Array.isArray(question?.options) ? question.options : []
+			if (options.length > 0) {
+				const opts = mk('div', 'opts')
+				const buttons = []
+				for (const option of options) {
+					const label = String(option?.label ?? '')
+					const button = mk('button', 'opt', label)
+					if (option?.description) button.appendChild(mk('small', undefined, String(option.description)))
+					if (draft.selected.has(label)) button.classList.add('on')
+					button.addEventListener('click', () => {
+						if (question?.multiSelect === true) {
+							if (draft.selected.has(label)) draft.selected.delete(label)
+							else draft.selected.add(label)
+						} else {
+							draft.selected.clear()
+							draft.selected.add(label)
+						}
+						for (const item of buttons) item.button.classList.toggle('on', draft.selected.has(item.label))
+					})
+					buttons.push({ button, label })
+					opts.appendChild(button)
+				}
+				holder.card.appendChild(opts)
+			}
+
+			const custom = mk('input', 'plain custom')
+			custom.type = 'text'
+			custom.placeholder = options.length > 0 ? '或自己写一个答案' : '写你的答案'
+			custom.value = draft.custom
+			custom.addEventListener('input', () => { draft.custom = custom.value })
+			holder.card.appendChild(custom)
+		}
+
+		const row = mk('div', 'row')
+		const send = mk('button', 'go', '回答')
+		send.addEventListener('click', () => {
+			const missing = questions.find((question) => {
+				const draft = ask.draft[String(question?.id ?? '')]
+				return draft === undefined || (draft.selected.size === 0 && draft.custom.trim() === '')
+			})
+			if (missing !== undefined) {
+				ask.error = '还有问题没答：' + String(missing?.question ?? '')
+				renderAsks()
+				return
+			}
+			send.disabled = true
+			// 与桌面端同一套编码：单选又填了自定义文字时，selected 让位给 custom。
+			const answers = questions.map((question) => {
+				const draft = ask.draft[String(question?.id ?? '')]
+				const customText = draft.custom.trim()
+				const item = {
+					id: String(question?.id ?? ''),
+					selected: customText === '' || question?.multiSelect === true ? Array.from(draft.selected) : [],
+				}
+				if (customText !== '') item.custom = customText
+				return item
+			})
+			submitAsk(id, { answers })
+		})
+		row.appendChild(send)
+		holder.card.appendChild(row)
+		holder.card.appendChild(holder.err)
+		return holder.card
+	}
 
 	/* --------------------------------------------------------------- boot */
 

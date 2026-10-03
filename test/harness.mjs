@@ -26,7 +26,7 @@ process.env.DSH_HOME = scratch
 const PORT = 31417
 await writeFile(
 	join(scratch, 'mobile-bridge.json'),
-	JSON.stringify({ version: 1, port: PORT, pin: '123456' }),
+	JSON.stringify({ version: 1, port: PORT, pin: '123456', answerOnPhone: true }),
 	'utf8',
 )
 
@@ -138,6 +138,11 @@ const services = {
 }
 
 const disposers = []
+/**
+ * 记录插件注册的 waterfall 应答者，测试自己触发它们 —— 模拟 Cordis 的 dispatch。
+ * 插件用 prepend 抢在官方 api-remotes 之前，所以这里只关心"登记了谁"。
+ */
+const waterfallListeners = new Map()
 const ctx = {
 	effect(callback) {
 		const dispose = callback()
@@ -146,6 +151,15 @@ const ctx = {
 	},
 	get(name) { return services[name] },
 	sessionController: stubController,
+	on(name, listener) {
+		if (!waterfallListeners.has(name)) waterfallListeners.set(name, [])
+		waterfallListeners.get(name).push(listener)
+		return () => {
+			const list = waterfallListeners.get(name) ?? []
+			const at = list.indexOf(listener)
+			if (at >= 0) list.splice(at, 1)
+		}
+	},
 }
 
 // apply() starts the listener asynchronously; wait for the socket to accept
@@ -371,6 +385,132 @@ await rawGet(`${secret}/api/bootstrap`, cookie, `127.0.0.1:${config.port}`)
 await new Promise((resolve) => setTimeout(resolve, 200))
 const afterLoopback = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, String(afterLoopback.phoneHost ?? null))
+
+/* --- 手机上回答提问 / 批准操作 ------------------------------------------- */
+/*
+ * agent 调 ask_user_question、或某个工具需要批准时，宿主会挂在 Cordis 的
+ * waterfall 上等人类回答。官方 api-remotes 把它转发给浏览器；手机不搭那条通道，
+ * 所以桥自己注册应答者：SSE 把问题推给【正在看这个会话】的手机，再用
+ * POST /api/answer 把答案收回 waterfall。
+ */
+
+const askHandlers = waterfallListeners.get('user-questions/request') ?? []
+const approveHandlers = waterfallListeners.get('approval/request') ?? []
+check('注册了提问应答者（且只有一个）', askHandlers.length === 1, `${askHandlers.length}`)
+check('注册了审批应答者（且只有一个）', approveHandlers.length === 1, `${approveHandlers.length}`)
+
+/** 从一条 SSE 流里读到第一个 interaction 帧。 */
+async function readInteraction(reader) {
+	const decoder = new TextDecoder()
+	let buffer = ''
+	const deadline = Date.now() + 5000
+	while (Date.now() < deadline) {
+		const { value, done } = await reader.read()
+		if (done) break
+		buffer += decoder.decode(value, { stream: true })
+		const lines = buffer.split('\n')
+		buffer = lines.pop() ?? ''
+		for (const line of lines) {
+			if (!line.startsWith('data: ')) continue
+			const payload = JSON.parse(line.slice(6))
+			if (payload.t === 'interaction') return payload
+		}
+	}
+	return null
+}
+
+// 没有手机在看这个会话时必须【立刻】next()：桌面上的批准框不能因为我们而迟到。
+{
+	let delegated = false
+	await askHandlers[0](
+		{ agent: { id: 'nobody-is-watching' }, questions: [] },
+		() => { delegated = true; return Promise.resolve({ answers: [] }) },
+	)
+	check('没有手机在看这个会话时，立刻交还桌面', delegated === true)
+}
+
+// 有手机在看：问题出现在 SSE 上，答案经 POST /api/answer 回到 waterfall。
+{
+	const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
+	check('作答测试拿到了一条流', stream.status === 200, `HTTP ${stream.status}`)
+	const reader = stream.body.getReader()
+
+	const pendingAnswer = askHandlers[0](
+		{
+			agent: { id: 'session-test' },
+			questions: [{
+				id: 'q1',
+				question: '用哪个方案？',
+				header: '方案',
+				options: [{ label: '甲', description: '快' }, { label: '乙' }],
+			}],
+		},
+		() => Promise.resolve({ answers: [{ id: 'q1', selected: ['兜底'] }] }),
+	)
+
+	const frame = await readInteraction(reader)
+	check('提问被推到了手机那条流上',
+		frame !== null && frame.kind === 'question' && typeof frame.id === 'string' && frame.id !== '',
+		JSON.stringify(frame)?.slice(0, 140))
+	check('推送里带着问题与选项（前端要靠它渲染）',
+		frame?.payload?.questions?.[0]?.question === '用哪个方案？'
+		&& frame?.payload?.questions?.[0]?.options?.[0]?.label === '甲')
+	check('推送里不含 agent（那是活对象，不能外发）', frame?.payload?.agent === undefined)
+
+	const answered = await fetch(`${base}/api/answer`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ id: frame?.id, answers: [{ id: 'q1', selected: ['乙'] }] }),
+	})
+	check('POST /api/answer 收下了答案', answered.status === 200, `HTTP ${answered.status}`)
+
+	const resolved = await pendingAnswer
+	check('waterfall 拿到的是手机选的答案，不是桌面的兜底',
+		resolved?.answers?.[0]?.selected?.[0] === '乙', JSON.stringify(resolved))
+
+	// 用过的 id 必须失效：否则同一张卡片能被答两次，第二次会写进一个已结束的回合。
+	const replay = await fetch(`${base}/api/answer`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ id: frame?.id, answers: [{ id: 'q1', selected: ['甲'] }] }),
+	})
+	check('同一个提问 id 不能重复作答', replay.status === 409, `HTTP ${replay.status}`)
+
+	await reader.cancel().catch(() => {})
+}
+
+// 审批：只接受三个合法结果，凭空造的必须被拒。
+{
+	const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
+	const reader = stream.body.getReader()
+
+	const pendingApproval = approveHandlers[0](
+		{ agent: { id: 'session-test' }, toolName: 'pwsh', reason: '要删文件' },
+		() => Promise.resolve('rejected'),
+	)
+
+	const frame = await readInteraction(reader)
+	check('审批被推到了手机上',
+		frame?.kind === 'approval' && frame?.payload?.toolName === 'pwsh',
+		JSON.stringify(frame)?.slice(0, 140))
+
+	const bogus = await fetch(`${base}/api/answer`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ id: frame?.id, outcome: 'yolo' }),
+	})
+	check('非法的审批结果被拒（不能凭空造 outcome）', bogus.status === 400, `HTTP ${bogus.status}`)
+
+	const allowed = await fetch(`${base}/api/answer`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ id: frame?.id, outcome: 'allowed-once' }),
+	})
+	check('合法的审批结果被接受', allowed.status === 200, `HTTP ${allowed.status}`)
+	check('waterfall 拿到 allowed-once', (await pendingApproval) === 'allowed-once')
+
+	await reader.cancel().catch(() => {})
+}
 
 /* --- surviving a restart ------------------------------------------------- */
 /*

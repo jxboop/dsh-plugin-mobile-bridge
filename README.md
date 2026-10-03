@@ -69,6 +69,7 @@ dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 | `bindTokenToIp` | false | 是否**严格**绑定令牌的来源 IP。默认 `false`：地址变化只**记录告警**（在 `/api/bootstrap` 的 `foreignUses` 里可见），不吊销登录。设 `true` 则换地址即吊销 —— **移动网络下不可用**（运营商 NAT、IPv6 隐私扩展会不停换地址，手机会被反复踢下线），只适合固定网络 |
 | `elevationMinutes` | 15 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
 | `crashProbe` | false | **排查用，平时别开。** 设为 `true` 会把宿主的 uncaughtException / exit 事件写进 `~/.dsh/dsh-crash.log`（含每 30 秒一条内存心跳）。它跑在宿主进程里、会注册全局处理器并持续写盘，所以默认关闭。 |
+| `answerOnPhone` | false | 让**手机**回答 agent 的提问（`ask_user_question`）和工具审批。默认关：开着时"正在看这个会话的手机"会抢在桌面前面拿到提问，桌面要等 120 秒才轮到。没有手机在看这个会话时，无论开关如何都是桌面先拿到。 |
 
 ### 为什么过一会儿又让我输 PIN？
 
@@ -114,6 +115,33 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\tunnel-stop.ps1
 | `tools/tunnel-status.ps1` | **体检**：隧道现在是死是活（进程、端口、外网实测），手机上出现错误页时先跑它 |
 | `tools/show-phone-url.ps1` | 一个可复制的小窗口，显示外网/局域网网址 + PIN（带刷新按钮） |
 | `tools/revoke-phone.ps1` | **应急**：一键吊销所有手机登录（两步确认，防误触） |
+
+### 在手机上回答 agent 的提问
+
+agent 卡在 `ask_user_question` 上等你选，或者某个工具调用需要你点头时，**手机上会直接出现一张卡片**：选项按钮、可多选、也能自己写一段话；审批则是「允许一次 / 拒绝」两个键。答完 agent 立刻继续，不用你跑回电脑前面。
+
+默认关闭，打开方式：
+
+```json
+{ "answerOnPhone": true }
+```
+
+打开后改配置需**重启 DSH**（或重载插件）生效。
+
+**它怎么决定谁来答：**
+
+| 情况 | 谁作答 |
+|---|---|
+| 有手机正在看着这个会话 | **手机**（桌面等 120 秒才轮到，防手机没答导致卡死） |
+| 没有手机在看这个会话 | **桌面**，和我们没插手时一模一样 |
+| 手机答了，别的手机也开着 | 先答的算数，其余卡片自动撤掉 |
+
+**几个已经处理好的细节：**
+
+- **答案要提权**：和下发任务一样，光有 cookie 不够，得最近输过 PIN —— 否则偷走 cookie 的人能替你在批准框上点"允许"。
+- **同一个提问不能答两次**：用过的 id 立刻失效。
+- **手机刷新不会丢卡片**：新开的流会把还没答的提问补推一次。
+- **问题文本来自模型，一律当纯文本渲染**（`textContent`，不是 `innerHTML`），模型塞不进脚本。
 
 ### 手机上是 Cloudflare 错误页？（Error 1033 / 1016）
 
@@ -193,15 +221,15 @@ npm install
 | 文件 | 内容 | 需要 |
 |---|---|---|
 | `test/crashprobe.mjs` | 崩溃探针开关：默认不碰宿主全局状态、开启后能在配置重写中存活（17 项） | — |
-| `test/harness.mjs` | 桥的端到端行为：PIN 门、cookie、prompt 组装、SSE 扇出、取消、附件、新建会话、余额缓存、重启保活（含"恢复的会话可读但不可写 = 403+needPin"）、注销（45 项） | — |
-| `test/ui.mjs` | 手机页面的 DOM 与交互：含"没有请求跑出密钥段"与"提权过期时必须把 PIN 门打开"（63 项） | jsdom |
+| `test/harness.mjs` | 桥的端到端行为：PIN 门、cookie、prompt 组装、SSE 扇出、取消、附件、新建会话、余额缓存、重启保活（含"恢复的会话可读但不可写 = 403+needPin"）、注销，以及**手机作答全链路**（提问推送到流上 / POST api/answer 收答案 / 防重放 / 审批 outcome 校验）（59 项） | — |
+| `test/ui.mjs` | 手机页面的 DOM 与交互：含"没有请求跑出密钥段"、"提权过期时必须把 PIN 门打开"、以及**提问与审批卡片**（渲染、作答编码、防 XSS、interaction-end 撤卡）（76 项） | jsdom |
 | `test/addresses.mjs` | 地址排序与分类（16 项） | — |
 | `test/shot.mjs` | 真浏览器截图 + 布局测量 | Windows + Edge |
 | `test/phone-diag.mjs` | 真浏览器诊断：抓页面异常、控制台、网络状态码 | Windows + Edge |
 
 ```bash
-npm test          # security 50 + crashprobe 17 + harness 45 + addresses 16 = 128 项，无需浏览器
-npm run test:all  # 再加上 ui 的 63 项，共 191 项
+npm test          # security 50 + crashprobe 17 + harness 59 + addresses 16 = 142 项，无需浏览器
+npm run test:all  # 再加上 ui 的 76 项，共 218 项
 ```
 
 ### 仍未消除的风险（如实列出）
