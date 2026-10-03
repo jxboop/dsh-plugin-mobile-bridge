@@ -42,6 +42,16 @@ dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 [mobile-bridge] phone url: http://192.168.1.20:3081/ab12cd34ef56ab78/  (WLAN)
 ```
 
+### 更新到最新版
+
+**把上面那条安装命令原样再跑一遍就行**，不需要先卸载：
+
+```bash
+dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
+```
+
+然后重启 DSH。（`dsh plugin` 是 pnpm 的转发器；对分支形式的 git 依赖，`add` 会重新解析到最新提交。实测 0.2.2 → 0.3.0 可直接升级。）想确认装到了哪一版：看 `<profile>/node_modules/dsh-plugin-mobile-bridge/package.json` 的 `version`。
+
 ### 2. 首次启动会自动生成配置
 
 `~/.dsh/mobile-bridge.json`（Windows：`%USERPROFILE%\.dsh\mobile-bridge.json`）：
