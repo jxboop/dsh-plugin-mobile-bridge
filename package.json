@@ -1,0 +1,19 @@
+{
+  "name": "dsh-plugin-mobile-bridge",
+  "version": "0.2.0",
+  "description": "Mobile surface for DeepSeek Harness: send photos from a phone, drive a Session, watch live output. Works over LAN, USB tethering, or a Cloudflare quick tunnel.",
+  "keywords": ["dsh", "dsh-plugin", "mobile", "remote", "cloudflare-tunnel"],
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": { "default": "./lib/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["lib/", "tools/", "cordis.patch.yml", "README.md", "LICENSE"],
+  "scripts": {
+    "test": "node test/security.mjs && node test/harness.mjs && node test/addresses.mjs"
+  },
+  "peerDependencies": { "@deepseek-ai/cordis": "4.0.2" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}

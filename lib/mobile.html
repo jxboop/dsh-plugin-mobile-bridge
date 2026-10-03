@@ -1,0 +1,1114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101426">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+<!-- Replaced by the server with this build's tag. A phone that stayed open
+     across a server restart compares it and reloads itself. -->
+<meta name="dsh-page-tag" content="__DSH_PAGE_TAG__">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>DSH 手机端</title>
+<style>
+	:root {
+		--bg: #0d1020;
+		--panel: #161a2e;
+		--panel-2: #1e2440;
+		--line: #2b3050;
+		--field-line: var(--field-line);
+		--text: #e7ebff;
+		--muted: #8f9ac4;
+		--accent: #4d6bfe;
+		--accent-ink: #ffffff;
+		--ok: #37d67a;
+		--err: #ff6b6b;
+		--err-ink: #ffffff;
+		--warn: #ffb020;
+		--user-bubble: #26346e;
+		--user-border: #3a4c96;
+		--code-bg: #12162a;
+		--code-line: #46508a;
+		--code-name: #a9b6ff;
+		--tool-err: #ffb4b4;
+		--think-line: #4a4270;
+		--banner-bg: #3a2a12;
+		--banner-ink: #ffd9a0;
+		--banner-line: #5a4318;
+		--err-bg: #3a1c22;
+		--err-line: #6b2b34;
+		--err-ink: #ffc9c9;
+		--stop-bg: #7a2c3a;
+		--mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	}
+	/* Follow the phone's own light/dark setting instead of forcing dark. */
+	@media (prefers-color-scheme: light) {
+		:root {
+			--bg: #f4f6fc;
+			--panel: #ffffff;
+			--panel-2: #eef1f9;
+			--line: #d8deee;
+			--field-line: #c9d2e8;
+			--text: #1a1f36;
+			--muted: #6b7490;
+			--accent: #3b57e0;
+			--ok: #14a05a;
+			--err: #d64545;
+			--warn: #b8791a;
+			--user-bubble: #dfe6ff;
+			--user-border: #b9c8f5;
+			--code-bg: #f0f2f9;
+			--code-line: #b9c2dd;
+			--code-name: #3b4bb0;
+			--tool-err: #a12a2a;
+			--think-line: #c9c2e4;
+			--banner-bg: #fff3d6;
+			--banner-ink: #7a5410;
+			--banner-line: #ecd9a8;
+			--err-bg: #fdeaea;
+			--err-line: #f0c2c2;
+			--err-ink: #9c2b2b;
+			--stop-bg: #f3d7dc;
+		}
+	}
+	* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+	html, body { margin: 0; height: 100%; }
+	body {
+		background: var(--bg);
+		color: var(--text);
+		font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+		display: flex;
+		flex-direction: column;
+		height: 100dvh;
+		overscroll-behavior: none;
+	}
+	button, input, select, textarea { font: inherit; color: inherit; }
+	button { cursor: pointer; }
+
+	/* Visibility is owned exclusively by inline styles set from script (see
+	   show()/hide()); a stylesheet `display` here would fight them. */
+	.hidden-note { display: none; }
+
+	/* ------------------------------------------------------------- gate */
+	#gate { display: flex; flex-direction: column; gap: 18px; justify-content: center; padding: 32px 24px; height: 100%; }
+	#gate h1 { font-size: 20px; margin: 0; }
+	#gate p { color: var(--muted); margin: 0; font-size: 13px; }
+	#gate input {
+		background: var(--panel); border: 1px solid var(--field-line); border-radius: 12px;
+		padding: 16px; font-size: 26px; letter-spacing: 10px; text-align: center; width: 100%;
+	}
+	#gate button { background: var(--accent); border: 0; border-radius: 12px; padding: 15px; font-weight: 600; }
+	#gateError { color: var(--err); min-height: 20px; font-size: 13px; text-align: center; }
+
+	/* -------------------------------------------------------------- app */
+	#app { flex-direction: column; height: 100%; }
+	header {
+		display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+		background: var(--panel); border-bottom: 1px solid var(--line);
+		padding-top: max(10px, env(safe-area-inset-top)); flex: none;
+	}
+	header .grow { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+	#dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+	#dot.busy { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+	#dot.down { background: var(--err); }
+	.iconbtn {
+		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 9px;
+		padding: 8px 11px; font-size: 13px; flex: none;
+	}
+
+	main { flex: 1; min-height: 0; }
+	.view { flex-direction: column; height: 100%; }
+	.scroll { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+	.pad { padding: 14px 12px; }
+
+	/* ------------------------------------------------------------- tabs */
+	#tabs {
+		display: flex; flex: none; background: var(--panel); border-top: 1px solid var(--line);
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+	#tabs button {
+		flex: 1; background: none; border: 0; padding: 9px 4px 8px; color: var(--muted);
+		font-size: 11px; display: flex; flex-direction: column; align-items: center; gap: 3px;
+	}
+	#tabs button .glyph { font-size: 19px; line-height: 1; }
+	#tabs button.active { color: var(--accent); }
+
+	/* ------------------------------------------------------------- task */
+	.sessionbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+	.sessionbar select {
+		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
+		border-radius: 9px; padding: 9px 10px; font-size: 14px;
+	}
+	#log { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px 4px; }
+	.row { margin-bottom: 12px; display: flex; }
+	.row.user { justify-content: flex-end; }
+	.bubble {
+		max-width: 88%; border-radius: 14px; padding: 10px 12px;
+		background: var(--panel); border: 1px solid var(--line);
+		white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+	}
+	.row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
+	.bubble img { max-width: 100%; border-radius: 10px; display: block; margin-top: 6px; }
+	.bubble img:not([src]) { min-height: 110px; background: var(--code-bg); }
+
+	/* 思考与输出分开：思考是回答之外的一块可折叠区域，不再混在气泡里当斜体段落 */
+	.think {
+		border-left: 3px solid var(--think-line); margin-bottom: 10px; padding: 5px 0 5px 10px;
+	}
+	.think > summary {
+		cursor: pointer; list-style: none; color: var(--muted); font-size: 12px;
+		padding: 2px 0; user-select: none; -webkit-user-select: none;
+	}
+	.think > summary::-webkit-details-marker { display: none; }
+	.think > summary::after { content: ' ▸'; }
+	.think[open] > summary::after { content: ' ▾'; }
+	.think-body {
+		color: var(--muted); font-family: var(--mono); font-size: 12.5px; line-height: 1.62;
+		white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; margin-top: 4px;
+	}
+
+	.tool {
+		border-left: 3px solid var(--code-line); background: var(--code-bg); border-radius: 0 10px 10px 0;
+		padding: 8px 11px; font-size: 13px; margin-bottom: 12px;
+	}
+	.tool .name { color: var(--code-name); font-weight: 600; }
+	.tool .body {
+		color: var(--muted); white-space: pre-wrap; word-break: break-word; margin-top: 4px;
+		max-height: 132px; overflow: hidden; font-family: var(--mono); font-size: 12px;
+	}
+	.tool.open .body { max-height: none; }
+	.tool .body.error { color: var(--tool-err); }
+	.note { color: var(--muted); font-size: 12px; text-align: center; margin: 6px 0 12px; }
+	.cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(2) infinite; }
+	@keyframes blink { 50% { opacity: 0; } }
+
+	#banner { padding: 8px 12px; font-size: 12px; background: var(--banner-bg); color: var(--banner-ink); border-bottom: 1px solid var(--banner-line); flex: none; }
+
+	#composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 10px; }
+	#thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
+	#thumbs:empty { display: none; }
+	.thumb { position: relative; flex: none; }
+	.thumb img { height: 62px; border-radius: 9px; display: block; }
+	.thumb button {
+		position: absolute; top: -6px; right: -6px; width: 21px; height: 21px; border-radius: 50%;
+		border: 0; background: var(--err); color: #fff; font-size: 13px; line-height: 1; padding: 0;
+	}
+	#compose { display: flex; gap: 8px; align-items: flex-end; }
+	#text {
+		flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--field-line);
+		border-radius: 12px; padding: 11px 12px; resize: none; max-height: 130px; min-height: 44px;
+	}
+	#send, #stop { border: 0; border-radius: 12px; padding: 12px 15px; font-weight: 600; flex: none; }
+	#send { background: var(--accent); }
+	#stop { background: var(--stop-bg); }
+	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 11px 13px; flex: none; }
+
+	/* ------------------------------------------------------------- sheet */
+	/* Full-screen panel rather than a third tab: the tab bar is covered while
+	   it is open, so the primary action can never sit under a thumb that is
+	   reaching for a tab, and 取消 is always on screen. */
+	.sheet { position: fixed; inset: 0; z-index: 50; background: var(--bg); flex-direction: column; }
+	.sheetbar {
+		flex: none; display: flex; align-items: center; gap: 8px;
+		padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top));
+		border-bottom: 1px solid var(--line); background: var(--panel);
+	}
+	.sheetbar .title { flex: 1; text-align: center; font-weight: 600; font-size: 14px; }
+	.sheetbar .spacer { width: 56px; flex: none; }
+	.sheetfoot {
+		flex: none; padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+		border-top: 1px solid var(--line); background: var(--panel);
+	}
+
+	/* ------------------------------------------------------- new task */
+	.field { margin-bottom: 18px; }
+	.field > label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 7px; }
+	.hint { font-size: 12px; color: var(--muted); margin-top: 8px; line-height: 1.5; }
+	.picklist { display: flex; flex-direction: column; gap: 8px; }
+	.pick {
+		display: flex; gap: 10px; align-items: flex-start; text-align: left;
+		background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; width: 100%;
+	}
+	.pick.on { border-color: var(--accent); background: var(--panel-2); }
+	.pick .mark { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--code-line); margin-top: 1px; }
+	.pick.on .mark { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--panel-2); }
+	.pick .txt { min-width: 0; }
+	.pick .t { font-size: 14px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.pick .p { font-size: 11px; color: var(--muted); word-break: break-all; display: block; margin-top: 2px; }
+	select.plain, input.plain, textarea.plain {
+		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
+		border-radius: 11px; padding: 11px 12px;
+	}
+	textarea.plain { resize: vertical; min-height: 88px; }
+	.primary {
+		width: 100%; border: 0; border-radius: 12px; padding: 14px;
+		background: var(--accent); font-weight: 600;
+	}
+	.primary[disabled] { opacity: .5; }
+
+	/* ---------------------------------------------------------- bill */
+	.card {
+		background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+		padding: 16px; margin-bottom: 12px;
+	}
+	.card .cur { font-size: 12px; color: var(--muted); }
+	.card .big { font-size: 34px; font-weight: 700; letter-spacing: -.5px; margin: 2px 0 12px; }
+	.split { display: flex; gap: 10px; }
+	.split div { flex: 1; background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+	.split .k { font-size: 11px; color: var(--muted); }
+	.split .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
+	.meta { font-size: 12px; color: var(--muted); line-height: 1.7; }
+	.actions { display: flex; gap: 10px; margin-top: 6px; }
+	.actions button {
+		flex: 1; border-radius: 12px; padding: 13px; border: 1px solid var(--field-line);
+		background: var(--panel-2); font-weight: 600;
+	}
+	.actions button.go { background: var(--accent); border-color: var(--accent); }
+	.state { text-align: center; color: var(--muted); padding: 40px 16px; font-size: 14px; }
+	.state .emoji { font-size: 30px; display: block; margin-bottom: 10px; }
+	.err-box { color: var(--err-ink); background: var(--err-bg); border: 1px solid var(--err-line); border-radius: 12px; padding: 12px; font-size: 13px; }
+	#toast {
+		position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(8px);
+		background: var(--text); color: var(--bg); border-radius: 999px; padding: 9px 18px; font-size: 13px;
+		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 60; max-width: 80vw; text-align: center;
+	}
+	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+
+<div id="gate" data-display="flex">
+	<h1>DSH 手机端</h1>
+	<p>输入电脑上显示的 6 位 PIN。连的是你自己的局域网，不经过任何服务器。</p>
+	<input id="pin" type="tel" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="······">
+	<div id="gateError"></div>
+	<button id="gateBtn">连接</button>
+</div>
+
+<div id="app" data-display="flex" style="display:none">
+	<header>
+		<span id="dot"></span>
+		<span class="grow" id="heading">DSH 手机端</span>
+		<button class="iconbtn" id="reload">刷新</button>
+		<button class="iconbtn" id="logout">退出</button>
+	</header>
+
+	<main>
+		<section class="view" id="view-task" data-display="flex" style="display:none">
+			<div class="sessionbar"><select id="session"></select></div>
+			<div id="banner" data-display="block" style="display:none"></div>
+			<div id="log"></div>
+			<div id="composer">
+				<div id="thumbs"></div>
+				<div id="compose">
+					<button id="pick">图片</button>
+					<textarea id="text" rows="1" placeholder="给 agent 下达任务…"></textarea>
+					<button id="send" data-display="inline-block">发送</button>
+					<button id="stop" data-display="inline-block" style="display:none">停止</button>
+				</div>
+			</div>
+			<input id="file" type="file" accept="image/*" multiple hidden>
+		</section>
+
+		<section class="sheet" id="view-new" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="newBack">← 返回</button>
+				<span class="title">新建任务</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="field">
+					<label>目标文件夹</label>
+					<div class="picklist" id="workspaces"></div>
+					<div class="hint">选不到想要的？在下面手填一个绝对路径，手填优先。</div>
+				</div>
+				<div class="field">
+					<label>或手填路径</label>
+					<input class="plain" id="cwd" placeholder="例如 D:\learn\deepseek学习" autocapitalize="off" autocorrect="off" spellcheck="false">
+				</div>
+				<div class="field">
+					<label>Agent 预设</label>
+					<select class="plain" id="preset"><option value="">（用默认）</option></select>
+				</div>
+				<div class="field">
+					<label>第一条任务（可留空）</label>
+					<textarea class="plain" id="firstText" placeholder="想让它先做什么？"></textarea>
+				</div>
+			</div>
+			<div class="sheetfoot">
+				<button class="primary" id="createBtn">创建任务</button>
+				<div class="hint" id="createHint">创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。</div>
+			</div>
+		</section>
+
+		<section class="view" id="view-bill" data-display="block" style="display:none">
+			<div class="scroll pad">
+				<div id="billBody"></div>
+				<div class="actions">
+					<button id="billRefresh">刷新余额</button>
+					<button class="go" id="billTopUp">去充值</button>
+				</div>
+				<div class="hint" id="billFoot"></div>
+			</div>
+		</section>
+	</main>
+
+	<nav id="tabs">
+		<button data-tab="task" class="active"><span class="glyph">💬</span>任务</button>
+		<button data-tab="new"><span class="glyph">➕</span>新建</button>
+		<button data-tab="bill"><span class="glyph">💰</span>余额</button>
+	</nav>
+	<div id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(() => {
+	'use strict'
+
+	const $ = (id) => document.getElementById(id)
+	const gate = $('gate'), app = $('app'), log = $('log'), sessionSelect = $('session')
+	const dot = $('dot'), text = $('text'), thumbs = $('thumbs'), fileInput = $('file')
+	const sendBtn = $('send'), stopBtn = $('stop'), banner = $('banner'), heading = $('heading')
+
+	const views = { task: $('view-task'), bill: $('view-bill') }
+	const sheet = $('view-new')
+	const tabButtons = Array.from(document.querySelectorAll('#tabs button'))
+	const HEADINGS = { task: '会话', bill: '账户余额' }
+
+	const state = {
+		tab: 'task',
+		sessionId: null,
+		items: [],
+		tools: new Map(),
+		live: null,
+		reasoning: null,
+		running: false,
+		source: null,
+		images: [],
+		imageCache: new Map(),
+		imagePending: new Set(),
+		stick: true,
+		sessions: [],
+		workspaces: [],
+		presets: [],
+		pickedWorkspace: null,
+		balance: null,
+		balanceBusy: false,
+	}
+
+	/* ------------------------------------------------------------ helpers */
+
+	// The tag this HTML was served with. When the server restarts with new UI,
+	// a page that stayed open keeps its stale DOM while SSE silently
+	// reconnects — comparing this on every stream open is what closes that gap.
+	const servedTag = (document.querySelector('meta[name="dsh-page-tag"]') || {}).content || ''
+
+	function checkPageTag(tag) {
+		if (typeof tag !== 'string' || tag === '' || servedTag === '' || tag === servedTag) return
+		if (servedTag === '__DSH_PAGE_TAG__') return
+		// One automatic reload per observed tag: if the browser keeps handing
+		// back the old document, stop rather than spin.
+		try {
+			if (window.sessionStorage.getItem('dshm.reloaded') === tag) return
+			window.sessionStorage.setItem('dshm.reloaded', tag)
+		} catch { /* private mode */ }
+		window.location.reload()
+	}
+
+	// Inline styles only: no stylesheet `display` rule participates, so the
+	// cascade cannot silently win over a "show".
+	function show(node) { node.style.display = node.dataset.display || '' }
+	function hide(node) { node.style.display = 'none' }
+
+	function api(path, options) {
+		return fetch(path, Object.assign({ credentials: 'same-origin' }, options)).then(async (response) => {
+			if (response.status === 401) { showGate(); throw new Error('unauthorized') }
+			const body = await response.json().catch(() => ({}))
+			if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status))
+			return body
+		})
+	}
+
+	function showGate(message) {
+		if (state.source) { state.source.close(); state.source = null }
+		hide(app); show(gate)
+		$('gateError').textContent = message || ''
+		$('pin').value = ''
+	}
+
+	function escapeHtml(value) {
+		return String(value).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]))
+	}
+
+	function money(value) {
+		const n = Number(value)
+		return Number.isFinite(n) ? n.toFixed(2) : String(value)
+	}
+
+	function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 120 }
+
+	function setStatus(kind) {
+		dot.className = kind
+		if (state.running) { hide(sendBtn); show(stopBtn) } else { hide(stopBtn); show(sendBtn) }
+	}
+
+	function flash(message) {
+		banner.textContent = message
+		show(banner)
+	}
+
+	/* --------------------------------------------------------------- tabs */
+
+	function switchTab(name) {
+		state.tab = name
+		for (const key of Object.keys(views)) {
+			if (key === name) show(views[key]); else hide(views[key])
+		}
+		for (const button of tabButtons) button.classList.toggle('active', button.dataset.tab === name)
+		heading.textContent = HEADINGS[name] || 'DSH 手机端'
+		if (name === 'bill') loadBalance(false)
+		if (name === 'task') requestAnimationFrame(() => { if (state.stick) log.scrollTop = log.scrollHeight })
+	}
+
+	function openSheet() {
+		show(sheet)
+		loadWorkspaces()
+	}
+
+	function closeSheet() {
+		hide(sheet)
+	}
+
+	for (const button of tabButtons) {
+		button.addEventListener('click', () => {
+			// 新建 is deliberately not a tab. As a tab its primary action sat
+			// directly above the tab bar, so a thumb aiming at a tab could
+			// create a Session and immediately start a billable agent turn.
+			if (button.dataset.tab === 'new') { openSheet(); return }
+			switchTab(button.dataset.tab)
+		})
+	}
+
+	/* ---------------------------------------------------------- rendering */
+
+	function imageTag(sessionId, attachmentId) {
+		const key = attachmentId
+		if (state.imageCache.has(key)) return '<img src="' + state.imageCache.get(key) + '" alt="">'
+		const holderId = 'img-' + key.replace(/[^A-Za-z0-9_-]/g, '')
+		// A full re-render runs on every frame, so only one request per
+		// attachment may ever be in flight.
+		if (!state.imagePending.has(key)) {
+			state.imagePending.add(key)
+			fetch('api/attachment?sessionId=' + encodeURIComponent(sessionId) + '&attachmentId=' + encodeURIComponent(attachmentId), { credentials: 'same-origin' })
+				.then((response) => response.ok ? response.json() : null)
+				.then((body) => {
+					if (!body) return
+					const src = 'data:' + body.mediaType + ';base64,' + body.data
+					state.imageCache.set(key, src)
+					const img = document.getElementById(holderId)
+					if (img) img.src = src
+				})
+				.catch(() => {})
+				.finally(() => { state.imagePending.delete(key) })
+		}
+		return '<img id="' + holderId + '" alt="图片加载中…">'
+	}
+
+	function blocksToHtml(blocks, sessionId) {
+		let html = ''
+		for (const block of blocks || []) {
+			if (!block || typeof block !== 'object') continue
+			if (block.type === 'text') html += escapeHtml(block.text)
+			else if (block.type === 'reasoning') html += '<div class="think-body">' + escapeHtml(block.text) + '</div>'
+			else if (block.type === 'image' && block.attachment) html += imageTag(sessionId, block.attachment.attachmentId)
+			else if (block.type === 'file' && block.attachment) html += '<div class="note">附件：' + escapeHtml(block.attachment.name || '文件') + '</div>'
+			else if (block.type === 'tool-call') html += '<div class="note">调用 ' + escapeHtml(block.name) + '</div>'
+			else if (block.type === 'tool-result') html += blocksToHtml(block.content, sessionId)
+		}
+		return html
+	}
+
+	/** Pull the thinking out of a message so it can render as its own region. */
+	function splitAssistant(blocks) {
+		const reasoning = []
+		const rest = []
+		for (const block of blocks || []) {
+			if (block && typeof block === 'object' && block.type === 'reasoning') reasoning.push(block.text ?? '')
+			else rest.push(block)
+		}
+		return { reasoning: reasoning.join('\n'), rest }
+	}
+
+	function thinkHtml(item, index) {
+		if (typeof item.reasoning !== 'string' || item.reasoning.trim() === '') return ''
+		return '<details class="think" data-i="' + index + '"' + (item.reasoningOpen ? ' open' : '') + '>' +
+			'<summary>💭 思考过程</summary>' +
+			'<div class="think-body">' + escapeHtml(item.reasoning) + '</div>' +
+			'</details>'
+	}
+
+	function render() {
+		const sessionId = state.sessionId
+		const parts = []
+		for (let index = 0; index < state.items.length; index += 1) {
+			const item = state.items[index]
+			if (item.kind === 'user') {
+				parts.push('<div class="row user"><div class="bubble">' + blocksToHtml(item.content, sessionId) + '</div></div>')
+			} else if (item.kind === 'assistant') {
+				parts.push(thinkHtml(item, index))
+				const inner = blocksToHtml(item.content, sessionId) + (item.cursor ? '<span class="cursor"></span>' : '')
+				if (inner.trim() !== '') parts.push('<div class="row"><div class="bubble">' + inner + '</div></div>')
+			} else if (item.kind === 'tool') {
+				const body = item.result === null ? (item.done ? '（无输出）' : '运行中…') : item.result
+				parts.push(
+					'<div class="tool' + (item.open ? ' open' : '') + '" data-i="' + index + '">' +
+					'<div class="name">🔧 ' + escapeHtml(item.name) + '</div>' +
+					'<div class="body' + (item.error ? ' error' : '') + '">' + escapeHtml(body) + '</div>' +
+					'</div>'
+				)
+			} else if (item.kind === 'note') {
+				parts.push('<div class="note">' + escapeHtml(item.text) + '</div>')
+			}
+		}
+		// innerHTML resets the scroll offset, so put it back where the reader was.
+		const pinned = state.stick
+		const previousTop = log.scrollTop
+		log.innerHTML = parts.join('')
+		log.scrollTop = pinned ? log.scrollHeight : previousTop
+	}
+
+	/** Streaming deltas arrive far faster than a phone needs to repaint. */
+	let renderQueued = false
+	function scheduleRender() {
+		if (renderQueued) return
+		renderQueued = true
+		requestAnimationFrame(() => {
+			renderQueued = false
+			// Rebuilding innerHTML throws away an in-progress text selection — and
+			// selecting text is exactly how a reader copies something on a phone.
+			// Hold the frame until the selection is released.
+			const selection = window.getSelection?.()
+			if (selection && selection.isCollapsed === false && selection.toString().trim() !== '') {
+				setTimeout(scheduleRender, 200)
+				return
+			}
+			render()
+		})
+	}
+
+	function copyText(text) {
+		// The LAN page is plain http, which is not a secure context, so
+		// navigator.clipboard is unavailable there; execCommand still works.
+		try {
+			if (window.isSecureContext === true && navigator.clipboard !== undefined) {
+				void navigator.clipboard.writeText(text)
+				return true
+			}
+		} catch { /* fall through to the legacy path */ }
+		try {
+			const area = document.createElement('textarea')
+			area.value = text
+			area.setAttribute('readonly', '')
+			area.style.cssText = 'position:fixed;top:-1000px;opacity:0'
+			document.body.appendChild(area)
+			area.select()
+			area.setSelectionRange(0, area.value.length)
+			const ok = document.execCommand('copy')
+			area.remove()
+			return ok === true
+		} catch {
+			return false
+		}
+	}
+
+	let toastTimer = 0
+	function toast(message) {
+		const node = $('toast')
+		node.textContent = message
+		node.classList.add('on')
+		clearTimeout(toastTimer)
+		toastTimer = setTimeout(() => node.classList.remove('on'), 1700)
+	}
+
+	log.addEventListener('click', (event) => {
+		const tool = event.target.closest('.tool')
+		if (!tool) return
+		const item = state.items[Number(tool.dataset.i)]
+		// The flag has to move too: render() rebuilds from state, so toggling only
+		// the class would collapse the block again on the next streaming frame.
+		if (item && item.kind === 'tool') item.open = !item.open
+		tool.classList.toggle('open')
+	})
+
+	// `toggle` does not bubble, hence the capture phase.
+	log.addEventListener('toggle', (event) => {
+		const node = event.target
+		if (!node || node.tagName !== 'DETAILS' || node.classList.contains('think') !== true) return
+		const item = state.items[Number(node.dataset.i)]
+		if (item && item.kind === 'assistant') {
+			item.reasoningOpen = node.open === true
+			item.reasoningTouched = true
+		}
+	}, true)
+
+	// Long-press copies the block under the thumb; a tap still toggles.
+	let pressTimer = 0
+	let pressOrigin = null
+	function cancelPress() {
+		if (pressTimer !== 0) { clearTimeout(pressTimer); pressTimer = 0 }
+	}
+	log.addEventListener('pointerdown', (event) => {
+		const target = event.target.closest('.bubble, .think-body, .tool .body')
+		if (!target) return
+		cancelPress()
+		pressOrigin = { x: event.clientX, y: event.clientY }
+		pressTimer = setTimeout(() => {
+			pressTimer = 0
+			pressOrigin = null
+			const text = (target.innerText || target.textContent || '').trim()
+			if (text === '') return
+			toast(copyText(text) ? `已复制 ${text.length} 字` : '复制失败，请直接长按选中')
+		}, 550)
+	}, { passive: true })
+	log.addEventListener('pointermove', (event) => {
+		if (pressOrigin === null) return
+		if (Math.abs(event.clientX - pressOrigin.x) > 10 || Math.abs(event.clientY - pressOrigin.y) > 10) cancelPress()
+	}, { passive: true })
+	for (const type of ['pointerup', 'pointercancel']) log.addEventListener(type, cancelPress, { passive: true })
+
+	log.addEventListener('scroll', () => { state.stick = atBottom() })
+
+	/* --------------------------------------------------------- event fold */
+
+	function applyEvent(event) {
+		const data = event.data || {}
+		switch (event.type) {
+			case 'user/message':
+				state.live = null
+				state.items.push({ kind: 'user', content: data.content || [] })
+				break
+			case 'assistant/message': {
+				state.live = null
+				state.reasoning = null
+				const message = data.message || {}
+				const { reasoning, rest } = splitAssistant(message.content)
+				const last = state.items[state.items.length - 1]
+				if (last && last.kind === 'assistant' && last.cursor) {
+					last.cursor = false
+					last.content = rest
+					if (reasoning !== '') last.reasoning = reasoning
+					// Fold the thinking away once the answer is done — unless the
+					// reader opened it themselves, which must survive the re-render.
+					if (last.reasoningTouched !== true) last.reasoningOpen = false
+				} else {
+					state.items.push({ kind: 'assistant', content: rest, reasoning, cursor: false, reasoningOpen: false })
+				}
+				break
+			}
+			case 'tool/call': {
+				state.live = null
+				state.items.push({ kind: 'tool', callId: data.callId, name: data.name, result: null, error: false, done: false, open: false })
+				break
+			}
+			case 'tool/result': {
+				const block = (data.message && data.message.content && data.message.content[0]) || {}
+				const parts = []
+				for (const inner of block.content || []) {
+					if (inner && inner.type === 'text') parts.push(inner.text)
+					else if (inner && inner.type === 'image') parts.push('[图片]')
+				}
+				let body = parts.join('\n').trim()
+				if (body.length > 4000) body = body.slice(0, 4000) + '\n…（已截断）'
+				let target = null
+				for (let i = state.items.length - 1; i >= 0; i -= 1) {
+					if (state.items[i].kind === 'tool' && state.items[i].callId === block.toolCallId) { target = state.items[i]; break }
+				}
+				if (target) {
+					target.done = true
+					target.result = body === '' ? '（无输出）' : body
+					target.error = Boolean(data.error) || block.isError === true
+					target.open = target.error
+				} else {
+					state.items.push({ kind: 'note', text: '工具结果：' + (body.slice(0, 200) || '（空）') })
+				}
+				break
+			}
+			case 'turn/start':
+				state.running = true
+				setStatus('busy')
+				break
+			case 'turn/end':
+				state.running = false
+				state.live = null
+				state.reasoning = null
+				setStatus('live')
+				break
+		}
+	}
+
+	function applyDelta(frame) {
+		if (!frame) return
+		if (frame.type === 'start') {
+			state.live = { text: '' }
+			state.reasoning = null
+			state.items.push({ kind: 'assistant', content: [], reasoning: '', cursor: true, reasoningOpen: true })
+			return
+		}
+		if (frame.type === 'end') {
+			state.live = null
+			state.reasoning = null
+			const last = state.items[state.items.length - 1]
+			if (last && last.kind === 'assistant') last.cursor = false
+			return
+		}
+		if (frame.type !== 'chunk' || !frame.chunk) return
+		const chunk = frame.chunk
+		if (chunk.type === 'text-delta') {
+			if (!state.live) {
+				state.live = { text: '' }
+				state.items.push({ kind: 'assistant', content: [], reasoning: '', cursor: true, reasoningOpen: true })
+			}
+			state.live.text += chunk.text || ''
+			const last = state.items[state.items.length - 1]
+			// Only the answer is rewritten here. Thinking lives in its own field, so
+			// it no longer vanishes the instant the answer starts streaming.
+			if (last && last.kind === 'assistant') last.content = [{ type: 'text', text: state.live.text }]
+		} else if (chunk.type === 'reasoning-delta') {
+			state.reasoning = (state.reasoning || '') + (chunk.text || '')
+			let last = state.items[state.items.length - 1]
+			if (!(last && last.kind === 'assistant')) {
+				state.items.push({ kind: 'assistant', content: [], reasoning: '', cursor: true, reasoningOpen: true })
+				last = state.items[state.items.length - 1]
+			}
+			last.reasoning = state.reasoning
+		}
+	}
+
+	function applySnapshot(frame) {
+		state.items = []
+		state.tools = new Map()
+		state.live = null
+		state.reasoning = null
+		for (const record of frame.records || []) {
+			if (record && record.type === 'event' && record.event) applyEvent(record.event)
+		}
+	}
+
+	/* -------------------------------------------------------------- stream */
+
+	function connect() {
+		if (state.source) state.source.close()
+		if (!state.sessionId) return
+		setStatus('busy')
+		const source = new EventSource('api/stream?sessionId=' + encodeURIComponent(state.sessionId))
+		state.source = source
+		source.onopen = () => setStatus(state.running ? 'busy' : 'live')
+		source.onerror = () => setStatus('down')
+		source.onmessage = (message) => {
+			let payload
+			try { payload = JSON.parse(message.data) } catch { return }
+			state.stick = atBottom()
+			if (payload.t === 'snapshot') { checkPageTag(payload.tag); applySnapshot(payload) }
+			else if (payload.t === 'event') applyEvent(payload.event)
+			else if (payload.t === 'delta') applyDelta(payload.frame)
+			else if (payload.t === 'error') flash(payload.message)
+			else if (payload.t === 'end') setStatus('live')
+			scheduleRender()
+		}
+	}
+
+	/* -------------------------------------------------------------- 任务 */
+
+	function loadSessions() {
+		return api('api/bootstrap').then((body) => {
+			checkPageTag(body.pageTag)
+			if (body.failure) flash('会话列表读取失败：' + body.failure)
+			else hide(banner)
+			state.sessions = body.sessions || []
+			const previous = state.sessionId || localStorage.getItem('dshm.session')
+			sessionSelect.innerHTML = state.sessions.map((item) =>
+				'<option value="' + escapeHtml(item.sessionId) + '">' +
+				(item.running ? '● ' : '') + escapeHtml(item.title || item.sessionId.slice(0, 12)) +
+				'</option>').join('')
+			if (state.sessions.length === 0) {
+				flash('这台电脑上还没有任何会话，去「新建」开一个。')
+				return
+			}
+			const chosen = state.sessions.find((item) => item.sessionId === previous) || state.sessions[0]
+			sessionSelect.value = chosen.sessionId
+			if (chosen.sessionId !== state.sessionId) {
+				state.sessionId = chosen.sessionId
+				localStorage.setItem('dshm.session', state.sessionId)
+				connect()
+			}
+		})
+	}
+
+	function send() {
+		const body = text.value.trim()
+		if (body === '' && state.images.length === 0) return
+		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
+		sendBtn.disabled = true
+		api('api/prompt', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ sessionId: state.sessionId, text: body, images: state.images }),
+		}).then(() => {
+			text.value = ''
+			text.style.height = 'auto'
+			state.images = []
+			renderThumbs()
+			state.stick = true
+		}).catch((error) => flash('发送失败：' + error.message))
+			.finally(() => { sendBtn.disabled = false })
+	}
+
+	function renderThumbs() {
+		thumbs.innerHTML = state.images.map((image, index) =>
+			'<div class="thumb"><img src="data:' + image.mediaType + ';base64,' + image.data + '">' +
+			'<button data-drop="' + index + '">×</button></div>').join('')
+	}
+
+	thumbs.addEventListener('click', (event) => {
+		const index = event.target.getAttribute && event.target.getAttribute('data-drop')
+		if (index === null) return
+		state.images.splice(Number(index), 1)
+		renderThumbs()
+	})
+
+	fileInput.addEventListener('change', () => {
+		const files = Array.from(fileInput.files || [])
+		fileInput.value = ''
+		for (const file of files) {
+			if (!file.type.startsWith('image/')) continue
+			const reader = new FileReader()
+			reader.onload = () => {
+				const result = String(reader.result)
+				const comma = result.indexOf(',')
+				state.images.push({ mediaType: file.type, data: comma < 0 ? '' : result.slice(comma + 1), name: file.name })
+				renderThumbs()
+			}
+			reader.readAsDataURL(file)
+		}
+	})
+
+	text.addEventListener('input', () => {
+		text.style.height = 'auto'
+		text.style.height = Math.min(text.scrollHeight, 130) + 'px'
+	})
+
+	/* -------------------------------------------------------------- 新建 */
+
+	function loadWorkspaces() {
+		return api('api/workspaces').then((body) => {
+			state.workspaces = body.workspaces || []
+			state.presets = body.presets || []
+			if (state.pickedWorkspace === null && state.workspaces.length > 0) state.pickedWorkspace = state.workspaces[0].id
+			renderWorkspaces()
+			renderPresets()
+		}).catch((error) => {
+			$('workspaces').innerHTML = '<div class="err-box">读取文件夹失败：' + escapeHtml(error.message) + '</div>'
+		})
+	}
+
+	function renderWorkspaces() {
+		if (state.workspaces.length === 0) {
+			$('workspaces').innerHTML = '<div class="hint">这台电脑还没有登记任何工作区，直接在下面手填路径。</div>'
+			return
+		}
+		$('workspaces').innerHTML = state.workspaces.map((workspace) =>
+			'<button class="pick' + (workspace.id === state.pickedWorkspace ? ' on' : '') + '" data-ws="' + escapeHtml(workspace.id) + '">' +
+			'<span class="mark"></span><span class="txt"><span class="t">' + escapeHtml(workspace.title) + '</span>' +
+			'<span class="p">' + escapeHtml(workspace.path) + '</span></span></button>').join('')
+	}
+
+	function renderPresets() {
+		$('preset').innerHTML = '<option value="">（用默认）</option>' + state.presets.map((preset) =>
+			'<option value="' + escapeHtml(preset.id) + '">' + escapeHtml(preset.name) + '</option>').join('')
+	}
+
+	$('workspaces').addEventListener('click', (event) => {
+		const button = event.target.closest('.pick')
+		if (!button) return
+		state.pickedWorkspace = button.dataset.ws
+		$('cwd').value = ''
+		renderWorkspaces()
+	})
+
+	function createTask() {
+		const cwd = $('cwd').value.trim()
+		const request = {}
+		if (cwd !== '') request.cwd = cwd
+		else if (state.pickedWorkspace !== null) request.workspaceId = state.pickedWorkspace
+		const preset = $('preset').value
+		if (preset !== '') request.agentPreset = preset
+		if (Object.keys(request).length === 0) { $('createHint').textContent = '先选一个文件夹或填一个路径。'; return }
+
+		const first = $('firstText').value.trim()
+		// Creating a Session is cheap and reversible; running its first turn is
+		// neither. Ask exactly when a stray tap would start that turn.
+		if (first !== '' && !window.confirm('创建后会立刻把这条内容发给 agent 开始执行，确定吗？')) {
+			$('createHint').textContent = '已取消创建。'
+			return
+		}
+
+		const button = $('createBtn')
+		button.disabled = true
+		$('createHint').textContent = '正在创建…'
+		api('api/session', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify(request),
+		}).then((created) => {
+			state.sessionId = created.sessionId
+			localStorage.setItem('dshm.session', created.sessionId)
+			const after = first === '' ? Promise.resolve() : api('api/prompt', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: created.sessionId, text: first, images: [] }),
+			})
+			return after.then(() => {
+				$('firstText').value = ''
+				$('cwd').value = ''
+				$('createHint').textContent = '创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。'
+				closeSheet()
+				switchTab('task')
+				return loadSessions()
+			})
+		}).catch((error) => {
+			$('createHint').textContent = '创建失败：' + error.message
+		}).finally(() => { button.disabled = false })
+	}
+
+	/* -------------------------------------------------------------- 余额 */
+
+	function renderBalance() {
+		const body = $('billBody')
+		const foot = $('billFoot')
+
+		if (state.balanceBusy) {
+			body.innerHTML = '<div class="state"><span class="emoji">⏳</span>正在查询余额…</div>'
+			foot.textContent = ''
+			return
+		}
+		const data = state.balance
+		if (data === null) {
+			body.innerHTML = '<div class="state"><span class="emoji">💰</span>点下面的「刷新余额」查询</div>'
+			foot.textContent = ''
+			return
+		}
+		if (!data.ok) {
+			body.innerHTML = '<div class="err-box">' + escapeHtml(data.message || '查询失败') +
+				'<div class="meta" style="margin-top:8px">原因代码：' + escapeHtml(data.reason || 'unknown') + '</div></div>'
+			foot.textContent = data.reason === 'missing-key'
+				? '在桌面端配置 DEEPSEEK_API_KEY 后再试。'
+				: '余额由 DeepSeek 的接口提供；网络不通或接口异常时会这样。'
+			return
+		}
+		const cards = (data.balances || []).map((entry) => {
+			const granted = Number.isFinite(entry.granted) ? money(entry.granted) : '—'
+			const topped = Number.isFinite(entry.toppedUp) ? money(entry.toppedUp) : '—'
+			return '<div class="card">' +
+				'<div class="cur">可用余额 · ' + escapeHtml(entry.currency) + '</div>' +
+				'<div class="big">' + escapeHtml(money(entry.total)) + '</div>' +
+				'<div class="split">' +
+				'<div><div class="k">赠送额度</div><div class="v">' + escapeHtml(granted) + '</div></div>' +
+				'<div><div class="k">充值余额</div><div class="v">' + escapeHtml(topped) + '</div></div>' +
+				'</div></div>'
+		}).join('')
+		const when = data.at ? new Date(data.at).toLocaleTimeString('zh-CN', { hour12: false }) : '—'
+		body.innerHTML = cards +
+			'<div class="meta">账户状态：' + (data.isAvailable ? '可用' : '不可用') +
+			'　·　更新于 ' + escapeHtml(when) + (data.cached ? '（缓存）' : '') +
+			'<br>密钥来源：' + escapeHtml(data.keySource || '—') + '</div>'
+		foot.textContent = '充值没有公开 API，下面的按钮会打开 DeepSeek 官方充值页，需要在那边登录。'
+	}
+
+	function loadBalance(force) {
+		state.balanceBusy = true
+		renderBalance()
+		api('api/balance' + (force ? '?refresh=1' : ''))
+			.then((body) => { state.balance = body })
+			.catch((error) => { state.balance = { ok: false, reason: 'request', message: error.message } })
+			.finally(() => { state.balanceBusy = false; renderBalance() })
+	}
+
+	/* ------------------------------------------------------------- wiring */
+
+	$('gateBtn').addEventListener('click', () => {
+		const pin = $('pin').value.trim()
+		if (!/^\d{6}$/.test(pin)) { $('gateError').textContent = '请输入 6 位数字'; return }
+		$('gateError').textContent = ''
+		fetch('api/login', {
+			method: 'POST',
+			credentials: 'same-origin',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ pin }),
+		}).then(async (response) => {
+			if (!response.ok) {
+				const body = await response.json().catch(() => ({}))
+				$('gateError').textContent = body.error || '连接失败'
+				return
+			}
+			hide(gate); show(app)
+			switchTab('task')
+			loadSessions()
+		}).catch(() => { $('gateError').textContent = '网络不通' })
+	})
+	$('pin').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('gateBtn').click() })
+
+	$('reload').addEventListener('click', () => {
+		hide(banner)
+		if (state.tab === 'bill') loadBalance(true)
+		else loadSessions()
+	})
+	$('logout').addEventListener('click', () => {
+		api('api/logout', { method: 'POST' }).catch(() => {}).finally(() => showGate())
+	})
+
+	sessionSelect.addEventListener('change', () => {
+		state.sessionId = sessionSelect.value
+		localStorage.setItem('dshm.session', state.sessionId)
+		state.items = []
+		render()
+		connect()
+	})
+
+	$('pick').addEventListener('click', () => fileInput.click())
+	sendBtn.addEventListener('click', send)
+	stopBtn.addEventListener('click', () => {
+		api('api/cancel', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ sessionId: state.sessionId }),
+		}).catch((error) => flash('取消失败：' + error.message))
+	})
+	text.addEventListener('keydown', (event) => {
+		if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send()
+	})
+
+	$('createBtn').addEventListener('click', createTask)
+	$('newBack').addEventListener('click', () => {
+		const typed = $('cwd').value.trim() !== '' || $('firstText').value.trim() !== ''
+		if (typed && !window.confirm('放弃这次填写？')) return
+		$('cwd').value = ''
+		$('firstText').value = ''
+		$('createHint').textContent = '创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。'
+		closeSheet()
+	})
+	$('billRefresh').addEventListener('click', () => loadBalance(true))
+	$('billTopUp').addEventListener('click', () => {
+		const url = (state.balance && state.balance.topUpUrl) || 'https://platform.deepseek.com/top_up'
+		window.open(url, '_blank', 'noopener')
+	})
+
+	/* --------------------------------------------------------------- boot */
+
+	api('api/bootstrap')
+		.then(() => { hide(gate); show(app); switchTab('task'); return loadSessions() })
+		.catch(() => { /* 401 already routed to the gate */ })
+})()
+</script>
+</body>
+</html>

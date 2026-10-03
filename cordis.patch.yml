@@ -1,0 +1,9 @@
+# dsh-plugin-mobile-bridge bundle patch.
+#
+# Host-only plugin: it owns its own LAN HTTP listener and serves the phone UI
+# itself, so it contributes no `dsh.client` half and nothing to the web bundle
+# graph. The row exists so Cordis mounts the package and `apply()` runs.
+
+- insert:
+    - id: mobile-bridge
+      name: dsh-plugin-mobile-bridge

@@ -1,0 +1,12 @@
+node_modules/
+*.log
+*.bak
+*.bak-*
+*.prev
+tunnel-url.txt
+tunnel.err.log
+tunnel.out.log
+phone-diag.png
+mobile-bridge.json
+mobile-bridge.tokens.json
+cloudflared.exe
