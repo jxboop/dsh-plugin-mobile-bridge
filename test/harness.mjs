@@ -422,6 +422,20 @@ if (!await waitForPort(PORT)) {
 	const afterRestart = await fetch(`${base}/api/bootstrap`, authed)
 	check('a phone stays logged in across a server restart',
 		afterRestart.status === 200, `HTTP ${afterRestart.status}`)
+
+	// 恢复的会话故意【不提权】：读得到，但一动手必须重新证明是本人。服务器用
+	// 403 + needPin 表达这件事 —— 不是 401，因为令牌本身完全有效。手机页面正是
+	// 靠这个标志去打开 PIN 门的；契约一旦变成 401 或普通 403，用户就会被卡在
+	// "提示要重输 PIN，却根本没有输入框"。
+	const restartWrite = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', text: '重启后应当被拒', images: [] }),
+	})
+	const restartWriteBody = await restartWrite.json().catch(() => ({}))
+	check('a restored session is readable but not elevated (403 + needPin, not 401)',
+		restartWrite.status === 403 && restartWriteBody.needPin === true,
+		`HTTP ${restartWrite.status} ${JSON.stringify(restartWriteBody)}`)
 }
 
 const logout = await fetch(`${base}/api/logout`, { method: 'POST', headers: { cookie } })

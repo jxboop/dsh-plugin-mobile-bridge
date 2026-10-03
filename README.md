@@ -70,6 +70,22 @@ dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 | `elevationMinutes` | 15 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
 | `crashProbe` | false | **排查用，平时别开。** 设为 `true` 会把宿主的 uncaughtException / exit 事件写进 `~/.dsh/dsh-crash.log`（含每 30 秒一条内存心跳）。它跑在宿主进程里、会注册全局处理器并持续写盘，所以默认关闭。 |
 
+### 为什么过一会儿又让我输 PIN？
+
+这是设计如此，不是掉线。手机上有两种状态：
+
+- **已登录**（有 cookie）：能看会话列表和聊天记录。令牌默认 12 小时有效，所以**重启电脑、重启 DSH 都不会把你踢出去**。
+- **已提权**（最近输过一次 PIN）：才能让这台电脑干活 —— 下发任务、取消、新建会话。
+
+**提权默认只保持 15 分钟**（`elevationMinutes`），过期后第一次动手会重新弹出 PIN 门；宿主重启后恢复的会话同样不带提权。觉得输得太勤就把它调大，上限 240 分钟：
+
+```json
+{ "elevationMinutes": 240 }
+```
+
+> 如果你看到"需要重新输入 PIN"却找不到输入框，那是 0.2.0 及更早版本的 bug（页面只认 401、不认服务器用来表达提权的 `403 + needPin`，于是提示了却没有门）。**0.2.1 起已修复**：过期时页面会直接把 PIN 门打开。
+
+
 ### 3. 放行防火墙（Windows）
 
 首次启动会弹 Windows 防火墙提示。**只勾"专用网络"**即可（手机和电脑在同一 WiFi 时够用）。若要走外网隧道，勾"公用网络"。
@@ -147,15 +163,15 @@ npm install
 | 文件 | 内容 | 需要 |
 |---|---|---|
 | `test/crashprobe.mjs` | 崩溃探针开关：默认不碰宿主全局状态、开启后能在配置重写中存活（17 项） | — |
-| `test/harness.mjs` | 桥的端到端行为：PIN 门、cookie、prompt 组装、SSE 扇出、取消、附件、新建会话、余额缓存、重启保活、注销（44 项） | — |
-| `test/ui.mjs` | 手机页面的 DOM 与交互，并断言"没有请求跑出密钥段"（58 项） | jsdom |
+| `test/harness.mjs` | 桥的端到端行为：PIN 门、cookie、prompt 组装、SSE 扇出、取消、附件、新建会话、余额缓存、重启保活（含"恢复的会话可读但不可写 = 403+needPin"）、注销（45 项） | — |
+| `test/ui.mjs` | 手机页面的 DOM 与交互：含"没有请求跑出密钥段"与"提权过期时必须把 PIN 门打开"（63 项） | jsdom |
 | `test/addresses.mjs` | 地址排序与分类（16 项） | — |
 | `test/shot.mjs` | 真浏览器截图 + 布局测量 | Windows + Edge |
 | `test/phone-diag.mjs` | 真浏览器诊断：抓页面异常、控制台、网络状态码 | Windows + Edge |
 
 ```bash
-npm test          # security 50 + crashprobe 17 + harness 44 + addresses 16 = 127 项，无需浏览器
-npm run test:all  # 再加上 ui 的 58 项，共 185 项
+npm test          # security 50 + crashprobe 17 + harness 45 + addresses 16 = 128 项，无需浏览器
+npm run test:all  # 再加上 ui 的 63 项，共 191 项
 ```
 
 ### 仍未消除的风险（如实列出）
