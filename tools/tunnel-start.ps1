@@ -54,6 +54,7 @@ function Set-PublicUrl([string]$url) {
 }
 
 function Get-TunnelUrl {
+	# 1) cloudflared 自己的日志最权威：那是【本次运行】真正拿到的网址。
 	foreach ($f in @($ErrLog, $OutLog)) {
 		if (Test-Path $f) {
 			$raw = Get-Content $f -Raw -ErrorAction SilentlyContinue
@@ -61,6 +62,22 @@ function Get-TunnelUrl {
 			if ($m.Success) { return $m.Value }
 		}
 	}
+	# 2) 日志读不到时退回上次记录。没有这条回退，就会出现"隧道明明在跑、
+	#    脚本却说拿不到网址"—— 用户只能干瞪眼。
+	if (Test-Path $UrlFile) {
+		$raw = [string](Get-Content $UrlFile -Raw -Encoding UTF8 -ErrorAction SilentlyContinue)
+		$raw = $raw -replace "^\uFEFF", ''
+		$m = [regex]::Match($raw, 'https://[a-z0-9-]+\.trycloudflare\.com')
+		if ($m.Success) { return $m.Value }
+	}
+	# 3) 最后看手机桥配置里的 publicUrl（DSH 徽标显示的就是它）。
+	try {
+		$cfg = Get-Content $ConfigFile -Raw -Encoding UTF8 | ConvertFrom-Json
+		if ($cfg -and $cfg.publicUrl) {
+			$m = [regex]::Match([string]$cfg.publicUrl, 'https://[a-z0-9-]+\.trycloudflare\.com')
+			if ($m.Success) { return $m.Value }
+		}
+	} catch { }
 	return $null
 }
 
@@ -76,8 +93,47 @@ function Show-Url([string]$url) {
 	Write-Host ''
 }
 
+function Wait-TunnelReady([string]$full) {
+	# 拿到网址 ≠ 能用。Cloudflare 边缘注册需要几秒，cloudflared 也可能随后掉线，
+	# 所以必须【真的从外网打开一次】再告诉用户"好了"。
+	# 不验证的后果：手机上是 1033 / 1016 错误页，而用户以为自己操作错了。
+	Write-Host ' 正在确认外网真的能打开' -NoNewline
+	for ($i = 0; $i -lt 25; $i++) {
+		Start-Sleep -Seconds 1
+		Write-Host '.' -NoNewline
+		try {
+			$r = Invoke-WebRequest -Uri $full -TimeoutSec 8 -UseBasicParsing
+			if ($r.StatusCode -eq 200) { Write-Host ''; return $true }
+		} catch { }
+		if (-not (Get-Process cloudflared -ErrorAction SilentlyContinue)) { break }
+	}
+	Write-Host ''
+	return $false
+}
+
+function Show-NotReady([string]$full) {
+	Write-Host ''
+	Write-Host ' 隧道没能通过外网验证 —— 现在把网址给手机，它多半会显示 1033 / 1016。' -ForegroundColor Red
+	Write-Host ' 常见原因：' -ForegroundColor Yellow
+	Write-Host '   · 电脑睡眠 / 休眠 / 合盖 —— 隧道会断'
+	Write-Host '   · 安全软件、VPN 或网络加速器掐掉了 cloudflared 的连接'
+	Write-Host '   · 网络本身不稳定'
+	Write-Host '   · 网址是【上一轮】的（隧道重启过，免费隧道的网址每次都会变）'
+	Write-Host ''
+	Write-Host ' cloudflared 最后几行输出：' -ForegroundColor Yellow
+	Get-Content $ErrLog -Tail 10 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "   $_" }
+	Write-Host ''
+	Write-Host ' 网址（可能过一会儿自己就通了）：' -ForegroundColor Gray
+	Write-Host "   $full" -ForegroundColor Gray
+	Write-Host ''
+	Write-Host ' 下一步：先跑 tools\tunnel-stop.ps1，再跑一次本脚本拿全新网址。' -ForegroundColor Yellow
+	Write-Host ' 或者跑 tools\tunnel-status.ps1 看详细体检结果。' -ForegroundColor Yellow
+	Write-Host ''
+}
+
 if (-not (Test-Path $Cloudflared)) {
 	Write-Host "找不到 cloudflared.exe：$Cloudflared" -ForegroundColor Red
+	Write-Host '先跑一次 tools\download-cloudflared.ps1，或手动下载放到 tools\ 目录。' -ForegroundColor Yellow
 	exit 1
 }
 
@@ -97,7 +153,8 @@ if ($running.Count -gt 0) {
 		Set-PublicUrl $u
 		Set-Content -LiteralPath $UrlFile -Value $full -Encoding UTF8 -NoNewline
 		Set-Clipboard -Value $full -ErrorAction SilentlyContinue
-		Show-Url $full
+		if (Wait-TunnelReady $full) { Show-Url $full }
+		else { Show-NotReady $full; exit 1 }
 	}
 	else { Write-Host '但没能从日志里解析出网址，稍等几秒重跑本脚本。' -ForegroundColor Yellow }
 	exit 0
@@ -127,5 +184,12 @@ if (-not $url) {
 
 Set-Content -LiteralPath $UrlFile -Value (Get-FullUrl $url) -Encoding UTF8 -NoNewline
 Set-PublicUrl $url
-Set-Clipboard -Value (Get-FullUrl $url) -ErrorAction SilentlyContinue
-Show-Url (Get-FullUrl $url)
+$full = Get-FullUrl $url
+Set-Clipboard -Value $full -ErrorAction SilentlyContinue
+if (Wait-TunnelReady $full) {
+	Show-Url $full
+	Write-Host ' （已确认外网可打开）' -ForegroundColor Green
+} else {
+	Show-NotReady $full
+	exit 1
+}

@@ -111,8 +111,38 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\tunnel-stop.ps1
 
 | 脚本 | 用途 |
 |---|---|
+| `tools/tunnel-status.ps1` | **体检**：隧道现在是死是活（进程、端口、外网实测），手机上出现错误页时先跑它 |
 | `tools/show-phone-url.ps1` | 一个可复制的小窗口，显示外网/局域网网址 + PIN（带刷新按钮） |
 | `tools/revoke-phone.ps1` | **应急**：一键吊销所有手机登录（两步确认，防误触） |
+
+### 手机上是 Cloudflare 错误页？（Error 1033 / 1016）
+
+**这两个错都不是插件的问题，而是隧道没了。**
+
+| 错误 | 含义 |
+|---|---|
+| **1033** Cloudflare Tunnel error | 这个主机名**曾经**是一条隧道，但现在没有任何隧道连着它 |
+| **1016** Origin DNS error | 这个主机名已经**完全解析不到**了（隧道早就没了） |
+
+**最常见的两个原因：**
+
+1. **免费快速隧道的网址，每次 cloudflared 重启都会换一个。** 旧网址**永久失效，救不回来** —— 不是"过一会儿就好"，是那个域名再也不属于你了。手机上收藏的旧网址永远打不开。
+2. **跑隧道的电脑睡眠 / 休眠 / 合盖了**，或者换了网络、被安全软件或加速器掐掉了连接 —— 隧道随之中断。
+
+**怎么办：**
+
+```powershell
+# 先体检：一眼看出是进程没了、端口没起、还是网址失效
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\tunnel-status.ps1
+
+# 网址失效就重拿一个（先停再起，确保拿到全新的）
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\tunnel-stop.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\tunnel-start.ps1
+```
+
+`tunnel-start.ps1` 会**真的从外网打开一次**再告诉你成功了 —— 如果它说"没能通过外网验证"，那就是**现在把网址给手机也没用**，直接照它列的原因排查，别浪费时间。
+
+想要**一个永不变的网址**，只有两条路：Cloudflare **命名隧道**（要有自己的域名 + 账号），或者用 **Tailscale / ZeroTier** 这类组网工具（推荐：地址固定、端到端加密、且完全不暴露到公网）。
 
 > ⚠️ 免费快速隧道的**网址每次重启都会变**，而且是一条**公开网址** —— 拿到的人都能看到 PIN 登录页。手机桥有 PIN 认证和限速兜着，但**别把网址发到群里**。
 
