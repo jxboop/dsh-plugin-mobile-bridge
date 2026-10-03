@@ -1,62 +1,53 @@
 /**
- * Diagnose the phone page in a real browser.
+ * Lean, hang-proof phone-page diagnostic.
  *
- * Unlike shot.mjs this one:
- *   - builds URLs from the configured secret path (the old hard-coded absolute
- *     `/api/login` silently 404s once the bridge moved behind a prefix),
- *   - records Runtime.exceptionThrown / console output and every network response,
- *     so "blank" can be told apart from "threw before it drew anything",
- *   - then clicks into a session and reports what #log holds afterwards.
- *
- *   node phone-diag.mjs
+ * The previous version could block forever on a devtools websocket that never
+ * opened. Everything here has a deadline, the browser profile is unique per run
+ * (no stale lock), and error capture is installed BEFORE navigation so a throw
+ * during first render is still recorded.
  */
 import { spawn } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { homedir } from 'node:os'
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-const PORT = 9334
+const PORT = 9341 + (process.pid % 100)
 const dshDir = process.env.DSH_HOME ?? join(homedir(), '.dsh')
 const cfg = JSON.parse(await readFile(join(dshDir, 'mobile-bridge.json'), 'utf8'))
 const base = `http://127.0.0.1:${cfg.port}`
 const pageUrl = `${base}/${cfg.pathSecret}/`
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const withDeadline = (p, ms, label) => Promise.race([p, sleep(ms).then(() => Promise.reject(new Error(`deadline: ${label}`)))])
 
 console.log(`target: ${pageUrl}`)
-
 const login = await fetch(`${base}/${cfg.pathSecret}/api/login`, {
-	method: 'POST',
-	headers: { 'content-type': 'application/json' },
-	body: JSON.stringify({ pin: cfg.pin }),
+	method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: cfg.pin }),
 })
 console.log(`login -> ${login.status}`)
-const setCookie = (login.headers.getSetCookie?.() ?? [])[0] ?? ''
-const token = setCookie.split(';')[0].split('=').slice(1).join('=')
-console.log(`token length: ${token.length}`)
-if (login.status !== 200) process.exit(1)
+const token = ((login.headers.getSetCookie?.() ?? [])[0] ?? '').split(';')[0].split('=').slice(1).join('=')
 
-const edge = spawn(EDGE, [
-	'--headless=new', '--disable-gpu', '--hide-scrollbars',
-	`--remote-debugging-port=${PORT}`,
-	`--user-data-dir=${process.env.TEMP}\\dsh-diag-profile`,
-	'about:blank',
-], { stdio: 'ignore' })
+const profile = await mkdtemp(join(tmpdir(), 'dsh-diag-'))
+const edge = spawn(EDGE, ['--headless=new', '--disable-gpu', '--no-first-run', '--hide-scrollbars',
+	`--remote-debugging-port=${PORT}`, `--user-data-dir=${profile}`, 'about:blank'], { stdio: 'ignore' })
+process.on('exit', () => { try { edge.kill() } catch { /* gone */ } })
 
 let wsUrl = ''
-const deadline = Date.now() + 20000
-while (Date.now() < deadline && wsUrl === '') {
+const t0 = Date.now()
+while (Date.now() - t0 < 25000 && wsUrl === '') {
 	try {
 		const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
 		const page = list.find((e) => e.type === 'page')
 		if (page?.webSocketDebuggerUrl) wsUrl = page.webSocketDebuggerUrl
 	} catch { /* not up */ }
-	if (wsUrl === '') await sleep(250)
+	if (wsUrl === '') await sleep(300)
 }
-if (wsUrl === '') { console.error('devtools never appeared'); edge.kill(); process.exit(1) }
+if (wsUrl === '') { console.error('devtools never appeared'); edge.kill(); await rm(profile, { recursive: true, force: true }); process.exit(1) }
+console.log(`devtools ready in ${Date.now() - t0}ms`)
 
 const socket = new WebSocket(wsUrl)
-await new Promise((res, rej) => { socket.onopen = res; socket.onerror = rej })
+await withDeadline(new Promise((res, rej) => { socket.onopen = res; socket.onerror = rej }), 10000, 'ws open')
 
 let nextId = 1
 const pending = new Map()
@@ -66,85 +57,74 @@ const responses = []
 socket.onmessage = (event) => {
 	const m = JSON.parse(event.data)
 	if (m.id !== undefined && pending.has(m.id)) {
-		const { resolve, reject } = pending.get(m.id)
+		const { resolve } = pending.get(m.id)
 		pending.delete(m.id)
-		if (m.error) reject(new Error(JSON.stringify(m.error)))
-		else resolve(m.result)
+		resolve(m.error ? { __error: m.error } : m.result)
 		return
 	}
 	if (m.method === 'Runtime.exceptionThrown') {
 		const d = m.params?.exceptionDetails
-		exceptions.push(`${d?.exception?.description ?? d?.text ?? 'unknown'}`.split('\n').slice(0, 4).join(' | '))
+		exceptions.push(String(d?.exception?.description ?? d?.text ?? '?').split('\n').slice(0, 6).join(' | '))
 	}
 	if (m.method === 'Runtime.consoleAPICalled') {
-		consoles.push(`${m.params.type}: ${(m.params.args ?? []).map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 200))
+		consoles.push(`${m.params.type}: ${(m.params.args ?? []).map((a) => a.value ?? a.description ?? '').join(' ')}`.slice(0, 240))
 	}
 	if (m.method === 'Network.responseReceived') {
 		const r = m.params.response
-		if (r.url.startsWith(base)) responses.push(`${r.status} ${r.url.slice(base.length)}`)
+		if (r.url.startsWith(base)) responses.push(`${r.status}  ${r.url.slice(base.length).slice(0, 80)}`)
 	}
 }
-const send = (method, params = {}) => new Promise((resolve, reject) => {
+const send = (method, params = {}) => new Promise((resolve) => {
 	const id = nextId++
-	pending.set(id, { resolve, reject })
+	pending.set(id, { resolve })
 	socket.send(JSON.stringify({ id, method, params }))
 })
-const evaluate = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result?.value
+const evaluate = async (expression) => {
+	const r = await send('Runtime.evaluate', { expression, returnByValue: true })
+	return r?.result?.value ?? (r?.__error ? 'ERR:' + JSON.stringify(r.__error) : undefined)
+}
 
-await send('Page.enable')
 await send('Runtime.enable')
+await send('Page.enable')
 await send('Network.enable')
+// Install capture BEFORE any page script runs.
+await send('Page.addScriptToEvaluateOnNewDocument', {
+	source: 'window.__errs=[];window.addEventListener("error",function(e){window.__errs.push(String(e.message)+" @"+(e.filename||"")+":"+(e.lineno||0))});window.addEventListener("unhandledrejection",function(e){window.__errs.push("rejection: "+String(e.reason))});',
+})
 await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
 await send('Network.setCookie', { name: 'dshm', value: token, domain: '127.0.0.1', path: '/' })
 await send('Page.navigate', { url: pageUrl })
-await sleep(7000)
 
-const stateOf = `JSON.stringify({
-  href: location.href,
-  title: document.title,
-  gate: (() => { const g = document.getElementById('gate'); return g ? getComputedStyle(g).display : null })(),
-  app: (() => { const a = document.getElementById('app'); return a ? getComputedStyle(a).display : null })(),
-  viewTask: (() => { const v = document.getElementById('view-task'); return v ? getComputedStyle(v).display : null })(),
-  logLen: (document.getElementById('log')?.textContent ?? '').length,
+const state = `JSON.stringify({
+  href: location.pathname,
+  gate: getComputedStyle(document.getElementById('gate')).display,
+  app: getComputedStyle(document.getElementById('app')).display,
+  selectValue: document.getElementById('session')?.value ?? null,
+  optionCount: document.getElementById('session')?.options.length ?? -1,
+  logChars: (document.getElementById('log')?.textContent ?? '').length,
   logRows: document.querySelectorAll('#log > *').length,
-  logHead: (document.getElementById('log')?.textContent ?? '').slice(0, 240),
-  heading: document.getElementById('heading')?.textContent ?? null,
-  banner: document.getElementById('banner')?.textContent ?? null,
-  toast: document.getElementById('toast')?.textContent ?? null,
-  tabs: (document.getElementById('tabs')?.textContent ?? '').slice(0, 60)
+  logHead: (document.getElementById('log')?.textContent ?? '').slice(0, 200),
+  status: document.getElementById('dot')?.className ?? null,
+  errs: (window.__errs ?? []).slice(0, 5)
 })`
 
-console.log('\n=== 进入页面 7 秒后 ===')
-console.log(await evaluate(stateOf))
+for (const [label, wait] of [['3s', 3000], ['8s', 5000], ['15s', 7000]]) {
+	await sleep(wait)
+	console.log(`\n=== 加载后 ${label} ===`)
+	console.log(await evaluate(state))
+}
 
-console.log('\n=== 页面尝试点击第一个会话 ===')
-const clicked = await evaluate(`(() => {
-  const cands = [...document.querySelectorAll('#log [data-id], #log .row, #log .item, #log button, #log a')]
-  if (cands.length === 0) return 'no candidate in #log'
-  const first = cands[0]
-  first.click()
-  return 'clicked: ' + first.tagName + '.' + first.className + ' | ' + (first.textContent || '').slice(0, 60)
-})()`)
-console.log(clicked)
-await sleep(8000)
-console.log('\n=== 点击后 ===')
-console.log(await evaluate(stateOf))
-
-console.log('\n=== 网络请求 ===')
-for (const r of responses.slice(-25)) console.log('  ' + r)
-
+console.log('\n=== 网络响应 ===')
+for (const r of responses.slice(-20)) console.log('  ' + r)
 console.log('\n=== 页面异常 ===')
-if (exceptions.length === 0) console.log('  （无）')
-for (const e of exceptions.slice(0, 10)) console.log('  ' + e)
-
-console.log('\n=== 控制台输出 ===')
-if (consoles.length === 0) console.log('  （无）')
-for (const c of consoles.slice(0, 15)) console.log('  ' + c)
+console.log(exceptions.length === 0 ? '  （无）' : exceptions.map((e) => '  ' + e).join('\n'))
+console.log('\n=== 控制台 ===')
+console.log(consoles.length === 0 ? '  （无）' : consoles.slice(0, 10).map((c) => '  ' + c).join('\n'))
 
 const shot = await send('Page.captureScreenshot', { format: 'png' })
-await writeFile('phone-diag.png', Buffer.from(shot.data, 'base64'))
-console.log('\nscreenshot: phone-diag.png')
-
+if (shot?.data) { await writeFile('D:\\dsh\\phone-diag.png', Buffer.from(shot.data, 'base64')); console.log('\nscreenshot: D:\\dsh\\phone-diag.png') }
 socket.close()
 edge.kill()
+await sleep(300)
+await rm(profile, { recursive: true, force: true }).catch(() => {})
 process.exit(0)

@@ -26,6 +26,19 @@ const PAGE_TAG = 'testtag000001'
 const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8'))
 	.replace('__DSH_PAGE_TAG__', PAGE_TAG)
 
+/**
+ * 页面真实所在的地址：**藏在密钥段后面**。
+ *
+ * 这个前缀是必须的。页面用的是相对地址（`fetch('api/bootstrap')`），浏览器会把它
+ * 解析到当前页面的目录下 —— 只有让 jsdom 的页面地址也带密钥段，mock 才和线上同形。
+ * 曾经这里写的是不带密钥的 `http://127.0.0.1:3081/`，而 mock 又按 `startsWith('/api/')`
+ * 匹配：相对地址解析出来是 `api/bootstrap`（无前导斜杠），永远匹配不上 → 每个请求都
+ * 404 → bootstrap 失败 → 整个测试静默烂掉。相对地址 + 带密钥的基准地址才是对的组合。
+ */
+const SECRET = '0123456789abcdef'
+const SECRET_PREFIX = `/${SECRET}/`
+const PAGE_URL = `http://127.0.0.1:3081${SECRET_PREFIX}`
+
 /** jsdom refuses real navigation; that refusal is how we observe a reload. */
 const jsdomErrors = []
 const virtualConsole = new VirtualConsole()
@@ -61,14 +74,31 @@ function jsonResponse(body, status = 200) {
 	})
 }
 
-function stubFetch(url, options = {}) {
-	requests.push({ url: String(url), options })
-	if (String(url).startsWith('/api/bootstrap')) return jsonResponse({ sessions: SESSIONS, failure: null })
-	if (String(url).startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
-	if (String(url).startsWith('/api/prompt')) return jsonResponse({ accepted: true })
-	if (String(url).startsWith('/api/cancel')) return jsonResponse({ accepted: true })
-	if (String(url).startsWith('/api/logout')) return jsonResponse({ ok: true })
-	if (String(url).startsWith('/api/workspaces')) {
+/**
+ * 像浏览器那样解析请求地址：相对地址以页面地址（含密钥段）为基准。
+ * 记录两份 —— `url` 是解析后的完整路径（用来断言"没跑出密钥段"），
+ * `path` 是剥掉密钥段之后的路径（用来路由和断言具体接口）。
+ */
+function resolveRequest(input) {
+	const raw = String(input)
+	try {
+		const resolved = new URL(raw, PAGE_URL)
+		return resolved.pathname + resolved.search
+	} catch {
+		return raw
+	}
+}
+
+function stubFetch(input, options = {}) {
+	const full = resolveRequest(input)
+	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
+	requests.push({ url: full, path, options })
+	if (path.startsWith('/api/bootstrap')) return jsonResponse({ sessions: SESSIONS, failure: null })
+	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
+	if (path.startsWith('/api/prompt')) return jsonResponse({ accepted: true })
+	if (path.startsWith('/api/cancel')) return jsonResponse({ accepted: true })
+	if (path.startsWith('/api/logout')) return jsonResponse({ ok: true })
+	if (path.startsWith('/api/workspaces')) {
 		return jsonResponse({
 			workspaces: [
 				{ id: 'ws-1', title: 'deepseek学习', path: 'D:\\learn\\deepseek学习' },
@@ -77,8 +107,8 @@ function stubFetch(url, options = {}) {
 			presets: [{ id: 'default', name: '默认' }, { id: 'video', name: '视频' }],
 		})
 	}
-	if (String(url).startsWith('/api/session')) return jsonResponse({ sessionId: 'session-created', agentPreset: 'default' })
-	if (String(url).startsWith('/api/balance')) {
+	if (path.startsWith('/api/session')) return jsonResponse({ sessionId: 'session-created', agentPreset: 'default' })
+	if (path.startsWith('/api/balance')) {
 		return jsonResponse({
 			ok: true,
 			isAvailable: true,
@@ -94,7 +124,9 @@ function stubFetch(url, options = {}) {
 
 class FakeEventSource {
 	constructor(url) {
-		this.url = url
+		this.raw = String(url)
+		// 同样按页面地址解析，保留查询串（断言要用到 sessionId）。
+		try { this.url = new URL(this.raw, PAGE_URL).href } catch { this.url = this.raw }
 		this.readyState = 1
 		source = this
 	}
@@ -103,7 +135,7 @@ class FakeEventSource {
 }
 
 const dom = new JSDOM(html, {
-	url: 'http://127.0.0.1:3081/',
+	url: PAGE_URL,
 	runScripts: 'dangerously',
 	pretendToBeVisual: true,
 	virtualConsole,
@@ -139,6 +171,17 @@ check('the most recent session is selected and streamed',
 	$('session').value === SESSION && source !== null && source.url.includes(SESSION),
 	`value=${$('session').value} url=${source?.url}`)
 
+/* --- 每个请求都必须落在密钥段之内 ---------------------------------------- */
+
+// 页面藏在随机密钥段后面；只要有一处退回绝对路径，线上就是 404。
+// mock 按浏览器语义解析相对地址，所以这里断言的正是线上会发生的事 ——
+// 这也正是当初让整个测试静默烂掉的那个漂移。
+const escaped = requests.filter((entry) => !entry.url.startsWith(SECRET_PREFIX))
+check('所有 fetch 都落在密钥段之内', escaped.length === 0,
+	escaped.length === 0 ? `${requests.length} 个请求` : escaped.map((e) => e.url).join(', '))
+check('EventSource 也在密钥段之内',
+	source !== null && source.url.includes(SECRET_PREFIX), source?.url)
+
 /* --- durable history arrives as a snapshot ------------------------------- */
 
 source.emit({
@@ -159,8 +202,8 @@ check('user text renders', body.includes('帮我看下这张图'))
 check('assistant text renders', body.includes('这是鲸鱼'))
 check('tool call renders with its result merged',
 	body.includes('read') && body.includes('文件内容 ABC'), body.replace(/\s+/g, ' ').slice(0, 90))
-check('history image is requested once', requests.filter((entry) => entry.url.startsWith('/api/attachment')).length === 1,
-	`${requests.filter((entry) => entry.url.startsWith('/api/attachment')).length} attachment fetches`)
+check('history image is requested once', requests.filter((entry) => entry.path.startsWith('/api/attachment')).length === 1,
+	`${requests.filter((entry) => entry.path.startsWith('/api/attachment')).length} attachment fetches`)
 check('history image element is present', window.document.querySelectorAll('#log img').length === 1)
 
 /* --- live streaming ------------------------------------------------------ */
@@ -191,7 +234,7 @@ input.value = '帮我把这张图转成文字'
 $('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 await wait(80)
 
-const promptCall = requests.find((entry) => entry.url.startsWith('/api/prompt'))
+const promptCall = requests.find((entry) => entry.path.startsWith('/api/prompt'))
 const promptBody = promptCall ? JSON.parse(promptCall.options.body) : null
 check('send posts the session, text and images',
 	promptBody?.sessionId === SESSION && promptBody?.text === '帮我把这张图转成文字' && Array.isArray(promptBody?.images),
@@ -210,7 +253,7 @@ check('a picked photo is previewed before sending', $('thumbs').querySelectorAll
 
 $('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 await wait(80)
-const lastPrompt = requests.filter((entry) => entry.url.startsWith('/api/prompt')).pop()
+const lastPrompt = requests.filter((entry) => entry.path.startsWith('/api/prompt')).pop()
 const imageBody = JSON.parse(lastPrompt.options.body)
 check('the picked photo is sent as base64 with its media type',
 	imageBody.images.length === 1 && imageBody.images[0].mediaType === 'image/png' && imageBody.images[0].data.length > 20,
@@ -221,7 +264,7 @@ check('the preview is cleared after sending', $('thumbs').querySelectorAll('img'
 
 $('stop').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 await wait(60)
-const cancelCall = requests.find((entry) => entry.url.startsWith('/api/cancel'))
+const cancelCall = requests.find((entry) => entry.path.startsWith('/api/cancel'))
 check('stop cancels the running session',
 	cancelCall !== undefined && JSON.parse(cancelCall.options.body).sessionId === SESSION)
 
@@ -278,18 +321,18 @@ confirmAnswer = false
 click($('createBtn'))
 await wait(80)
 check('creating with a first message asks before running it',
-	confirms.length === 1 && requests.filter((entry) => entry.url.startsWith('/api/session')).length === 0,
+	confirms.length === 1 && requests.filter((entry) => entry.path.startsWith('/api/session')).length === 0,
 	`confirms=${confirms.length}`)
 
 confirmAnswer = true
 click($('createBtn'))
 await wait(300)
 
-const createCall = requests.find((entry) => entry.url.startsWith('/api/session'))
+const createCall = requests.find((entry) => entry.path.startsWith('/api/session'))
 check('create posts the chosen workspace',
 	createCall !== undefined && JSON.parse(createCall.options.body).workspaceId === 'ws-2',
 	createCall ? createCall.options.body : 'no call')
-const createdPrompts = requests.filter((entry) => entry.url.startsWith('/api/prompt'))
+const createdPrompts = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
 check('the first message goes to the new session',
 	JSON.parse(createdPrompts[createdPrompts.length - 1].options.body).sessionId === 'session-created')
 check('create closes the panel and lands on the task tab',

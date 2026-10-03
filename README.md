@@ -51,7 +51,7 @@ dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
   "pin": "123456",
   "pathSecret": "ab12cd34ef56ab78",
   "tokenTtlHours": 12,
-  "bindTokenToIp": true,
+  "bindTokenToIp": false,
   "elevationMinutes": 15
 }
 ```
@@ -66,6 +66,7 @@ dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 | `tokenTtlHours` | 12 | 登录令牌有效期（上限 14 天） |
 | `bindTokenToIp` | false | 是否**严格**绑定令牌的来源 IP。默认 `false`：地址变化只**记录告警**（在 `/api/bootstrap` 的 `foreignUses` 里可见），不吊销登录。设 `true` 则换地址即吊销 —— **移动网络下不可用**（运营商 NAT、IPv6 隐私扩展会不停换地址，手机会被反复踢下线），只适合固定网络 |
 | `elevationMinutes` | 15 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
+| `crashProbe` | false | **排查用，平时别开。** 设为 `true` 会把宿主的 uncaughtException / exit 事件写进 `~/.dsh/dsh-crash.log`（含每 30 秒一条内存心跳）。它跑在宿主进程里、会注册全局处理器并持续写盘，所以默认关闭。 |
 
 ### 3. 放行防火墙（Windows）
 
@@ -162,6 +163,9 @@ node test/security.mjs
 3. **退出前要同步落盘**。异常处理器里用异步 `appendFile` 再 `process.exit()`，写入不会完成 —— 探针会把证据弄丢。
 4. `pnpm`/`npx` 建的联接，`Target` 可能是**相对路径**，重建时要相对**原联接所在目录**解析。
 5. `robocopy` **默认跟进目录联接**，会把链接指向的整棵树也复制过来。
+6. **`str.Replace()` 替换的是【全部】匹配，不是第一处。** 曾用带锚点的替换插入 `/api/revoke` 路由，而那个锚点在文件里出现了两次：一处正确，另一处落在无密钥的 404 分支里、位于 `const route` 之前 —— 于是手机浏览器自动请求 `/favicon.ico` 时抛 `ReferenceError: Cannot access 'route' before initialization`，整个宿主进程直接退出。表现是"**手机一连上就崩**"。插入唯一代码块必须用强制唯一匹配的编辑方式，或先断言出现次数。
+7. **配置重写要带上所有字段。** `loadConfig()` 只写它列出的字段；新增的排查开关漏掉，就会被下一次"配置有变化"的重写悄悄抹掉（`crashProbe` 踩过）。
+8. **测试会因为路径形态漂移而静默烂掉。** 页面改成相对地址（`api/...`）后，UI 测试的 mock 仍在按 `startsWith('/api/...')` 匹配，于是每个请求都 404 —— 测试不是失败，是**整个不工作了**。所以 mock 必须按浏览器语义把相对地址解析到**带密钥段的页面地址**上，并断言"没有请求跑出密钥段"。
 
 ---
 

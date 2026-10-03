@@ -24,7 +24,12 @@ const waitMs = Number(waitArg ?? 5000)
 
 /* ------------------------------------------------------------- login */
 
-const login = await fetch(new URL('/api/login', url), {
+// 页面藏在随机密钥段后面（形如 https://host/<secret>/），所有接口都在那个段之下。
+// 必须用【相对】地址解析：`new URL('/api/login', url)` 的前导斜杠会回到站点根目录，
+// 把密钥段丢掉 → 线上必然 404（这正是这个脚本一直跑不通的原因）。
+// 补一个尾斜杠，让相对解析落进密钥段。
+const base = url.endsWith('/') ? url : `${url}/`
+const login = await fetch(new URL('api/login', base), {
 	method: 'POST',
 	headers: { 'content-type': 'application/json' },
 	body: JSON.stringify({ pin }),

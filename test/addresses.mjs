@@ -30,8 +30,8 @@ check('an Android RNDIS tether adapter is recognised by name',
 check('a /28 link counts as point-to-point even with a boring name',
 	classifyInterface('以太网', '172.20.10.2/28').direct === true)
 check('a campus /16 over Wi-Fi is not a direct link',
-	classifyInterface('WLAN', '100.64.7.254/16').direct === false,
-	JSON.stringify(classifyInterface('WLAN', '100.64.7.254/16')))
+	classifyInterface('WLAN', '100.67.7.254/16').direct === false,
+	JSON.stringify(classifyInterface('WLAN', '100.67.7.254/16')))
 check('a Bluetooth PAN adapter counts as a direct link',
 	classifyInterface('蓝牙网络连接', '172.20.10.2/24').direct === true)
 check('a /24 Bluetooth PAN still counts without the Chinese name',
@@ -41,7 +41,7 @@ check('a missing cidr does not throw', classifyInterface('WLAN', undefined).pref
 /* --- the ranking that was wrong ------------------------------------------ */
 
 const campusAndCable = {
-	WLAN: iface('100.64.7.254', '100.64.7.254/16'),
+	WLAN: iface('100.67.7.254', '100.67.7.254/16'),
 	'Apple Mobile Device Ethernet': iface('172.20.10.2', '172.20.10.2/28'),
 	SSTAP: iface('10.198.75.60', '10.198.75.60/24'),
 }
@@ -50,7 +50,7 @@ check('the USB cable address outranks a campus /16 and a proxy adapter',
 	ranked[0].address === '172.20.10.2' && ranked[0].direct === true,
 	ranked.map((entry) => entry.address).join(' -> '))
 check('the campus address is still offered as a fallback',
-	ranked.some((entry) => entry.address === '100.64.7.254'))
+	ranked.some((entry) => entry.address === '100.67.7.254'))
 
 const android = {
 	WLAN: iface('192.168.1.50', '192.168.1.50/24'),
@@ -62,17 +62,17 @@ check('Android USB tethering wins over a home WLAN both on 192.168.x',
 
 /* --- the remembered address wins ----------------------------------------- */
 
-const remembered = collectAddresses(campusAndCable, '100.64.7.254')
+const remembered = collectAddresses(campusAndCable, '100.67.7.254')
 check('an address a phone actually used is promoted above every guess',
-	remembered[0].address === '100.64.7.254' && remembered[0].learned === true,
+	remembered[0].address === '100.67.7.254' && remembered[0].learned === true,
 	remembered.map((entry) => `${entry.address}${entry.learned ? '*' : ''}`).join(' -> '))
 
 /* --- exclusions and labels ----------------------------------------------- */
 
-const noisy = { Loopback: loopback, WLAN: iface('100.64.7.254', '100.64.7.254/16'), Stub: linkLocal }
+const noisy = { Loopback: loopback, WLAN: iface('100.67.7.254', '100.67.7.254/16'), Stub: linkLocal }
 const cleaned = collectAddresses(noisy, '')
 check('loopback and 169.254 link-local are excluded',
-	cleaned.length === 1 && cleaned[0].address === '100.64.7.254',
+	cleaned.length === 1 && cleaned[0].address === '100.67.7.254',
 	cleaned.map((entry) => entry.address).join(', '))
 check('an empty interface map yields an empty list', collectAddresses({}, '').length === 0)
 
