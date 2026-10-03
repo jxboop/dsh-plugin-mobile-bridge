@@ -425,6 +425,15 @@
 		return fetch(path, Object.assign({ credentials: 'same-origin' }, options)).then(async (response) => {
 			if (response.status === 401) { showGate(); throw new Error('unauthorized') }
 			const body = await response.json().catch(() => ({}))
+			// 401 是"令牌无效"；403 + needPin 是"令牌有效，但这台机器要你重新证明是本人"
+			// —— 宿主重启后恢复的会话**故意**不带提权，读没问题，一动手就会被拒。
+			//
+			// 两种都必须把 PIN 门打开。只处理 401 的话，页面会提示"需要重新输入 PIN"，
+			// 而 PIN 输入框根本不在屏幕上，用户只能靠点「退出」绕回门口。
+			if (response.status === 403 && body.needPin === true) {
+				showGate('登录已过期，请重新输入 PIN')
+				throw new Error(body.error || '需要重新输入 PIN')
+			}
 			if (!response.ok) throw new Error(body.error || ('HTTP ' + response.status))
 			return body
 		})
@@ -837,7 +846,10 @@
 			}
 			const chosen = state.sessions.find((item) => item.sessionId === previous) || state.sessions[0]
 			sessionSelect.value = chosen.sessionId
-			if (chosen.sessionId !== state.sessionId) {
+			// `state.source === null` 也要重连：从 PIN 门回来时 sessionId 没变，但那条 SSE
+			// 已经在 showGate() 里被关掉了。只比较 sessionId 的话，页面看着一切正常，
+			// 却再也收不到任何实时更新。
+			if (chosen.sessionId !== state.sessionId || state.source === null) {
 				state.sessionId = chosen.sessionId
 				localStorage.setItem('dshm.session', state.sessionId)
 				connect()

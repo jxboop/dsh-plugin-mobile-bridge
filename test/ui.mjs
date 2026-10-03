@@ -91,6 +91,10 @@ const copied = []
 const confirms = []
 let confirmAnswer = true
 let source = null
+/** Every EventSource the page ever opened, so a reconnect can be observed. */
+const sources = []
+/** Flip to make the next /api/prompt answer 403 + needPin (elevation expired). */
+let promptNeedsPin = false
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -120,9 +124,14 @@ function stubFetch(input, options = {}) {
 	const full = resolveRequest(input)
 	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
 	requests.push({ url: full, path, options })
+	if (path.startsWith('/api/login')) return jsonResponse({ ok: true })
 	if (path.startsWith('/api/bootstrap')) return jsonResponse({ sessions: SESSIONS, failure: null })
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
-	if (path.startsWith('/api/prompt')) return jsonResponse({ accepted: true })
+	if (path.startsWith('/api/prompt')) {
+		// 提权过期：令牌有效，但这台机器要你重新证明是本人（宿主重启后即是此态）。
+		if (promptNeedsPin) return jsonResponse({ error: '需要重新输入 PIN 才能执行操作', needPin: true }, 403)
+		return jsonResponse({ accepted: true })
+	}
 	if (path.startsWith('/api/cancel')) return jsonResponse({ accepted: true })
 	if (path.startsWith('/api/logout')) return jsonResponse({ ok: true })
 	if (path.startsWith('/api/workspaces')) {
@@ -156,6 +165,7 @@ class FakeEventSource {
 		try { this.url = new URL(this.raw, PAGE_URL).href } catch { this.url = this.raw }
 		this.readyState = 1
 		source = this
+		sources.push(this)
 	}
 	close() { this.readyState = 2 }
 	emit(payload) { this.onmessage?.({ data: JSON.stringify(payload) }) }
@@ -466,6 +476,39 @@ liveBubble().dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true,
 liveBubble().dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }))
 await wait(700)
 check('a quick tap does not trigger a copy', copied.length === 0)
+
+/* --- 提权过期：服务器要 PIN，页面必须真的把输入框给出来 ------------------- */
+/*
+ * 宿主重启后恢复的会话是【有效但不提权】的：聊天记录照常读，一动手就被
+ * guardWrite 拒掉（403 + needPin）。页面曾经只认 401，于是屏幕上只闪一句
+ * "需要重新输入 PIN"，而 PIN 输入框根本不在 —— 用户只能靠点「退出」绕回门口，
+ * 看起来就是"一会儿要 PIN、一会儿又跳回会话界面"。
+ */
+
+promptNeedsPin = true
+input.value = '这条应该被拒一次'
+click($('send'))
+await wait(180)
+
+check('403 + needPin 会把 PIN 门打开（否则用户无处输入）',
+	window.getComputedStyle($('gate')).display !== 'none' && window.getComputedStyle($('app')).display === 'none',
+	`gate=${window.getComputedStyle($('gate')).display} app=${window.getComputedStyle($('app')).display}`)
+check('PIN 门带着可读的说明', $('gateError').textContent.includes('PIN'), $('gateError').textContent)
+check('被拒之后草稿没丢（别把用户输入弄没）', input.value === '这条应该被拒一次', input.value)
+
+// 重新登录还必须把 SSE 重新接上：sessionId 没变，旧的 connect() 判定会跳过重连，
+// 结果是页面看着一切正常，却再也收不到任何实时更新。
+promptNeedsPin = false
+const streamsBefore = sources.length
+$('pin').value = '123456'
+click($('gateBtn'))
+await wait(300)
+
+check('重新输入 PIN 后回到会话界面',
+	window.getComputedStyle($('gate')).display === 'none' && window.getComputedStyle($('app')).display !== 'none',
+	`gate=${window.getComputedStyle($('gate')).display} app=${window.getComputedStyle($('app')).display}`)
+check('重新登录后 SSE 重新连上（否则页面静默不再更新）',
+	sources.length === streamsBefore + 1, `${streamsBefore} -> ${sources.length}`)
 
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build
