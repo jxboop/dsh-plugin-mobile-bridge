@@ -64,7 +64,7 @@ dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 | `pin` | 随机 6 位 | 登录密码 |
 | `pathSecret` | 随机 16 位十六进制 | **所有路由都藏在这个随机段后面**，没有它一律 404 |
 | `tokenTtlHours` | 12 | 登录令牌有效期（上限 14 天） |
-| `bindTokenToIp` | true | 令牌绑定签发时的来源 IP，换网络需重新输 PIN |
+| `bindTokenToIp` | false | 是否**严格**绑定令牌的来源 IP。默认 `false`：地址变化只**记录告警**（在 `/api/bootstrap` 的 `foreignUses` 里可见），不吊销登录。设 `true` 则换地址即吊销 —— **移动网络下不可用**（运营商 NAT、IPv6 隐私扩展会不停换地址，手机会被反复踢下线），只适合固定网络 |
 | `elevationMinutes` | 15 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
 
 ### 3. 放行防火墙（Windows）
