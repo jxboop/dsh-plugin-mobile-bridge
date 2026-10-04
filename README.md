@@ -105,7 +105,39 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 
 ## 外网访问（可选）
 
-局域网之外也能连。`tools/` 下有一套脚本，用的是 Cloudflare 免费快速隧道：**不需要公网 IP、不需要改路由器、不需要注册账号**。
+局域网之外也能连。两条路，**先用方案 A**。
+
+### 方案 A：Tailscale Funnel（推荐 —— 地址永不变、开机自恢复、手机不用装东西）
+
+**为什么推荐**：Cloudflare 免费隧道的域名**每次重启都变**，旧的永久失效；Funnel 给的是一条 `https://<机器名>.<tailnet>.ts.net/` 的**固定公网地址** —— Tailscale 服务随开机自启、配置存在 daemon 状态里，**重启电脑后什么都不用做，网址照旧**。而且它是标准 HTTPS，**手机上不用装任何客户端**（这点对 iPhone 尤其重要：Tailscale 的 iOS app 没有上架中国区 App Store）。
+
+```powershell
+# 1. 装 Tailscale 并登录：https://tailscale.com/download
+
+# 2. 首次开 Funnel 需要去控制台同意一次（只此一次），命令会把链接打出来：
+tailscale funnel 3081
+#    Funnel is not enabled on your tailnet.
+#    To enable, visit: https://login.tailscale.com/f/funnel?node=xxxxx
+
+# 3. 同意之后再执行一次，就常驻后台了：
+tailscale funnel --bg 3081
+#    Available on the internet:
+#    https://<机器名>.<tailnet>.ts.net/
+#    |-- proxy http://127.0.0.1:3081
+
+# 4. 手机访问（结尾必须带密钥段）：
+#    https://<机器名>.<tailnet>.ts.net/<pathSecret>/
+```
+
+不用时关掉：`tailscale funnel --https=443 off`
+
+> ⚠️ **选了方案 A 就别再跑 `tools/tunnel-start.ps1`** —— 它会把配置里的 `publicUrl` 改回那个每次都变的 cloudflared 域名。两者选一个。
+>
+> **安全上如实说**：Funnel 和免费隧道一样是**公网地址**，保护来自随机密钥段 + PIN 这两层；区别只是域名固定、不会更容易被猜到。要"只有自己的设备能进"，就在手机上也装 Tailscale（设备之间端到端加密、不经公网），代价是 iPhone 需要非中国区 Apple ID。
+
+### 方案 B：Cloudflare 免费快速隧道（临时用）
+
+`tools/` 下有一套脚本：**不需要公网 IP、不需要改路由器、不需要注册账号**。代价是**域名每次重启都变**，旧的永久失效 —— 只适合临时开一下。
 
 ```powershell
 # 1. 下载 cloudflared.exe 放到 tools/ 目录
