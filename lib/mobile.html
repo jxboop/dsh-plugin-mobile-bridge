@@ -446,6 +446,8 @@
 		link: 'live',
 		/** 当前会话是不是空的（用来解释"为什么一片白"）。 */
 		sessionBlank: false,
+		/** 宿主当前的正式对外地址（含密钥段），从 localStorage 恢复。 */
+		canonical: '',
 		/** 最后一次从流里收到数据的时刻，用来发现"连接还在、但没动静了"。 */
 		lastFrameAt: 0,
 	}
@@ -561,6 +563,20 @@
 		// 同一 WiFi 下的兜底：局域网地址不受隧道死活影响。
 		const lan = state.addresses.find((entry) => entry && typeof entry.url === 'string' && entry.url !== '')
 		const acts = mk('div', 'acts')
+		// 最高优先：停在一条【已经失效的旧地址】上时，唯一能自救的就是切到当前地址。
+		// 页面还能从内存显示，但所有请求都失败 —— 用户看到的就是"一片空白 + 发送失败"。
+		let canonical = state.canonical
+		if (canonical === '') {
+			try { canonical = localStorage.getItem('dshm.canonical') ?? '' } catch { canonical = '' }
+		}
+		if (canonical !== '' && canonical.startsWith(location.origin) === false) {
+			const jump = mk('button', 'primary', '切到当前地址')
+			jump.addEventListener('click', () => { location.href = canonical })
+			acts.appendChild(jump)
+			const line = mk('div', undefined, '你正在用的地址已经失效。当前地址：')
+			line.appendChild(mk('code', undefined, canonical))
+			bar.appendChild(line)
+		}
 		if (lan !== undefined && lan.url.startsWith(location.origin) === false) {
 			const go = mk('button', 'primary', '改用局域网地址' + (lan.label ? '（' + lan.label + '）' : ''))
 			go.addEventListener('click', () => { location.href = lan.url })
@@ -981,6 +997,11 @@
 			// 宿主早就把这些候选地址发过来了，以前页面收下就扔 —— 断线时就少了
 			// 最有用的一条出路（同一 WiFi 下走局域网，完全不依赖隧道）。
 			if (Array.isArray(body.addresses)) state.addresses = body.addresses
+			// 记住宿主当前的正式地址：万一以后停在一条失效的旧地址上，能一键切回来。
+			if (typeof body.publicUrl === 'string' && body.publicUrl !== '') {
+				state.canonical = body.publicUrl
+				try { localStorage.setItem('dshm.canonical', body.publicUrl) } catch { /* 隐私模式 */ }
+			}
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
 			state.sessions = body.sessions || []
@@ -1196,6 +1217,9 @@
 	}
 
 	function loadBalance(force) {
+		// 并发保护：没有它，反复切页签/点刷新会堆出一串请求。这些请求每个都可能
+		// 等上游 15 秒，把浏览器对同一域名的并发连接占满 —— 于是连对话都加载不出来。
+		if (state.balanceBusy) return
 		state.balanceBusy = true
 		renderBalance()
 		api('api/balance' + (force ? '?refresh=1' : ''))

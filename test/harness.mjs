@@ -52,6 +52,31 @@ globalThis.fetch = (input, init) => {
 	return realFetch(input, init)
 }
 
+/**
+ * 一段【巨型】历史的替身：单条工具输出 500 KB。
+ * 真实事故：聊了几小时的会话日志 9.7 MB，`maxMessages: 40` 展开成 195 条记录、
+ * 979 KB —— 手机上（尤其走隧道时）根本传不完，一断线又从头再传，用户看到的
+ * 就是永远停在"正在读取会话内容…"。桥必须把它压到预算内再发。
+ */
+function hugeStream() {
+	const huge = 'x'.repeat(500 * 1024)
+	const records = []
+	// 80 条：光靠"截断超长文本"还是装不下（80 × 4 KB ≈ 320 KB > 240 KB 预算），
+	// 必须再丢掉最旧的记录 —— 这才走到了 hasMore 那条分支。
+	for (let index = 0; index < 80; index += 1) {
+		records.push({
+			type: 'event',
+			event: {
+				type: 'tool/result', seq: index + 1, time: Date.now(),
+				data: { turn: 1, step: index, message: { id: `h${index}`, role: 'user', content: [{ type: 'tool-result', toolCallId: `c${index}`, content: [{ type: 'text', text: huge }] }] } },
+			},
+		})
+	}
+	return (async function* () {
+		yield { type: 'snapshot', header: { version: 3, id: 'session-huge', createdAt: Date.now(), isSeeded: false }, cursor: records.length, hasMore: false, records, projections: { asOfSeq: records.length, values: {} } }
+	})()
+}
+
 function sessionStream(signal) {
 	const snapshot = {
 		type: 'snapshot',
@@ -115,6 +140,7 @@ const stubController = {
 	},
 	follow(request, signal) {
 		STATE.followed.push(request)
+		if (request?.address?.sessionId === 'session-huge') return hugeStream()
 		return sessionStream(signal)
 	},
 }
@@ -292,6 +318,37 @@ check('SSE strips the redundant stream field',
 	`stream=${JSON.stringify(assistantEvent?.event?.data?.stream)} keys=${JSON.stringify(Object.keys(assistantEvent?.event?.data ?? {}))}`)
 check('SSE forwards live deltas', delta?.frame?.chunk?.type === 'text-delta', JSON.stringify(delta?.frame?.chunk))
 check('follow was asked for assistant stream frames', STATE.followed[0]?.assistantStream === true && STATE.followed[0]?.address?.sessionId === 'session-test')
+
+/* --- 巨型历史必须被压小之后再发给手机 ------------------------------------ */
+{
+	const res = await fetch(`${base}/api/stream?sessionId=session-huge`, authed)
+	check('巨型会话的流仍能打开', res.status === 200, `HTTP ${res.status}`)
+	const reader = res.body.getReader()
+	const decoder = new TextDecoder()
+	let buffer = ''
+	let chars = 0
+	let snapshot = null
+	const deadline = Date.now() + 8000
+	while (Date.now() < deadline && snapshot === null) {
+		const { value, done } = await reader.read()
+		if (done) break
+		buffer += decoder.decode(value, { stream: true })
+		chars += value.length
+		const lines = buffer.split('\n')
+		buffer = lines.pop() ?? ''
+		for (const line of lines) {
+			if (!line.startsWith('data: ')) continue
+			const payload = JSON.parse(line.slice(6))
+			if (payload.t === 'snapshot') snapshot = payload
+		}
+	}
+	await reader.cancel().catch(() => {})
+	// 原始是 12 × 500 KB = 6 MB。预算 240 KB，留点余量断言。
+	check('整段历史不会被原样塞给手机', snapshot !== null && chars < 300 * 1024,
+		`${Math.round(chars / 1024)} KB（原始约 6000 KB）`)
+	check('被裁掉的部分会用 hasMore 告诉页面', snapshot?.hasMore === true, `hasMore=${snapshot?.hasMore}`)
+	check('超长工具输出被截断并注明', JSON.stringify(snapshot).includes('已截断'))
+}
 
 const attachment = await (await fetch(`${base}/api/attachment?sessionId=session-test&attachmentId=att-1`, authed)).json()
 check('attachment proxy returns base64', attachment.data === 'iVBORw0KGgo=')

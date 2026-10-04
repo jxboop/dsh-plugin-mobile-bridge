@@ -136,6 +136,8 @@ function stubFetch(input, options = {}) {
 		failure: null,
 		// 真宿主也会发这个：断线时它是同 WiFi 下的兜底出路。
 		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
+		// 和页面当前 origin 不同的正式地址：用来验证「切到当前地址」。
+		publicUrl: 'https://example.ts.net/0123456789abcdef/',
 	})
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	if (path.startsWith('/api/prompt')) {
@@ -660,6 +662,11 @@ check('提示条说清可能的原因', linkText().includes('电脑睡眠') || l
 check('提示条给出局域网兜底地址（同一 WiFi 下不依赖隧道）',
 	linkText().includes('192.168.1.20') && linkText().includes('改用局域网地址'))
 check('提示条告诉用户去电脑上跑体检脚本', linkText().includes('tunnel-status.ps1'))
+// 停在一条已经失效的旧地址上时（页面还能显示、但所有请求都失败），唯一能自救的
+// 出路就是切到宿主当前地址 —— 这正是"打开就是一片空白"的那个场景。
+check('停在失效旧地址上时给出「切到当前地址」',
+	linkText().includes('切到当前地址') && linkText().includes('example.ts.net'),
+	linkText().slice(0, 80))
 
 // 收到心跳就说明对面还在，提示条自己收起。
 source.emit({ t: 'ping' })
