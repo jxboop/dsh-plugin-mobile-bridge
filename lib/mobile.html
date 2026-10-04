@@ -444,6 +444,8 @@
 		addresses: [],
 		/** 连接状态 live / stale / down —— 决定顶部那条提示说什么。 */
 		link: 'live',
+		/** 当前会话是不是空的（用来解释"为什么一片白"）。 */
+		sessionBlank: false,
 		/** 最后一次从流里收到数据的时刻，用来发现"连接还在、但没动静了"。 */
 		lastFrameAt: 0,
 	}
@@ -695,6 +697,14 @@
 			}
 		}
 		// innerHTML resets the scroll offset, so put it back where the reader was.
+		// 一片全白必须给个说法：会话为空时以前什么都不显示，用户只会以为页面坏了 ——
+		// 而手机记着上次选的会话，若它恰好是空的，就成了"每次打开都空白"。
+		if (parts.length === 0) {
+			const hint = state.sessionBlank === true
+				? '这个会话还是空的 —— 用上面的下拉框切到别的会话。'
+				: '正在读取会话内容…（一直这样点右上角「刷新」）'
+			parts.push('<div class="note">' + escapeHtml(hint) + '</div>')
+		}
 		const pinned = state.stick
 		const previousTop = log.scrollTop
 		log.innerHTML = parts.join('')
@@ -974,16 +984,25 @@
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
 			state.sessions = body.sessions || []
-			const previous = state.sessionId || localStorage.getItem('dshm.session')
 			sessionSelect.innerHTML = state.sessions.map((item) =>
 				'<option value="' + escapeHtml(item.sessionId) + '">' +
-				(item.running ? '● ' : '') + escapeHtml(item.title || item.sessionId.slice(0, 12)) +
+				(item.running ? '● ' : '') + (item.blank === true ? '（空）' : '') +
+				escapeHtml(item.title || item.sessionId.slice(0, 12)) +
 				'</option>').join('')
 			if (state.sessions.length === 0) {
 				flash('这台电脑上还没有任何会话，去「新建」开一个。')
 				return
 			}
-			const chosen = state.sessions.find((item) => item.sessionId === previous) || state.sessions[0]
+			// 上次在手机上选的会话如果是个【空会话】，默认跳到最近一个非空会话 ——
+			// 否则页面每次打开都是一片全白，用户只会以为坏了。
+			// 用户在这次页面里明确选过（state.sessionId 已有值）就尊重他的选择。
+			const stored = state.sessionId || localStorage.getItem('dshm.session')
+			let chosen = state.sessions.find((item) => item.sessionId === stored)
+			if (state.sessionId === null && (chosen === undefined || chosen.blank === true)) {
+				chosen = state.sessions.find((item) => item.blank !== true) || chosen
+			}
+			if (chosen === undefined) chosen = state.sessions[0]
+			state.sessionBlank = chosen.blank === true
 			sessionSelect.value = chosen.sessionId
 			// `state.source === null` 也要重连：从 PIN 门回来时 sessionId 没变，但那条 SSE
 			// 已经在 showGate() 里被关掉了。只比较 sessionId 的话，页面看着一切正常，
@@ -1228,6 +1247,8 @@
 	sessionSelect.addEventListener('change', () => {
 		state.sessionId = sessionSelect.value
 		localStorage.setItem('dshm.session', state.sessionId)
+		const picked = state.sessions.find((item) => item.sessionId === state.sessionId)
+		state.sessionBlank = picked !== undefined && picked.blank === true
 		state.items = []
 		render()
 		connect()

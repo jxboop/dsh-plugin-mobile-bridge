@@ -667,6 +667,18 @@ await wait(70)
 check('收到宿主心跳后提示条自动收起',
 	$('linkbar') !== null && window.getComputedStyle($('linkbar')).display === 'none')
 
+/* --- 空会话不能是一片全白 ------------------------------------------------ */
+/*
+ * render() 以前在没内容时就是 log.innerHTML = '' —— 一个字都不说。而页面记着上次
+ * 选的会话，若它恰好是空的，用户就会"每次打开都空白"，只能以为坏了。
+ */
+source.emit({ t: 'snapshot', tag: PAGE_TAG, cursor: 30, hasMore: false, records: [] })
+await wait(180)
+check('空会话会给出说明，而不是一片全白',
+	$('log').textContent.trim().length > 0, `"${$('log').textContent.trim().slice(0, 46)}"`)
+check('说明指向了下拉框或读取状态',
+	/下拉框|读取/.test($('log').textContent), $('log').textContent.trim().slice(0, 40))
+
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build
    changed. Asserted last, because a real reload would reset the DOM. */

@@ -16,7 +16,9 @@ const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 const PORT = 9341 + (process.pid % 100)
 const dshDir = process.env.DSH_HOME ?? join(homedir(), '.dsh')
 const cfg = JSON.parse(await readFile(join(dshDir, 'mobile-bridge.json'), 'utf8'))
-const base = `http://127.0.0.1:${cfg.port}`
+const base = (process.env.BRIDGE_BASE ?? '').trim() !== ''
+	? process.env.BRIDGE_BASE.trim().replace(/\/+$/, '')
+	: `http://127.0.0.1:${cfg.port}`
 const pageUrl = `${base}/${cfg.pathSecret}/`
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const withDeadline = (p, ms, label) => Promise.race([p, sleep(ms).then(() => Promise.reject(new Error(`deadline: ${label}`)))])
@@ -92,7 +94,11 @@ await send('Page.addScriptToEvaluateOnNewDocument', {
 	source: 'window.__errs=[];window.addEventListener("error",function(e){window.__errs.push(String(e.message)+" @"+(e.filename||"")+":"+(e.lineno||0))});window.addEventListener("unhandledrejection",function(e){window.__errs.push("rejection: "+String(e.reason))});',
 })
 await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true })
-await send('Network.setCookie', { name: 'dshm', value: token, domain: '127.0.0.1', path: '/' })
+// cookie 必须落在【实际访问的那个域名】上。写死 127.0.0.1 时，走隧道/Funnel 域名
+// 就带不上 cookie，bootstrap 必然 401 —— 会被误读成"页面坏了"。
+const cookieHost = new URL(base).hostname
+const cookieSecure = base.startsWith('https')
+await send('Network.setCookie', { name: 'dshm', value: token, domain: cookieHost, path: '/', secure: cookieSecure })
 await send('Page.navigate', { url: pageUrl })
 
 const state = `JSON.stringify({
