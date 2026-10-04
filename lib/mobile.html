@@ -200,6 +200,8 @@
 		border-radius: 12px; padding: 11px 12px; resize: none; max-height: 130px; min-height: 44px;
 	}
 	#send, #stop { border: 0; border-radius: 12px; padding: 12px 15px; font-weight: 600; flex: none; }
+	/* 运行中「插话」和「停止」要同时站着，窄屏上把它们收窄，别把输入框挤没。 */
+	#compose.two #send, #compose.two #stop { padding: 12px 11px; }
 	#send { background: var(--accent); }
 	#stop { background: var(--stop-bg); }
 	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 11px 13px; flex: none; }
@@ -287,6 +289,16 @@
 	}
 	#linkbar .acts button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 	#linkbar code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+
+	/* ---- 首次进入的「开始使用」说明页 ---- */
+	.welcometip { font-size: 14px; line-height: 1.75; }
+	.welcometip p { margin: 0 0 10px; }
+	.welcometip ul { margin: 0 0 12px; padding-left: 20px; }
+	.welcometip li { margin-bottom: 7px; }
+	.welcomego {
+		width: 100%; margin-top: 8px; padding: 14px; border: 0; border-radius: 10px;
+		background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 16px; font-weight: 600;
+	}
 
 	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */	#ask { flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
 	.askcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
@@ -377,6 +389,28 @@
 			</div>
 		</section>
 
+		<section class="sheet" id="welcome" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<span class="title">手机桥已连上</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="welcometip">
+					<p>这台手机现在连着<strong>你自己电脑上的 DSH</strong>。</p>
+					<p>你可以：</p>
+					<ul>
+						<li><strong>下达任务</strong> —— 在下面输入框说一句话，agent 就开始干。</li>
+						<li><strong>看实时进度</strong> —— 它的思考过程和每一步工具调用会自己往下滚。</li>
+						<li><strong>回答提问 / 批准操作</strong> —— 它需要你拍板时会弹出卡片，直接点。</li>
+						<li><strong>插话</strong> —— 它正在跑的时候，右边按钮是「插话」：现在就能说，你这条会排在这一轮之后接着处理，不用干等。</li>
+					</ul>
+					<p>连不上时页面顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了。</p>
+					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。</p>
+				</div>
+				<button class="welcomego" id="welcomeGo">开始使用</button>
+			</div>
+		</section>
+
 		<section class="view" id="view-bill" data-display="block" style="display:none">
 			<div class="scroll pad">
 				<div id="billBody"></div>
@@ -410,6 +444,7 @@
 	const gate = $('gate'), app = $('app'), log = $('log'), sessionSelect = $('session')
 	const dot = $('dot'), text = $('text'), thumbs = $('thumbs'), fileInput = $('file')
 	const sendBtn = $('send'), stopBtn = $('stop'), banner = $('banner'), heading = $('heading')
+	const compose = $('compose')
 
 	const views = { task: $('view-task'), bill: $('view-bill') }
 	const sheet = $('view-new')
@@ -450,6 +485,13 @@
 		canonical: '',
 		/** 最后一次从流里收到数据的时刻，用来发现"连接还在、但没动静了"。 */
 		lastFrameAt: 0,
+		/** 最后一次用普通请求补拉对话的时刻，给补拉限速用。 */
+		lastPullAt: 0,
+		/**
+		 * 用 `{kind:'session'}` 地址打不开的会话（agent 自己派生的子会话）：id -> 原因。
+		 * 遇到过的会话不再重连、不再谎报"地址失效"，直接说清楚让用户换一个。
+		 */
+		unsupported: new Map(),
 	}
 
 	/* ------------------------------------------------------------ helpers */
@@ -475,6 +517,19 @@
 	// cascade cannot silently win over a "show".
 	function show(node) { node.style.display = node.dataset.display || '' }
 	function hide(node) { node.style.display = 'none' }
+
+	/**
+	 * localStorage 在无痕 / 隐私模式下会**抛异常**（iOS Safari 上 getItem 照常、
+	 * setItem 抛 QuotaExceededError），而不只是返回 null。裸调用一处，整页就死：
+	 * 列表画出来了，却再也开不了流、拉不回对话，屏幕一片空白，用户还看不出为什么。
+	 * 所以这里只留两个入口，读写都不许抛。
+	 */
+	function readLocal(key) {
+		try { return localStorage.getItem(key) ?? '' } catch { return '' }
+	}
+	function writeLocal(key, value) {
+		try { localStorage.setItem(key, value) } catch { /* 存不下就这一会儿不记，功能照用 */ }
+	}
 
 	/** 带上 HTTP 状态码的错误：调用方要据此分辨"网络抖了"和"这条已经作废"。 */
 	function apiError(status, message) {
@@ -521,12 +576,24 @@
 
 	function setStatus(kind) {
 		dot.className = kind
-		if (state.running) { hide(sendBtn); show(stopBtn) } else { hide(stopBtn); show(sendBtn) }
+		// 运行中也要能发：handlePrompt 用的是 queue 模式，DSH 的语义是
+		// **追加到当前回合之后**（steer 才是打断它）。所以这里不是"抢话"，而是
+		// "说在下一轮开头"——按钮留着，用户就不必干等它跑完才敢打字。
+		sendBtn.textContent = state.running ? '插话' : '发送'
+		show(sendBtn)
+		compose.classList.toggle('two', state.running)
+		if (state.running) show(stopBtn); else hide(stopBtn)
 	}
 
-	function flash(message) {
+	let flashTimer = 0
+	/** 顶部条说一句话。autoHideMs > 0 时到点自己收走，免得一句提示挂一整天。 */
+	function flash(message, autoHideMs = 0) {
 		banner.textContent = message
 		show(banner)
+		if (flashTimer !== 0) { clearTimeout(flashTimer); flashTimer = 0 }
+		if (autoHideMs > 0) {
+			flashTimer = setTimeout(() => { flashTimer = 0; hide(banner) }, autoHideMs)
+		}
 	}
 
 	/* --------------------------------------------------------- 连接状态 */
@@ -551,6 +618,18 @@
 		show(bar)
 		bar.textContent = ''
 
+		// 打不开的会话不是"断线"：连接好得很，只是这个会话在手机上跟不了。
+		// 以前这里照样弹"和电脑断开了 / 你的地址已经失效"，把用户引向换地址、
+		// 重试连接这些没用的动作，还把人吓一跳。
+		const blocked = state.sessionId === null ? undefined : state.unsupported.get(state.sessionId)
+		if (blocked !== undefined) {
+			bar.appendChild(mk('div', 'lg', '⚠️ 这个会话在手机上打不开'))
+			bar.appendChild(mk('div', undefined,
+				'它是 agent 自己派生的子会话，手机端跟不了（连接本身是好的）。'
+				+ '用上面的下拉框换一个会话就行。'))
+			return
+		}
+
 		const stale = state.link === 'stale'
 		bar.appendChild(mk('div', 'lg', stale ? '⚠️ 好像和电脑失去联系了' : '⚠️ 和电脑断开了'))
 
@@ -567,7 +646,7 @@
 		// 页面还能从内存显示，但所有请求都失败 —— 用户看到的就是"一片空白 + 发送失败"。
 		let canonical = state.canonical
 		if (canonical === '') {
-			try { canonical = localStorage.getItem('dshm.canonical') ?? '' } catch { canonical = '' }
+			canonical = readLocal('dshm.canonical')
 		}
 		if (canonical !== '' && canonical.startsWith(location.origin) === false) {
 			const jump = mk('button', 'primary', '切到当前地址')
@@ -716,9 +795,12 @@
 		// 一片全白必须给个说法：会话为空时以前什么都不显示，用户只会以为页面坏了 ——
 		// 而手机记着上次选的会话，若它恰好是空的，就成了"每次打开都空白"。
 		if (parts.length === 0) {
-			const hint = state.sessionBlank === true
-				? '这个会话还是空的 —— 用上面的下拉框切到别的会话。'
-				: '正在读取会话内容…（一直这样点右上角「刷新」）'
+			const blocked = state.unsupported.get(sessionId)
+			const hint = blocked !== undefined
+				? '这个会话在手机上打不开（它是 agent 自己派生的子会话）。用上面的下拉框换一个会话。'
+				: (state.sessionBlank === true
+					? '这个会话还是空的 —— 用上面的下拉框切到别的会话。'
+					: '正在读取会话内容…（一直这样点右上角「刷新」）')
 			parts.push('<div class="note">' + escapeHtml(hint) + '</div>')
 		}
 		const pinned = state.stick
@@ -946,14 +1028,82 @@
 
 	/* -------------------------------------------------------------- stream */
 
+	/**
+	 * 用一次普通请求把对话取回来。
+	 *
+	 * 不能只依赖 SSE：有些通道会把大响应缓冲住，直到有更多数据把它冲出来。
+	 * 实测症状 —— 打开页面一片空白，**直到电脑那边发了新消息**，快照才跟着冲出来。
+	 * 普通请求（bootstrap 能通就证明它没问题）一定立刻送达。
+	 */
+	async function pullTranscript() {
+		// 会话可能在这次请求飞行途中被换掉。以前回来就无条件往画面上贴，于是 A 的
+		// 对话挂在 B 的标题下面，后面的事件还全接在错的对话上 —— 自己永远好不了。
+		// 所以要认准"我请求的是谁"，回来先核对一次。
+		const wanted = state.sessionId
+		if (!wanted) return
+		state.lastPullAt = Date.now()
+		let body
+		try { body = await api('api/transcript?sessionId=' + encodeURIComponent(wanted)) } catch { return }
+		if (state.sessionId !== wanted) return
+		if (body.pageTag) checkPageTag(body.pageTag)
+		if (body.unsupported === true) {
+			// 用 wanted 而不是 state.sessionId：否则一个迟到的"子会话打不开"会把
+			// 一个健康的新会话永久标成打不开（页面此后连流都不开）。
+			markUnsupported(wanted, body.reason ?? '')
+			return
+		}
+		const records = Array.isArray(body.records) ? body.records : []
+		// 空结果不许覆盖已经画出来的对话：拉取失败或竞态会把画面清空。
+		if (records.length === 0 && state.items.length > 0) return
+		// 普通请求能通，就证明电脑还在（只是长连接没把大包推过来）。这时候顶部那条
+		// "好像和电脑失去联系了"是误报 —— 恰恰在这个接口存在的场景里，它会一直挂着。
+		state.lastFrameAt = Date.now()
+		if (state.link === 'stale') setLink('live')
+		applySnapshot({ records, cursor: body.cursor ?? 0, hasMore: body.hasMore === true })
+		// applySnapshot 只改状态、不触发重绘 —— SSE 那条路径是在 onmessage 里另外
+		// 调 scheduleRender 的。这里漏了这一步，就会"数据拿到了、画面却不动"。
+		scheduleRender()
+	}
+
+	/**
+	 * 记下"这个会话在手机上打不开"（agent 自己派生的子会话）。
+	 *
+	 * 宿主回的是 DSH 的内部话术（"subagent Sessions require their durable parent
+	 * address"），直接甩给用户等于没说。这里换成人话，并且**立刻停掉浏览器自带
+	 * 的重连**：否则页面会每三秒重连一次、连一整晚，流量和电都白烧。
+	 */
+	function markUnsupported(sessionId, reason) {
+		if (typeof sessionId !== 'string' || sessionId === '') return
+		state.unsupported.set(sessionId, String(reason ?? ''))
+		if (state.source) { state.source.close(); state.source = null }
+		state.lastFrameAt = Date.now()
+		setLink('down')
+		renderLink()
+		scheduleRender()
+	}
+
 	function connect() {
 		if (state.source) state.source.close()
 		if (!state.sessionId) return
+		// 已知打不开的会话（子会话）：别开流、别重连、别报"断线"。直接说清楚。
+		if (state.unsupported.has(state.sessionId)) {
+			state.source = null
+			setLink('down')
+			scheduleRender()
+			return
+		}
 		setStatus('busy')
 		const source = new EventSource('api/stream?sessionId=' + encodeURIComponent(state.sessionId))
 		state.source = source
+		// 立刻用普通请求拉一次：不赌这条长连接能不能把大快照推过来。
+		pullTranscript()
 		source.onopen = () => { state.lastFrameAt = Date.now(); setLink('live') }
-		source.onerror = () => { setLink('down') }
+		source.onerror = () => {
+			// 会话本身打不开时，EventSource 会一直自动重连 —— 每三秒一次，一直不停。
+			// 已经知道原因就别再空转了，把浏览器自带的重连掐掉。
+			if (state.unsupported.has(state.sessionId)) { source.close(); state.source = null }
+			setLink('down')
+		}
 		source.onmessage = (message) => {
 			let payload
 			try { payload = JSON.parse(message.data) } catch { return }
@@ -966,9 +1116,16 @@
 			if (payload.t === 'snapshot') { checkPageTag(payload.tag); applySnapshot(payload) }
 			else if (payload.t === 'event') applyEvent(payload.event)
 			else if (payload.t === 'delta') applyDelta(payload.frame)
-			else if (payload.t === 'error') flash(payload.message)
+			else if (payload.t === 'error') {
+				if (payload.unsupported === true) markUnsupported(state.sessionId, payload.message)
+				else flash(payload.message)
+			}
 			else if (payload.t === 'end') setStatus('live')
 			else if (payload.t === 'interaction') {
+				// 提问/审批卡片是普通流内元素，会被全屏的首次说明页挡住 —— 而说明页
+				// 里恰好写着"需要你拍板时会弹出卡片"。真有提问就先让位，别让它空等
+				// 两分钟然后退回电脑。
+				hide(welcome)
 				// 已经存在的卡片必须【保住草稿】。重连、或又开了一条流，宿主都会把
 				// 同一个 id 重推一次；直接覆盖会把用户勾到一半的选择清光 ——
 				// 而那句"草稿存在 state 上就不会丢"的注释正是为这个写的。
@@ -1000,7 +1157,7 @@
 			// 记住宿主当前的正式地址：万一以后停在一条失效的旧地址上，能一键切回来。
 			if (typeof body.publicUrl === 'string' && body.publicUrl !== '') {
 				state.canonical = body.publicUrl
-				try { localStorage.setItem('dshm.canonical', body.publicUrl) } catch { /* 隐私模式 */ }
+				writeLocal('dshm.canonical', body.publicUrl)
 			}
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
@@ -1017,20 +1174,31 @@
 			// 上次在手机上选的会话如果是个【空会话】，默认跳到最近一个非空会话 ——
 			// 否则页面每次打开都是一片全白，用户只会以为坏了。
 			// 用户在这次页面里明确选过（state.sessionId 已有值）就尊重他的选择。
-			const stored = state.sessionId || localStorage.getItem('dshm.session')
-			let chosen = state.sessions.find((item) => item.sessionId === stored)
-			if (state.sessionId === null && (chosen === undefined || chosen.blank === true)) {
-				chosen = state.sessions.find((item) => item.blank !== true) || chosen
+			// 打不开的会话（子会话）不参与自动选择：否则每次打开手机都停在一个死页面上。
+			const stored = state.sessionId || readLocal('dshm.session')
+			const usable = state.sessions.filter((item) => state.unsupported.has(item.sessionId) === false)
+			const pool = state.sessionId === null && usable.length > 0 ? usable : state.sessions
+			let chosen = pool.find((item) => item.sessionId === stored)
+			if (chosen === undefined || chosen.blank === true) {
+				// 当前/上次选中的是空的、打不开的、或者已经不在列表里（宿主把子会话滤掉了）
+				// → 让到最近一个能用的非空会话，别把用户留在死页面或空白上。
+				const reroute = state.sessionId === null || chosen === undefined || state.unsupported.has(chosen.sessionId)
+				if (reroute) {
+					chosen = pool.find((item) => item.blank !== true && state.unsupported.has(item.sessionId) === false) || chosen
+				}
 			}
-			if (chosen === undefined) chosen = state.sessions[0]
+			if (chosen === undefined) chosen = pool[0]
 			state.sessionBlank = chosen.blank === true
+			// 会话在不在跑，以宿主给的 running 为准：切换/重开页面时 state.running
+			// 还留着上一个会话的值，按钮会一直写着「插话」，点下去还回一句假的"已插话"。
+			state.running = chosen.running === true
 			sessionSelect.value = chosen.sessionId
 			// `state.source === null` 也要重连：从 PIN 门回来时 sessionId 没变，但那条 SSE
 			// 已经在 showGate() 里被关掉了。只比较 sessionId 的话，页面看着一切正常，
 			// 却再也收不到任何实时更新。
 			if (chosen.sessionId !== state.sessionId || state.source === null) {
 				state.sessionId = chosen.sessionId
-				localStorage.setItem('dshm.session', state.sessionId)
+				writeLocal('dshm.session', state.sessionId)
 				connect()
 			}
 		})
@@ -1040,6 +1208,12 @@
 		const body = text.value.trim()
 		if (body === '' && state.images.length === 0) return
 		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
+		// 键盘路径（Ctrl/Cmd+Enter）绕过了按钮，只靠 disabled 挡不住连按两下 ——
+		// 同一个 prompt 会被发两次，两次都是要花钱的一轮。
+		if (sendBtn.disabled) return
+		// 运行中发的这条进的是队列（queue = 追加到当前回合之后），对话里不会马上
+		// 出现。必须回一句，否则用户看到"发了没反应"，只会以为又卡住了。
+		const interjecting = state.running
 		sendBtn.disabled = true
 		api('api/prompt', {
 			method: 'POST',
@@ -1051,6 +1225,7 @@
 			state.images = []
 			renderThumbs()
 			state.stick = true
+			if (interjecting) flash('已插话：这一轮跑完就接着处理你这条，不用在这儿等。', 5000)
 		}).catch((error) => flash('发送失败：' + error.message))
 			.finally(() => { sendBtn.disabled = false })
 	}
@@ -1153,7 +1328,7 @@
 			body: JSON.stringify(request),
 		}).then((created) => {
 			state.sessionId = created.sessionId
-			localStorage.setItem('dshm.session', created.sessionId)
+			writeLocal('dshm.session', created.sessionId)
 			const after = first === '' ? Promise.resolve() : api('api/prompt', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -1247,6 +1422,7 @@
 			}
 			hide(gate); show(app)
 			switchTab('task')
+			maybeWelcome()
 			loadSessions()
 		}).catch(() => { $('gateError').textContent = '网络不通' })
 	})
@@ -1255,7 +1431,7 @@
 	$('reload').addEventListener('click', () => {
 		hide(banner)
 		if (state.tab === 'bill') loadBalance(true)
-		else loadSessions()
+		else loadSessions().then(() => pullTranscript())
 	})
 	$('logout').addEventListener('click', () => {
 		api('api/logout', { method: 'POST' }).catch(() => {}).finally(() => showGate())
@@ -1263,16 +1439,34 @@
 
 	// 哨兵：连接还在、但已经不再来数据（电脑睡眠最典型）时，onerror 不会响，
 	// 手机上看着就是"卡住了"。靠宿主每 20 秒的 ping 判断，超过 45 秒没动静就报警。
+	const WATCHDOG_PULL_MS = 60000
 	setInterval(() => {
-		if (state.link !== 'live' || state.source === null || state.lastFrameAt === 0) return
-		if (Date.now() - state.lastFrameAt > 45000) setLink('stale')
+		if (state.source === null || state.sessionId === null) return
+		// 手机锁屏 / 切到别的 App 时页面在后台，这时候探活纯属烧电烧流量；回到前台会补一次。
+		if (window.document.visibilityState === 'hidden') return
+		const quiet = state.lastFrameAt === 0 ? 0 : Date.now() - state.lastFrameAt
+		if (state.link === 'live' && quiet > 45000) setLink('stale')
+		// 长连接超过一个心跳周期（20 秒）还没送来任何东西，说明这条通道可能把大响应
+		// 缓冲住了 —— 用普通请求把对话补上。
+		// 但必须限速：这个 tick 是 5 秒一次，之前条件只有 quiet > 25000，于是静置的
+		// 手机【每 5 秒】就拉一次对话 —— 一次最大二百多 KB，一小时七百多次。流量、
+		// 电、日志全被它烧掉，而画面并不会因此更及时（没动静就是没动静）。
+		if (quiet > 25000 && Date.now() - state.lastPullAt > WATCHDOG_PULL_MS) pullTranscript()
 	}, 5000)
+
+	// 回到前台补一次：锁屏期间可能已经错过了推送。
+	window.document.addEventListener('visibilitychange', () => {
+		if (window.document.visibilityState === 'visible' && state.sessionId !== null) pullTranscript()
+	})
 
 	sessionSelect.addEventListener('change', () => {
 		state.sessionId = sessionSelect.value
-		localStorage.setItem('dshm.session', state.sessionId)
+		writeLocal('dshm.session', state.sessionId)
 		const picked = state.sessions.find((item) => item.sessionId === state.sessionId)
 		state.sessionBlank = picked !== undefined && picked.blank === true
+		// 换会话必须把"在跑"重置成新会话的真实状态，否则按钮还写着「插话」、
+		// 停止键还亮着，而这条消息其实是普通发送（还会回一句假的"已插话"）。
+		state.running = picked !== undefined && picked.running === true
 		state.items = []
 		render()
 		connect()
@@ -1480,10 +1674,29 @@
 		return holder.card
 	}
 
+	/* --------------------------------------------------------- 首次说明页 */
+
+	const welcome = $('welcome')
+	// localStorage 写不进去（无痕/隐私模式）时的兜底：至少同一次打开里别再反复弹。
+	let welcomed = false
+
+	/** 第一次连上时讲一遍怎么用；之后靠 localStorage 记住，不再打扰。 */
+	function maybeWelcome() {
+		if (welcomed) return
+		if (readLocal('dshm.welcomed') === '1') return
+		show(welcome)
+	}
+
+	$('welcomeGo').addEventListener('click', () => {
+		welcomed = true
+		writeLocal('dshm.welcomed', '1')
+		hide(welcome)
+	})
+
 	/* --------------------------------------------------------------- boot */
 
 	api('api/bootstrap')
-		.then(() => { hide(gate); show(app); switchTab('task'); return loadSessions() })
+		.then(() => { hide(gate); show(app); switchTab('task'); maybeWelcome(); return loadSessions() })
 		.catch(() => { /* 401 already routed to the gate */ })
 })()
 </script>

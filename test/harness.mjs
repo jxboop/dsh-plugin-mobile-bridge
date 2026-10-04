@@ -77,8 +77,32 @@ function hugeStream() {
 	})()
 }
 
-function sessionStream(signal) {
-	const snapshot = {
+/**
+ * 一条 assistant/message，它的 `data.stream` 里装着这条消息已经逐字推过的全部增量。
+ *
+ * 这是最容易漏掉的一种"大"：**一堆短字符串**，不是超长文本，所以按 4000 字截断的
+ * 逻辑对它完全无效。实测能让 /api/transcript 回 782 KB —— 正好把这个接口存在的
+ * 理由（别让手机收到大包）又踩回去。
+ */
+function streamyStream() {
+	const stream = []
+	for (let index = 0; index < 200000; index += 1) stream.push('x')
+	const records = [
+		{ type: 'event', event: { type: 'user/message', seq: 1, time: Date.now(), data: { id: 's0', role: 'user', content: [{ type: 'text', text: '开始' }] } } },
+		{
+			type: 'event',
+			event: {
+				type: 'assistant/message', seq: 2, time: Date.now(),
+				data: { turn: 1, step: 1, message: { id: 's1', role: 'assistant', content: [{ type: 'text', text: '好' }] }, stream: [{ type: 'text-chunks', time0: 0, index: 0, dt: [], texts: stream }] },
+			},
+		},
+	]
+	return (async function* () {
+		yield { type: 'snapshot', header: { version: 3, id: 'session-streamy', createdAt: Date.now(), isSeeded: false }, cursor: records.length, hasMore: false, records, projections: { asOfSeq: records.length, values: {} } }
+	})()
+}
+
+function sessionStream(signal) {	const snapshot = {
 		type: 'snapshot',
 		header: { version: 3, id: 'session-test', createdAt: Date.now(), isSeeded: false },
 		cursor: 2,
@@ -114,14 +138,15 @@ function sessionStream(signal) {
 	})()
 }
 
+/** 会话列表（测试中途可增删：子会话过滤那一条要靠它）。 */
+const listItems = [
+	{ sessionId: 'session-test', updatedAt: Date.now(), running: false, blank: false, cwd: 'D:\\learn\\deepseek学习', projections: { asOfSeq: 2, values: { title: '手机桥接测试' } } },
+	{ sessionId: 'session-blank', updatedAt: Date.now() - 5000, running: false, blank: true, cwd: 'D:\\tool' },
+]
+
 const stubController = {
 	async list() {
-		return {
-			items: [
-				{ sessionId: 'session-test', updatedAt: Date.now(), running: false, blank: false, cwd: 'D:\\learn\\deepseek学习', projections: { asOfSeq: 2, values: { title: '手机桥接测试' } } },
-				{ sessionId: 'session-blank', updatedAt: Date.now() - 5000, running: false, blank: true, cwd: 'D:\\tool' },
-			],
-		}
+		return { items: listItems }
 	},
 	async prompt(request) {
 		STATE.prompts.push(request)
@@ -141,6 +166,11 @@ const stubController = {
 	follow(request, signal) {
 		STATE.followed.push(request)
 		if (request?.address?.sessionId === 'session-huge') return hugeStream()
+		if (request?.address?.sessionId === 'session-streamy') return streamyStream()
+		// 子会话（agent 自己派生的）不能用 {kind:'session'} 地址跟随，宿主会这么拒绝。
+		if (request?.address?.sessionId === 'session-subagent') {
+			throw new Error('subagent Sessions require their durable parent address')
+		}
 		return sessionStream(signal)
 	},
 }
@@ -318,6 +348,32 @@ check('SSE strips the redundant stream field',
 	`stream=${JSON.stringify(assistantEvent?.event?.data?.stream)} keys=${JSON.stringify(Object.keys(assistantEvent?.event?.data ?? {}))}`)
 check('SSE forwards live deltas', delta?.frame?.chunk?.type === 'text-delta', JSON.stringify(delta?.frame?.chunk))
 check('follow was asked for assistant stream frames', STATE.followed[0]?.assistantStream === true && STATE.followed[0]?.address?.sessionId === 'session-test')
+
+/* --- 子会话：跟不了就说清楚，并且别再摆出来 ------------------------------- */
+/*
+ * 真事故：手机上默认选中的那个会话是 agent 派生的子会话，宿主回
+ * "subagent Sessions require their durable parent address"。页面把它当普通断线，
+ * 于是弹"和电脑断开了 / 你的地址已失效"，而浏览器每三秒自动重连一次，连一整晚。
+ * （这一段必须放在上面那条 `STATE.followed[0]` 的断言之后。）
+ */
+{
+	const stream = await fetch(`${base}/api/stream?sessionId=session-subagent`, authed)
+	check('子会话的流会开出来（拒绝发生在跟随阶段）', stream.status === 200, `status ${stream.status}`)
+	const text = await stream.text()
+	const frames = text.split('\n').filter((line) => line.startsWith('data: '))
+		.map((line) => { try { return JSON.parse(line.slice(6)) } catch { return null } })
+		.filter(Boolean)
+	const errorFrame = frames.find((frame) => frame.t === 'error')
+	check('子会话的错误帧带 unsupported 标记（页面才敢说人话，而不是谎报断线）',
+		errorFrame?.unsupported === true, JSON.stringify(errorFrame)?.slice(0, 140))
+
+	listItems.push({ sessionId: 'session-subagent', updatedAt: Date.now() + 1000, running: false, blank: false, cwd: 'D:\\tool', projections: { asOfSeq: 1, values: { title: '子会话' } } })
+	const after = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('打不开的子会话不再出现在列表里（用户不会再选到它）',
+		after.sessions?.some((item) => item.sessionId === 'session-subagent') === false,
+		JSON.stringify(after.sessions?.map((item) => item.sessionId)))
+	listItems.pop()
+}
 
 /* --- 巨型历史必须被压小之后再发给手机 ------------------------------------ */
 {
@@ -649,6 +705,44 @@ async function readInteraction(reader) {
 	check('取消时给出 cancelled 这个合法结果（调用方按不允许处理）',
 		outcome === 'cancelled', String(outcome))
 	await reader.cancel().catch(() => {})
+}
+
+/* --- 普通请求取对话（不依赖长连接）-------------------------------------- */
+/*
+ * 真事故：有些通道会把大响应缓冲住，页面一片空白直到有新数据把它冲出来。
+ * 初始对话必须能用一次普通请求拿到 —— bootstrap 能通就证明普通请求没有这个问题。
+ */
+{
+	const plain = await (await fetch(`${base}/api/transcript?sessionId=session-test`, authed)).json()
+	check('GET /api/transcript 用普通请求返回对话快照',
+		Array.isArray(plain.records) && plain.records.length === 2, `${plain.records?.length} records`)
+	check('快照带 cursor 与 pageTag', Number.isInteger(plain.cursor) && typeof plain.pageTag === 'string',
+		`cursor=${plain.cursor} tag=${plain.pageTag}`)
+	const huge = await (await fetch(`${base}/api/transcript?sessionId=session-huge`, authed)).json()
+	check('普通请求路径同样会裁剪巨型历史',
+		JSON.stringify(huge).length <= 300 * 1024 && huge.hasMore === true,
+		`${Math.round(JSON.stringify(huge).length / 1024)} KB hasMore=${huge.hasMore}`)
+
+	// 「大」不只有"超长文本"一种：`data.stream` 是一堆短字符串，按字数截断对它无效。
+	const streamyRaw = await (await fetch(`${base}/api/transcript?sessionId=session-streamy`, authed)).text()
+	check('冗余的 stream 增量和超长文本一样会被丢掉（否则一条消息就能顶 780 KB）',
+		streamyRaw.length <= 300 * 1024 && !streamyRaw.includes('"stream"'),
+		`${Math.round(streamyRaw.length / 1024)} KB`)
+
+	// 手机上切走 / 关掉页面的那一刻，这次请求就没了收件人。往一条断掉的 socket 上
+	// writeHead 会抛，而抛在 await 之外就是进程级 uncaught —— 整个 DSH 陪葬。
+	// 所以掐断之后必须还能正常应答（handleStream 里踩过同一个坑）。
+	const noId = await fetch(`${base}/api/transcript`, authed)
+	check('缺少 sessionId → 400（不是 500，也不是假装成功的空 200）', noId.status === 400, `status ${noId.status}`)
+
+	const aborting = new AbortController()
+	const cut = fetch(`${base}/api/transcript?sessionId=session-huge`, { ...authed, signal: aborting.signal }).catch(() => null)
+	aborting.abort()
+	await cut
+	await new Promise((resolve) => setTimeout(resolve, 150))
+	const afterCut = await fetch(`${base}/api/bootstrap`, authed)
+	check('客户端半路掐断 transcript 之后，桥还活着（没被 uncaught 带走）',
+		afterCut.status === 200, `status ${afterCut.status}`)
 }
 
 /* --- surviving a restart ------------------------------------------------- */

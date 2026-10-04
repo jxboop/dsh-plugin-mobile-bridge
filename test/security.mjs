@@ -10,21 +10,26 @@
  *   - unit  : the throttle key, asserted on synthetic requests. This is the piece
  *             that decides whether a six-digit PIN can be walked through, and it
  *             is the one that silently regressed before, so it is pinned directly.
- *   - live  : real HTTP against the running bridge on 127.0.0.1, covering the
- *             secret path, authorization, the login throttle, cookie flags and
- *             logout revocation.
+ *   - live  : real HTTP against the running bridge on 127.0.0.1. Only the
+ *             **read-only** half touches the bridge you are actually using:
+ *             secret-path gating, missing-auth 401s, response headers, log
+ *             evidence. It talks to loopback only; never the tunnel.
+ *   - probe : everything destructive — walking the login throttle, logging in for
+ *             real, hammering the attachment endpoint, filling the SSE limit —
+ *             runs against a throwaway instance started here on a temp DSH_HOME
+ *             and a random port, torn down at the end.
  *
- * The live half needs the bridge running. It talks to loopback only; it does not
- * touch the tunnel or the internet.
- *
- * Throttle probes deliberately use fixed TEST-NET addresses (192.0.2.x) so their
- * login budget is isolated and neither this machine nor your phone can be locked
- * out by running the suite.
+ * Why the probe instance exists: the login throttle keeps a *global* budget that
+ * the phone shares. Running these checks against the live bridge spends that
+ * budget, and a run that ends with the user locked out of their own phone is a
+ * regression in the test, not in the product. It happened once; this is the fix.
+ * The 192.0.2.x TEST-NET addresses keep the per-IP buckets apart as well.
  */
 
 import { readFile, stat } from 'node:fs/promises'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { clientIp, isLoopbackPeer } from '../lib/index.js'
 
 const TEST_IP_A = '192.0.2.101'
@@ -79,6 +84,81 @@ console.log('\n=== 单元：限速的钥匙（clientIp）===')
 		!isLoopbackPeer('192.168.1.2') && !isLoopbackPeer('::ffff:192.168.1.2') && !isLoopbackPeer(undefined))
 }
 
+/* ------------------------------------------------- 一次性实例（破坏性探测专用） */
+
+const PROBE_PIN = '246810'
+const PROBE_SECRET = 'fedcba9876543210'
+const PROBE_TTL_HOURS = 12
+const probeHome = mkdtempSync(join(tmpdir(), 'mb-sec-'))
+const realHome = process.env.DSH_HOME
+
+/** 生成器要能挂住不返回，才测得出并发上限；abort 之后自己退出，不留悬挂的流。 */
+const probeController = {
+	create: async () => ({ id: 'probe' }),
+	prompt: async () => ({ accepted: true }),
+	cancel: async () => {},
+	list: async () => [],
+	attachment: async () => null,
+	follow: async function* (_query, signal) {
+		while (signal === undefined || signal.aborted !== true) {
+			await new Promise((resolve) => setTimeout(resolve, 25))
+		}
+	},
+}
+
+async function startProbe() {
+	for (let attempt = 0; attempt < 4; attempt += 1) {
+		const port = 37000 + Math.floor(Math.random() * 2000)
+		writeFileSync(join(probeHome, 'mobile-bridge.json'), JSON.stringify({
+			version: 1,
+			port,
+			pin: PROBE_PIN,
+			pathSecret: PROBE_SECRET,
+			tokenTtlHours: PROBE_TTL_HOURS,
+			bindTokenToIp: false,
+			elevationMinutes: 15,
+		}, null, 2))
+
+		process.env.DSH_HOME = probeHome
+		const effects = []
+		const cleanups = []
+		const ctx = {
+			sessionController: probeController,
+			effect: (fn, tag) => { effects.push({ fn, tag }); return () => {} },
+			get: () => undefined,
+			on: () => {},
+		}
+		const mod = await import(`../lib/index.js?security-probe=${attempt}`)
+		mod.apply(ctx)
+		for (const entry of effects) {
+			const cleanup = entry.fn()
+			if (typeof cleanup === 'function') cleanups.push(cleanup)
+		}
+
+		const base = `http://127.0.0.1:${port}`
+		for (let wait = 0; wait < 60; wait += 1) {
+			await new Promise((resolve) => setTimeout(resolve, 100))
+			const up = await fetch(`${base}/${PROBE_SECRET}/`, { redirect: 'manual' }).catch(() => null)
+			if (up !== null) {
+				return {
+					base,
+					stop: async () => { for (const fn of cleanups.reverse()) { try { await fn() } catch { /* 拆卸不该抛 */ } } },
+				}
+			}
+		}
+		// 端口可能被占：拆干净再换个端口重来。
+		for (const fn of cleanups.reverse()) { try { await fn() } catch { /* ignore */ } }
+	}
+	return null
+}
+
+console.log('\n=== 一次性实例：破坏性探测打这里，不碰你正在用的那台桥 ===')
+const probe = await startProbe()
+// 起不来就明说，并且让下面每一项都失败 —— 静默跳过安全测试比测试失败更糟。
+const probeBase = probe === null ? 'http://127.0.0.1:1' : probe.base
+check('一次性实例起来了（没起来的话下面全都会红）', probe !== null, probeBase)
+process.env.DSH_HOME = realHome
+
 /* ------------------------------------------------------------------ setup */
 
 let config = null
@@ -102,6 +182,9 @@ if (config !== null) {
 
 	const req = (path, init = {}, ip = TEST_IP_A) =>
 		fetch(`${gate}${path}`, { ...init, headers: { 'x-forwarded-for': ip, ...(init.headers ?? {}) } })
+	// 破坏性检查一律走这台一次性实例。
+	const preq = (path, init = {}, ip = TEST_IP_A) =>
+		fetch(`${probeBase}/${PROBE_SECRET}${path}`, { ...init, headers: { 'x-forwarded-for': ip, ...(init.headers ?? {}) } })
 
 	console.log('\n=== 实时：密钥路径门禁 ===')
 	{
@@ -131,7 +214,7 @@ if (config !== null) {
 		}
 	}
 
-	console.log('\n=== 实时：登录限速 ===')
+	console.log('\n=== 实时：登录限速（打一次性实例：真身的额度留给手机）===')
 	{
 		// A FIXED address, on purpose. Locally the peer is loopback, and a loopback
 		// peer is trusted to carry forwarding headers — that is not a hole, because
@@ -143,16 +226,18 @@ if (config !== null) {
 		// optional tunnel run below; the unit block above pins the logic itself.
 		const codes = []
 		for (let i = 0; i < 15; i += 1) {
-			const res = await req('/api/login', {
+			const res = await preq('/api/login', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ pin: '000000' }),
-			}, TEST_IP_A)
-			codes.push(res.status)
+			}, TEST_IP_A).catch(() => null)
+			codes.push(res?.status ?? 0)
 		}
 		const throttled = codes.filter((code) => code === 429).length
 		check('同一身份连续猜错会被限速（限速本身有效）', throttled > 0,
 			`401×${codes.filter((c) => c === 401).length} 429×${throttled}`)
+		check('限速触发后不再继续放行（不是偶尔 429 一下）', throttled >= 2 || codes.length === 0,
+			`429×${throttled}`)
 	}
 
 	const tunnel = (process.env.BRIDGE_TUNNEL_URL ?? '').trim().replace(/\/+$/, '')
@@ -174,12 +259,12 @@ if (config !== null) {
 			`401×${codes.filter((c) => c === 401).length} 429×${throttled}`)
 	}
 
-	console.log('\n=== 实时：正确登录 / cookie 标志 / 注销吊销 ===')
+	console.log('\n=== 一次性实例：正确登录 / cookie 标志 / 注销吊销 ===')
 	{
-		const res = await req('/api/login', {
+		const res = await preq('/api/login', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ pin: config.pin }),
+			body: JSON.stringify({ pin: PROBE_PIN }),
 		}, TEST_IP_B)
 		check('正确 PIN → 200', res.status === 200, `status ${res.status}`)
 
@@ -189,21 +274,22 @@ if (config !== null) {
 		check('cookie 带 SameSite=Lax', /SameSite=Lax/i.test(cookie))
 		check('明文 HTTP 下不加 Secure（否则局域网登录会静默失效）', !/;\s*Secure/i.test(cookie))
 		const maxAge = Number((/Max-Age=(\d+)/i.exec(cookie) ?? [])[1] ?? 0)
-		check('cookie 有效期不超过配置值', maxAge > 0 && maxAge <= config.tokenTtlHours * 3600, `Max-Age=${maxAge}s (配置 ${config.tokenTtlHours}h)`)
+		check('cookie 有效期不超过配置值', maxAge > 0 && maxAge <= PROBE_TTL_HOURS * 3600, `Max-Age=${maxAge}s (配置 ${PROBE_TTL_HOURS}h)`)
 
 		const token = (new RegExp(`${'dshm'}=([^;]+)`).exec(cookie) ?? [])[1] ?? ''
 		check('拿到了会话令牌', token !== '')
 
 		const authed = { cookie: `dshm=${token}`, 'content-type': 'application/json' }
-		const boot = await req('/api/bootstrap', { headers: authed }, TEST_IP_B)
+		const boot = await preq('/api/bootstrap', { headers: authed }, TEST_IP_B)
 		check('带 cookie 访问 bootstrap → 200', boot.status === 200, `status ${boot.status}`)
 		const body = await boot.json().catch(() => ({}))
 		const address = (body.addresses ?? [])[0]
-		check('广播给手机的地址带上了密钥路径', address === undefined || String(address.url).includes(secret), String(address?.url))
+		check('广播给手机的地址带上了密钥路径',
+			address === undefined || String(address.url).includes(PROBE_SECRET), String(address?.url))
 
-		const out = await req('/api/logout', { method: 'POST', headers: authed }, TEST_IP_B)
+		const out = await preq('/api/logout', { method: 'POST', headers: authed }, TEST_IP_B)
 		check('注销 → 200', out.status === 200, `status ${out.status}`)
-		const after = await req('/api/bootstrap', { headers: authed }, TEST_IP_B)
+		const after = await preq('/api/bootstrap', { headers: authed }, TEST_IP_B)
 		check('注销后同一 cookie 失效 → 401', after.status === 401, `status ${after.status}`)
 	}
 
@@ -220,31 +306,28 @@ if (config !== null) {
 		check('页面 X-Frame-Options: DENY', (page.headers.get('x-frame-options') ?? '') === 'DENY')
 	}
 
-	console.log('\n=== 实时：附件接口不泄漏内部信息 ===')
+	console.log('\n=== 一次性实例：附件接口不泄漏内部信息 ===')
 	{
-		const login = await req('/api/login', {
+		const login = await preq('/api/login', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ pin: config.pin }),
+			body: JSON.stringify({ pin: PROBE_PIN }),
 		}, '192.0.2.103')
 		const jar = (typeof login.headers.getSetCookie === 'function' ? login.headers.getSetCookie() : [login.headers.get('set-cookie')]).filter(Boolean).join('; ')
-		const probe = await req('/api/attachment?sessionId=x&attachmentId=..%2F..%2F..%2Fmobile-bridge.json', { headers: { cookie: jar } }, '192.0.2.103')
-		const text = await probe.text()
+		const probeRes = await preq('/api/attachment?sessionId=x&attachmentId=..%2F..%2F..%2Fmobile-bridge.json', { headers: { cookie: jar } }, '192.0.2.103')
+		const text = await probeRes.text()
 		const leaks = /[A-Za-z]:[\\/]|\/Users\/|\/home\/|\.dsh|ENOENT|no such file/i.test(text)
 		check('无效附件 ID 的响应不含内部路径 / 系统错误', !leaks, text.slice(0, 90))
 	}
 
-	console.log('\n=== 实时：SSE 并发上限 ===')
+	console.log('\n=== 一次性实例：SSE 并发上限 ===')
 	{
-		const login = await req('/api/login', {
+		const login = await preq('/api/login', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ pin: config.pin }),
+			body: JSON.stringify({ pin: PROBE_PIN }),
 		}, '192.0.2.104')
 		const jar = (typeof login.headers.getSetCookie === 'function' ? login.headers.getSetCookie() : [login.headers.get('set-cookie')]).filter(Boolean).join('; ')
-		const boot = await (await req('/api/bootstrap', { headers: { cookie: jar } }, '192.0.2.104')).json().catch(() => ({}))
-		const liveId = (boot.sessions ?? [])[0]?.sessionId
-		check('取到一个真实会话用于占用流', typeof liveId === 'string' && liveId !== '')
 
 		const controllers = []
 		let ok = 0
@@ -252,7 +335,7 @@ if (config !== null) {
 		for (let i = 0; i < 9; i += 1) {
 			const ac = new AbortController()
 			controllers.push(ac)
-			fetch(`${gate}/api/stream?sessionId=${encodeURIComponent(liveId ?? 'x')}`, {
+			fetch(`${probeBase}/${PROBE_SECRET}/api/stream?sessionId=${encodeURIComponent('probe-session')}`, {
 				headers: { cookie: jar, 'x-forwarded-for': '192.0.2.104' },
 				signal: ac.signal,
 			}).then((res) => {
@@ -262,7 +345,7 @@ if (config !== null) {
 			}).catch(() => {})
 		}
 		await new Promise((resolve) => setTimeout(resolve, 2500))
-		check('超过上限的并发流被 503 拒绝', refused > 0, `200×${ok} 503×${refused}`)
+		check('并发流上限生效：放行一批、多余的 503', ok > 0 && refused > 0, `200×${ok} 503×${refused}`)
 		controllers.forEach((ac) => ac.abort())
 		await new Promise((resolve) => setTimeout(resolve, 300))
 	}
@@ -278,8 +361,7 @@ if (config !== null) {
 		const res = await fetch(`${base}/definitely-not-the-secret/api/bootstrap`).catch(() => null)
 		check('不带密钥的请求返回 404', res?.status === 404, `status ${res?.status}`)
 
-		// `record()` appends asynchronously and the SSE section just above leaves a
-		// burst of writes queued, so poll instead of sleeping once.
+		// `record()` appends asynchronously, so poll instead of sleeping once.
 		let fresh = ''
 		for (let attempt = 0; attempt < 24; attempt += 1) {
 			await new Promise((resolve) => setTimeout(resolve, 250))
@@ -291,6 +373,11 @@ if (config !== null) {
 		check('日志中不出现密钥路径', fresh.length > 0 && !fresh.includes(String(secret)))
 	}
 }
+
+/* ---------------------------------------------------------------- teardown */
+
+if (probe !== null) await probe.stop()
+try { rmSync(probeHome, { recursive: true, force: true }) } catch { /* Windows 上文件可能还被占着 */ }
 
 /* ---------------------------------------------------------------- summary */
 

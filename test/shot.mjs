@@ -1,19 +1,24 @@
 /**
  * Screenshot the phone page in a real browser, authenticated.
  *
- *   node shot.mjs <url> <pin> <out.png> [width] [height] [waitMs]
+ *   node shot.mjs <url> <pin> <out.png> [width] [height] [waitMs] [clickSelector]
  *
  * Launches headless Edge with CDP, mints a session token through the bridge's
  * own login endpoint, plants it as a cookie, then captures the rendered page at
  * a phone viewport. Cookie planting avoids driving the PIN form, which would
  * make every capture a different length.
+ *
+ * `clickSelector` (optional) clicks one element by selector before capturing —
+ * that is how you capture the screen *behind* a first-run sheet like #welcomeGo.
  */
 import { spawn } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
-const DEBUG_PORT = 9333
-const [url, pin, out, widthArg, heightArg, waitArg] = process.argv.slice(2)
+// 随机调试端口：固定端口时，前一次留下的 Edge 还没退出，这一次就会连上【上一次那个
+// 页面】去截图 —— 明明点了「开始使用」，截出来的还是说明页，看起来像功能坏了。
+const DEBUG_PORT = 9400 + Math.floor(Math.random() * 500)
+const [url, pin, out, widthArg, heightArg, waitArg, clickArg] = process.argv.slice(2)
 if (!url || !pin || !out) {
 	console.error('usage: node shot.mjs <url> <pin> <out.png> [w] [h] [waitMs]')
 	process.exit(2)
@@ -173,6 +178,26 @@ const speakers = await send('Runtime.evaluate', {
 	})()`,
 })
 console.log(`speakers: ${speakers.result?.value}`)
+
+// 可选：截图前点一下某个元素（例如首次说明页的「开始使用」），用来拍它背后那一屏。
+if (clickArg !== undefined && clickArg !== '') {
+	const clicked = await send('Runtime.evaluate', {
+		returnByValue: true,
+		expression: `(() => {
+			const el = document.querySelector(${JSON.stringify(clickArg)})
+			if (!el) return 'missing ' + ${JSON.stringify(clickArg)}
+			el.click()
+			return 'clicked ' + ${JSON.stringify(clickArg)}
+		})()`,
+	})
+	console.log(`click: ${clicked.result?.value}`)
+	await new Promise((resolve) => setTimeout(resolve, 1200))
+	const after = await send('Runtime.evaluate', {
+		returnByValue: true,
+		expression: '(() => { const a=document.getElementById("app"); const w=document.getElementById("welcome"); return JSON.stringify({ app: a && getComputedStyle(a).display, welcome: w && getComputedStyle(w).display, welcomeSeen: (() => { try { return localStorage.getItem("dshm.welcomed") } catch { return "n/a" } })() }) })()',
+	})
+	console.log(`after click: ${after.result?.value}`)
+}
 
 const shot = await send('Page.captureScreenshot', { format: 'png' })
 await writeFile(out, Buffer.from(shot.data, 'base64'))

@@ -97,6 +97,12 @@ const sources = []
 let promptNeedsPin = false
 /** Flip to make /api/answer report the question as already finished (409). */
 let answerExpired = false
+/** Records the stub serves for GET /api/transcript (the non-streaming pull). */
+let transcriptRecords = []
+/** 非 null 时，/api/transcript 先等这个 promise 再回 —— 用来制造"会话已经换了，回包才到"。 */
+let transcriptHold = null
+/** 专门喂给 session-older 的记录：竞态测试要能分辨"这份是哪个会话的"。 */
+let olderTranscriptRecords = []
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -122,10 +128,21 @@ function resolveRequest(input) {
 	}
 }
 
-function stubFetch(input, options = {}) {
+async function stubFetch(input, options = {}) {
 	const full = resolveRequest(input)
 	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
 	requests.push({ url: full, path, options })
+	if (path.startsWith('/api/transcript')) {
+		// 只卡住【第一次】请求：制造"回包还在路上，用户已经换了会话"这一幕。
+		const held = transcriptHold
+		transcriptHold = null
+		if (held !== null) await held
+		return jsonResponse({
+			cursor: 9,
+			hasMore: false,
+			records: path.includes('session-older') ? olderTranscriptRecords : transcriptRecords,
+		})
+	}
 	if (path.startsWith('/api/login')) return jsonResponse({ ok: true })
 	if (path.startsWith('/api/answer')) {
 		if (answerExpired) return jsonResponse({ error: '这条提问已经失效（可能超时，或已在别处回答）' }, 409)
@@ -220,6 +237,11 @@ check('session picker is populated', $('session').options.length === 2, `${$('se
 check('the most recent session is selected and streamed',
 	$('session').value === SESSION && source !== null && source.url.includes(SESSION),
 	`value=${$('session').value} url=${source?.url}`)
+// 第一次连上就把说明页弹出来（后面还有一整段专门查它的内容和"只看一次"）。
+// 这一条必须放在【任何提问/审批帧之前】：真有卡片进来时说明页要让位（见后文）。
+check('说明页在第一次连上后自动弹出',
+	$('welcome') !== null && window.getComputedStyle($('welcome')).display !== 'none',
+	$('welcome') === null ? 'no #welcome' : `display=${$('welcome').style.display}`)
 
 /* --- 每个请求都必须落在密钥段之内 ---------------------------------------- */
 
@@ -265,9 +287,27 @@ source.emit({ t: 'delta', frame: { type: 'chunk', attemptId: 'a1', revision: 1, 
 await wait(120)
 
 check('live deltas accumulate in a streaming bubble', $('log').textContent.includes('正在处理'))
-check('a running turn hides send and shows stop',
-	window.getComputedStyle($('stop')).display !== 'none' && window.getComputedStyle($('send')).display === 'none',
-	`stop=${window.getComputedStyle($('stop')).display} send=${window.getComputedStyle($('send')).display}`)
+// 运行中【不能】把发送键藏掉：后端本来就是 queue 模式，插话会被排进当前回合。
+// 以前这里只留「停止」，用户在 agent 跑的时候想补一句，只能干等它结束。
+check('a running turn shows BOTH stop and 插话 (interject)',
+	window.getComputedStyle($('stop')).display !== 'none'
+	&& window.getComputedStyle($('send')).display !== 'none'
+	&& $('send').textContent === '插话',
+	`stop=${window.getComputedStyle($('stop')).display} send=${window.getComputedStyle($('send')).display} label=${$('send').textContent}`)
+check('运行中两个键会收窄，窄屏上不至于把输入框挤没',
+	$('compose').classList.contains('two'))
+
+// 插话走的就是普通发送 → 后端 queue 模式。这里确认键是活的、请求发得出去。
+const beforeInterject = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+$('text').value = '顺便再看下这个'
+$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+await wait(90)
+check('运行中点「插话」会把消息发出去（排队进当前回合）',
+	requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === beforeInterject + 1,
+	`${beforeInterject} -> ${requests.filter((entry) => entry.path.startsWith('/api/prompt')).length}`)
+// 插话进的是队列，对话里不会马上出现。必须给一句确认，否则用户看到的是"发了没反应"。
+check('插话后明确回一句"已插话"（不是静默收下）',
+	$('banner').textContent.includes('已插话'), $('banner').textContent)
 
 source.emit({ t: 'event', event: { type: 'assistant/message', seq: 6, time: 8, data: { turn: 2, step: 1, message: { id: 'm4', role: 'assistant', content: [{ type: 'text', text: '正在处理完成' }] } } } })
 source.emit({ t: 'event', event: { type: 'turn/end', seq: 7, time: 9, data: { turn: 2, reason: { kind: 'completed' } } } })
@@ -284,12 +324,27 @@ input.value = '帮我把这张图转成文字'
 $('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 await wait(80)
 
-const promptCall = requests.find((entry) => entry.path.startsWith('/api/prompt'))
+// 上面「插话」也是一次 /api/prompt，所以这里必须取最后一次，不能取第一次。
+const promptCall = requests.filter((entry) => entry.path.startsWith('/api/prompt')).pop()
 const promptBody = promptCall ? JSON.parse(promptCall.options.body) : null
 check('send posts the session, text and images',
 	promptBody?.sessionId === SESSION && promptBody?.text === '帮我把这张图转成文字' && Array.isArray(promptBody?.images),
 	JSON.stringify(promptBody))
 check('the composer is cleared after sending', input.value === '')
+
+// Ctrl/Cmd+Enter 走的是另一条路（直接调 send），只靠按钮 disabled 挡不住连按两下 ——
+// 同一个 prompt 会发两次，两次都是要花钱的一轮。
+{
+	const before = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	input.value = '连按两下只许发一次'
+	const keydown = () => $('text').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+	keydown()
+	keydown()
+	await wait(120)
+	const after = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	check('Ctrl+Enter 连按两下不会把同一句话发两遍', after === before + 1, `${before} -> ${after}`)
+	input.value = ''
+}
 
 /* --- attaching a photo from the phone ------------------------------------ */
 
@@ -674,6 +729,107 @@ await wait(70)
 check('收到宿主心跳后提示条自动收起',
 	$('linkbar') !== null && window.getComputedStyle($('linkbar')).display === 'none')
 
+/* --- 打不开的会话（agent 的子会话）不能说成"断线" ------------------------- */
+/*
+ * 真事故：手机上默认选中的那个会话是 agent 自己派生的子会话，宿主回
+ * "subagent Sessions require their durable parent address"。页面把这条当普通断线
+ * 处理 —— 弹"和电脑断开了 / 你正在用的地址已经失效"，把用户引去换地址，而
+ * 浏览器还会每三秒自动重连一次，连一整晚。
+ */
+$('session').value = 'session-older'
+$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await wait(140)
+check('切到另一个会话会重开一条流', source !== null && source.url.includes('session-older'))
+
+// 会话在不在跑必须跟着会话走：以前 state.running 只由流事件写，换会话后不会重置，
+// 于是切到一条闲着的会话，按钮还写着「插话」、停止键还亮着，发一条普通消息还会
+// 回一句假的"已插话"。
+source.emit({ t: 'event', event: { type: 'turn/start', seq: 90, time: Date.now(), data: { turn: 3 } } })
+await wait(80)
+check('（前置）运行中按钮是「插话」', $('send').textContent === '插话', $('send').textContent)
+$('session').value = SESSION
+$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await wait(120)
+check('切到没在跑的会话后按钮回到「发送」、停止键收起',
+	$('send').textContent === '发送' && window.getComputedStyle($('stop')).display === 'none',
+	`label=${$('send').textContent} stop=${window.getComputedStyle($('stop')).display}`)
+$('session').value = 'session-older'
+$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await wait(140)
+
+source.emit({ t: 'error', unsupported: true, message: 'subagent Sessions require their durable parent address' })
+await wait(140)
+check('子会话报错时讲的是"这个会话打不开"，不是"你的地址已失效"',
+	linkText().includes('子会话') && !linkText().includes('地址已经失效'), linkText().slice(0, 90))
+check('子会话报错也不谎报"和电脑断开了"', !linkText().includes('断开了'), linkText().slice(0, 60))
+check('子会话报错后主动关掉那条流（浏览器才不会每三秒自动重连一整晚）',
+	source.readyState === 2, `readyState=${source.readyState}`)
+check('会话区域给出下一步（换一个会话），而不是"正在读取…"',
+	$('log').textContent.includes('换一个会话'), $('log').textContent.trim().slice(0, 60))
+
+// 再切回它一次：不许重新开流。
+const streamsBeforeRetry = sources.length
+$('session').value = SESSION
+$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await wait(120)
+$('session').value = 'session-older'
+$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await wait(150)
+check('已经判过"打不开"的会话不会再被重连（每次都失败，白烧流量）',
+	sources.length === streamsBeforeRetry + 1, `${streamsBeforeRetry} -> ${sources.length}`)
+
+// 回到正常会话：后面还有一半检查要靠它。
+$('session').value = SESSION
+$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await wait(140)
+source.emit({ t: 'ping' })
+await wait(80)
+check('换回正常会话后提示条收起',
+	window.getComputedStyle($('linkbar')).display === 'none', linkText().slice(0, 60))
+
+/* --- 迟到的旧回包不许贴到新会话上 ---------------------------------------- */
+/*
+ * 场景：请求 A 的回包还在路上，用户已经切到了 B。以前回包一到就无条件贴上去，
+ * 于是 B 的标题下面挂着 A 的对话，后面的事件还全接在错的对话上，自己永远好不了。
+ */
+{
+	olderTranscriptRecords = [{
+		type: 'event',
+		event: { type: 'user/message', seq: 91, time: Date.now(), data: { id: 'late', role: 'user', content: [{ type: 'text', text: '迟到的是 session-older 的内容' }] } },
+	}]
+	let release = null
+	transcriptHold = new Promise((resolve) => { release = resolve })
+	$('session').value = 'session-older'
+	$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(60)                                  // 这一条 transcript 被卡在路上
+	$('session').value = SESSION
+	$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(60)
+	release()                                       // 旧回包现在才到
+	await wait(160)
+	check('迟到的旧会话回包不会贴到新会话上（否则标题和内容对不上）',
+		!$('log').textContent.includes('迟到的是 session-older 的内容'), $('log').textContent.trim().slice(0, 60))
+	olderTranscriptRecords = []
+	transcriptHold = null
+}
+
+/* --- 初始对话不能只靠长连接 ---------------------------------------------- */
+/*
+ * 真事故：有些通道会把大响应缓冲住 —— 手机打开页面一片空白，**直到电脑那边发了
+ * 一条新消息**，那 200 多 KB 的快照才跟着被冲出来。普通请求不踩这个坑
+ * （bootstrap 一直都能通），所以页面必须能用它把对话拉回来。
+ */
+transcriptRecords = [{
+	type: 'event',
+	event: { type: 'user/message', seq: 99, time: Date.now(), data: { id: 't1', role: 'user', content: [{ type: 'text', text: '这条是普通请求拉回来的' }] } },
+}]
+click($('reload'))
+await wait(260)
+check('「刷新」用普通请求把对话拉回来（不依赖长连接能不能推流）',
+	$('log').textContent.includes('这条是普通请求拉回来的'),
+	`transcript 请求 ${requests.filter((e) => e.path.startsWith('/api/transcript')).length} 次; log="${$('log').textContent.trim().slice(0, 30)}"`)
+transcriptRecords = []
+
 /* --- 空会话不能是一片全白 ------------------------------------------------ */
 /*
  * render() 以前在没内容时就是 log.innerHTML = '' —— 一个字都不说。而页面记着上次
@@ -685,6 +841,78 @@ check('空会话会给出说明，而不是一片全白',
 	$('log').textContent.trim().length > 0, `"${$('log').textContent.trim().slice(0, 46)}"`)
 check('说明指向了下拉框或读取状态',
 	/下拉框|读取/.test($('log').textContent), $('log').textContent.trim().slice(0, 40))
+
+/* --- 首次进入的「开始使用」说明页 ---------------------------------------- */
+{
+	// 开机那一下已经查过"自动弹出"（见文件开头）；这里查内容、收起，以及"只看一次"。
+	check('说明页讲清了四件能做的事',
+		$('welcome').textContent.includes('下达任务')
+		&& $('welcome').textContent.includes('看实时进度')
+		&& $('welcome').textContent.includes('批准操作')
+		&& $('welcome').textContent.includes('插话'),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 60))
+	check('说明页提醒了添加到主屏幕', $('welcome').textContent.includes('添加到主屏幕'))
+
+	click($('welcomeGo'))
+	await wait(60)
+	check('点「开始使用」就收起，并记住不再弹第二次',
+		window.getComputedStyle($('welcome')).display === 'none'
+		&& window.localStorage.getItem('dshm.welcomed') === '1',
+		`display=${$('welcome').style.display} flag=${window.localStorage.getItem('dshm.welcomed')}`)
+
+	// 第二次连上不该再弹。localStorage 被清掉（无痕模式）这种极端情况，也要靠内存里的
+	// 标记兜住 —— 否则同一台手机上每次重连都弹一遍，比没有说明页还烦。
+	window.localStorage.removeItem('dshm.welcomed')
+	click($('logout'))
+	await wait(220)
+	$('pin').value = '123456'
+	click($('gateBtn'))
+	await wait(320)
+	check('同一次打开里不会再弹第二次（无痕模式也不反复打扰）',
+		window.getComputedStyle($('welcome')).display === 'none',
+		`display=${$('welcome').style.display}`)
+	check('退出再登录后照样回到会话界面',
+		window.getComputedStyle($('app')).display !== 'none',
+		`app=${window.getComputedStyle($('app')).display}`)
+
+	// 真有提问/审批时说明页必须让位：卡片是流内元素，会被全屏的说明页挡在后面，
+	// 而说明页里恰好写着"需要你拍板时会弹出卡片"。
+	$('welcome').style.display = 'flex'          // 把说明页摆回屏幕上（前面已经点掉过）
+	source.emit({ t: 'interaction', id: 'q-welcome', kind: 'question', payload: { questions: [{ id: 'q1', header: '确认', question: '要不要继续？', options: [] }] } })
+	await wait(120)
+	check('提问进来时说明页自动让位（否则卡片被挡着，用户什么都看不到）',
+		window.getComputedStyle($('welcome')).display === 'none',
+		`display=${$('welcome').style.display}`)
+	source.emit({ t: 'interaction-end', id: 'q-welcome' })
+	await wait(80)
+}
+
+/* --- 无痕模式：localStorage 会【抛异常】，页面不许因此死掉 --------------- */
+/*
+ * iOS Safari 无痕下 getItem 照常、setItem 抛 QuotaExceededError。以前那句 setItem
+ * 就夹在 `state.sessionId = chosen` 和 `connect()` 之间：一抛，流不开、对话不拉，
+ * 屏幕全白，而用户看着一切正常（还登录着）。当时 5 个套件全绿 —— 编辑器里的
+ * localStorage 不会抛。
+ */
+{
+	const storage = window.localStorage
+	const proto = Object.getPrototypeOf(storage)
+	const realSet = proto.setItem
+	proto.setItem = () => { throw new window.Error('QuotaExceededError') }
+	const streamsBefore = sources.length
+	const pullsBefore = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	click($('logout'))
+	await wait(240)
+	$('pin').value = '123456'
+	click($('gateBtn'))
+	await wait(340)
+	check('无痕模式下（写不进去）重新登录照样连上流',
+		sources.length === streamsBefore + 1, `${streamsBefore} -> ${sources.length}`)
+	const pullsAfter = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	check('无痕模式下也去拉了对话（不是一片空白）',
+		pullsAfter > pullsBefore, `transcript ${pullsBefore} -> ${pullsAfter}`)
+	proto.setItem = realSet
+}
 
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build
