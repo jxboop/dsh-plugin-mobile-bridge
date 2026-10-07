@@ -59,11 +59,11 @@
 装完从桌面图标点开：没有地址栏、没有浏览器按钮，启动有加载进度条，界面是毛玻璃那套；
 后台断网也能打开外壳（页面走 network-first，永远拿最新的）。
 
-图标是 	ools/make-icons.mjs 生成的真 PNG（iOS 不认 SVG 图标），改了图标设计重跑一次即可：
+图标是 `tools/make-icons.mjs` 生成的真 PNG（iOS 不认 SVG 图标），改了图标设计重跑一次即可：
 
-`ash
+```bash
 node tools/make-icons.mjs
-`
+```
 
 > 说明：**原生 App 做不了**（iOS 打包签名要 Mac + 开发者账号 + 上架审核），
 > 而 PWA 在体验上已经等价：独立图标、全屏、启动图、离线外壳、无浏览器界面。
@@ -101,6 +101,9 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 ```
 
 然后重启 DSH。（`dsh plugin` 是 pnpm 的转发器；对分支形式的 git 依赖，`add` 会重新解析到最新提交。实测 0.2.2 → 0.3.0 可直接升级。）想确认装到了哪一版：看 `<profile>/node_modules/dsh-plugin-mobile-bridge/package.json` 的 `version`。
+
+> 版本号从 **0.9.4** 起才是准的。0.7.0～0.9.3 那一段只在提交标题里写了版本，`package.json`
+> 一直停在 `0.6.7` —— 所以那几版**看不出新旧**，照"重跑一遍安装命令 + 重启"来判断即可。
 
 ### 2. 首次启动会自动生成配置
 
@@ -364,9 +367,9 @@ iPhone 拍的照片是 HEIC，而且**扩展名经常骗人**（名字叫 `..jpe
 浏览器不一定解得了，插件里的背景/素材预览就会显示不出来。桥会**按内容**认出它是 HEIC
 （而不是当视频），但要在任何浏览器里都能显示，最好先转成 JPEG：
 
-``powershell
+```powershell
 powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-MaxEdge 1600]
-``
+```
 
 它借 Windows 自带的 HEIF 解码器（`Microsoft.HEIFImageExtension`）转码，只读输入、
 写输出。转出来的 1600px JPEG 任何浏览器都能显示，也能直接当手机界面背景。
@@ -412,6 +415,12 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 35. **排队中的消息在对话里是"不存在"的。** 插话走 `mode:'queue'`，要等这一轮跑完才变成一条真正的 `user/message` —— 中间那几分钟手机上什么都没有，用户以为没发出去。解法是**本地回声**：发成功后先在对话末尾画一条虚线气泡（带"排队中"和撤回按钮），真消息进来时按文本把回声撤掉（快照里已经有就更要撤，否则重连后会显示两遍）。
 36. **撤回靠 rpcId 对齐，不靠文本。** `POST /api/prompt` 里的 `requestId` 就是 DSH 在 `agent/inbox/spliced` 事件里给的 `source.rpcId` —— 桥把它回给手机，手机据此认出"这条排队项是我刚发的"，拿到 `inserted[].id` 后调 `updateQueue({action:{kind:'remove'}})` 真把它拿掉。已经开始处理时宿主回 `queue-item-not-found`，这时要**如实说撤不回来**（409 + 人话），别假装成功。
 
+37. **绝不要按名字杀浏览器。** 为了清"卡住的旧实例"，截图前跑过 `Get-Process msedge | Stop-Process -Force` —— 那句是**按名字**杀，把用户正在用的浏览器窗口一起关了；每截一次图就杀一次，现象就是"我的浏览器窗口隔一会儿自己消失"，隔壁会话为此盯了一整晚进程树才定位到。规则：**只动自己 spawn 出来的那棵树**。`shot.mjs` 现在每次用独立临时 profile + 随机调试端口，收尾 `taskkill /PID <自己的 pid> /T /F`，跑完删自己那份 profile，从根上不需要杀任何别人的进程。
+38. **扩展名会骗人，媒体类型要按内容认。** 手机相册里存下来的"动图"，文件名可能是 `1791380138027.jpeg`，内容却是 QuickTime/MP4（头 4 字节是 box 长度、第 5-8 字节是 `ftyp`）。按扩展名当图片发 → 浏览器解不开 → 背景整层撤掉，用户看到的就是"设了背景却没背景"。`mediaTypeOf()` 现在先看魔数，认不出才退回扩展名。顺带：`ftyp` 后面那个 **major brand** 才是关键（`heic/heix/hevc/hevx/heim/heis/mif1/msf1` 是图、`avif/avis` 是图、`qt  ` 是视频），只看 `ftyp` 会把 HEIC 照片当成 `video/mp4`。
+39. **"进去慢"是往返次数 × 往返耗时，不是页面复杂。** 开机原来是两个请求：`/api/bootstrap`（列表）再 `/api/transcript`（对话）。走隧道时一个来回好几秒（实测经旧金山 DERP 8 s），两次就是十几秒 —— 数据量再小也没用，**等待是纯等待**。现在合成 `GET /api/boot?sessionId=...`：一次带回列表 + 对话 + 背景 + welcomed。还有第二个来回是**自己加回去的**：`connect()` 开长连接时会顺手补拉一次对话（防 SSE 缓冲大包），刚开机那份已经是最新的了 —— 所以 boot 路径记 `state.lastPullAt`，1.5 s 内不再重复拉。本机 127.0.0.1 实测：**可见 327 ms / 内容 500 ms，只发 1 次 `/api/boot`、0 次 `/api/transcript`**。
+
+40. **`package.json` 不能有 BOM，而 PowerShell 5.1 的 `Set-Content -Encoding utf8` 会给你加上一个。** 改版本号时图快用了一句 PowerShell 写文件，结果 `package.json` 开头多了 `EF BB BF`：本机因为 Node 的 `JSON.parse` 宽容（其实不宽容，是构建工具先读文本再 parse）而没立刻炸，但 **tsdown / 加载器解析会直接失败** —— 也就是说推上去的那一版对同学是装不上的。现在版本号这类 JSON 一律用 node 写（`fs.readFileSync` → 去掉 `\uFEFF` → `JSON.parse` 验证 → `fs.writeFileSync(..., 'utf8')`），插件自己的重载预检也会拦这一条（`重载前构建产物预检失败：package.json 带 UTF-8 BOM`）。顺带记一笔：`.ps1` 里写中文**必须**带 BOM（否则 PowerShell 5.1 按 GBK 读，中文全乱），两条规则正好相反，别记混。
+
 ---
 
 ## 兼容性
@@ -422,14 +431,21 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 
 ## 量"进插件"要多久
 
-``ash
-node tools/measure-boot.mjs <手机桥网址> <PIN>
-``
+```bash
+node tools/measure-boot.mjs <手机桥网址> <PIN>          # 老用户（本地记着上次那个会话）
+node tools/measure-boot.mjs <手机桥网址> <PIN> --cold   # 首装（没有本地标记，会多拉一次对话）
+```
 
-真浏览器跑一遍，报"界面可见 ms / 对话有内容 ms"和这次打开的请求数（本机 127.0.0.1 实测
-**界面 355 ms、内容 510 ms**，每次打开只发 1 次 bootstrap）。手机上还要加上隧道往返，
-但数据量已经靠 gzip 压到 1/3～1/5（首屏 122 KB → 41.7 KB，对话快照 177 KB → 36 KB），
-第二次打开还走 service worker 的缓存壳。
+真浏览器跑一遍，报"界面可见 ms / 对话有内容 ms"、这次打开的请求数，还有一条**请求时间线**（哪个请求在什么时刻发出去）—— 慢的时候一眼能看出时间被哪个请求吃掉了，以及接口之间是串行还是并行。
+
+本机 127.0.0.1 实测（工具会先按"老用户"给页面塞回 `dshm.session`，量的才是每次进来的真实路径）：
+**界面可见 327 ms、对话有内容 500 ms，只发 1 次 `/api/boot`、0 次 `/api/transcript`**。
+手机上还要加上隧道往返，但数据量已经靠 gzip 压到 1/4～1/5（首屏 122 KB → 41.7 KB，
+对话快照 202 KB → 42 KB），第二次打开还走 service worker 的缓存壳。
+
+⚠️ 隧道慢的时候（`tailscale netcheck` 显示最近 DERP 在旧金山就是信号）别硬扛：
+手机和电脑在同一个 WiFi / 热点下时，直接用 bootstrap 里报的局域网地址
+（`http://<WLAN IP>:3081/<密钥>/`）比走 Funnel 快一个数量级。
 
 ---
 
@@ -450,6 +466,3 @@ node tools/measure-boot.mjs <手机桥网址> <PIN>
 ## License
 
 MIT
-
-37. **绝不要按名字杀浏览器。** 为了清"卡住的旧实例"，截图前跑过 `Get-Process msedge | Stop-Process -Force` —— 那句是**按名字**杀，把用户正在用的浏览器窗口一起关了；每截一次图就杀一次，现象就是"我的浏览器窗口隔一会儿自己消失"，隔壁会话为此盯了一整晚进程树才定位到。规则：**只动自己 spawn 出来的那棵树**。`shot.mjs` 现在每次用独立临时 profile + 随机调试端口，收尾 `taskkill /PID <自己的 pid> /T /F`，跑完删自己那份 profile，从根上不需要杀任何别人的进程。
-38. **扩展名会骗人，媒体类型要按内容认。** 手机相册里存下来的"动图"，文件名可能是 `1791380138027.jpeg`，内容却是 QuickTime/MP4（头 4 字节是 box 长度、第 5-8 字节是 `ftyp`）。按扩展名当图片发 → 浏览器解不开 → 背景整层撤掉，用户看到的就是"设了背景却没背景"。`mediaTypeOf()` 现在先看魔数，认不出才退回扩展名。

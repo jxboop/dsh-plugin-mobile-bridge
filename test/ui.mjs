@@ -143,6 +143,21 @@ function resolveRequest(input) {
 	}
 }
 
+/** bootstrap / boot 共用的那部分（真宿主也是同一个 buildBootstrap）。 */
+function bootstrapBody() {
+	return {
+		sessions: SESSIONS,
+		failure: null,
+		background: backdropInfo,
+		// 宿主记着"这台手机看过说明页"没有（换地址/无痕时本地标记会丢，靠它兜底）。
+		welcomed: welcomedOnServer,
+		// 真宿主也会发这个：断线时它是同 WiFi 下的兜底出路。
+		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
+		// 和页面当前 origin 不同的正式地址：用来验证「切到当前地址」。
+		publicUrl: 'https://example.ts.net/0123456789abcdef/',
+	}
+}
+
 async function stubFetch(input, options = {}) {
 	const full = resolveRequest(input)
 	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
@@ -163,17 +178,19 @@ async function stubFetch(input, options = {}) {
 		if (answerExpired) return jsonResponse({ error: '这条提问已经失效（可能超时，或已在别处回答）' }, 409)
 		return jsonResponse({ ok: true })
 	}
-	if (path.startsWith('/api/bootstrap')) return jsonResponse({
-		sessions: SESSIONS,
-		failure: null,
-		background: backdropInfo,
-		// 宿主记着"这台手机看过说明页"没有（换地址/无痕时本地标记会丢，靠它兜底）。
-		welcomed: welcomedOnServer,
-		// 真宿主也会发这个：断线时它是同 WiFi 下的兜底出路。
-		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
-		// 和页面当前 origin 不同的正式地址：用来验证「切到当前地址」。
-		publicUrl: 'https://example.ts.net/0123456789abcdef/',
-	})
+	if (path.startsWith('/api/boot')) {
+		// 打开时的一次性请求：会话列表 + 上次那个会话的对话，一起回来。
+		// 真宿主没带 sessionId 时（首装、清了站点数据）transcript 就是 null —— 别在这里
+		// 假装给了对话，否则"跳过重复拉取"这条会被一个不存在的场景喂成假的。
+		const wanted = /sessionId=([^&]+)/.exec(path)
+		return jsonResponse({
+			...bootstrapBody(),
+			transcript: wanted === null
+				? null
+				: { cursor: 9, hasMore: false, records: wanted[1].includes('session-older') ? olderTranscriptRecords : transcriptRecords },
+		})
+	}
+	if (path.startsWith('/api/bootstrap')) return jsonResponse(bootstrapBody())
 	if (path.startsWith('/api/welcomed')) {
 		welcomedOnServer = true
 		return jsonResponse({ ok: true })
@@ -255,6 +272,9 @@ const dom = new JSDOM(html, {
 	beforeParse(window) {
 		window.fetch = stubFetch
 		window.EventSource = FakeEventSource
+		// 按"老用户"来：手机本地记着上次那个会话。真手机每次进来都是这个状态，
+		// 而首装那趟（没有这个标记）另有一条用例专门查。
+		try { window.localStorage.setItem('dshm.session', SESSION) } catch { /* jsdom 里不该失败，失败就按首装算 */ }
 		// jsdom 不会解码图片：给一个假 bitmap，让"转格式"那条路能走到画布那一步
 		// （没有 canvas 包时 getContext 返回 null，于是页面按设计退回"当文件发"）。
 		window.createImageBitmap = async () => ({ width: 4, height: 4, close() {} })
@@ -302,6 +322,40 @@ check('所有 fetch 都落在密钥段之内', escaped.length === 0,
 	escaped.length === 0 ? `${requests.length} 个请求` : escaped.map((e) => e.url).join(', '))
 check('EventSource 也在密钥段之内',
 	source !== null && source.url.includes(SECRET_PREFIX), source?.url)
+
+/* --- 开机只跑一个来回 ---------------------------------------------------- */
+/*
+ * 现场：进 App 要等两次往返（列表 + 对话）。隧道慢时一个来回好几秒，加起来就是
+ * 用户看到的"进去太慢"。现在合并成 /api/boot 一次拿齐 —— 而且开了长连接之后
+ * 不许再顺手补一次 /api/transcript，那等于把省下来的那个来回又还回去。
+ */
+{
+	const bootCalls = requests.filter((entry) => entry.path.startsWith('/api/boot')).length
+	const transcriptCalls = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	const bootPath = requests.find((entry) => entry.path.startsWith('/api/boot'))?.path ?? ''
+	check('开机只请求 /api/boot 一次（不再先 bootstrap 再 transcript）',
+		bootCalls === 1, `${bootCalls}× boot`)
+	check('boot 带上本地记住的会话（否则拿回来的不是用户上次看的那个）',
+		bootPath.includes(`sessionId=${SESSION}`), bootPath)
+	check('/api/boot 已经带回对话 → 开长连接时不再重复拉一次 transcript',
+		transcriptCalls === 0, `${transcriptCalls}× transcript`)
+
+	// 但"跳过"必须认【哪一个会话】，不能只认"刚才拉过"。boot 带回的是上次记住的那个
+	// 会话，而 loadSessions 可能选中另一个（记住的被删了/不在列表里）—— 那时如果不拉，
+	// 画面上就留着别的会话的对话，标题却是新的。
+	const switchBefore = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	$('session').value = 'session-older'
+	$('session').dispatchEvent(new window.Event('change'))
+	await wait(120)
+	const switchAfter = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	check('刚开机就换会话时，照样去拉新会话的对话（跳过只对同一个会话生效）',
+		switchAfter === switchBefore + 1, `${switchBefore} -> ${switchAfter}`)
+
+	// 换回来，后面的用例接着在原来的会话上跑。
+	$('session').value = SESSION
+	$('session').dispatchEvent(new window.Event('change'))
+	await wait(120)
+}
 
 /* --- durable history arrives as a snapshot ------------------------------- */
 

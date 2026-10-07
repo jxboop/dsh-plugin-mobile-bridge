@@ -1339,6 +1339,7 @@
 		const wanted = state.sessionId
 		if (!wanted) return
 		state.lastPullAt = Date.now()
+		state.lastPullSession = wanted
 		let body
 		try { body = await api('api/transcript?sessionId=' + encodeURIComponent(wanted)) } catch { return }
 		if (state.sessionId !== wanted) return
@@ -1394,7 +1395,11 @@
 		const source = new EventSource('api/stream?sessionId=' + encodeURIComponent(state.sessionId))
 		state.source = source
 		// 立刻用普通请求拉一次：不赌这条长连接能不能把大快照推过来。
-		pullTranscript()
+		// 但刚开机那次已经在 /api/boot 里拿到同一份对话了 —— 只有"同一份"才跳过。
+		// 认会话而不是只认时间：boot 拿的是上次记住的那个会话，而 loadSessions 可能
+		// 选中另一个（记住的会话被删了/已不在列表里），这时必须照拉，否则画面上会留着
+		// 别的会话的对话。
+		if (state.lastPullSession !== state.sessionId || Date.now() - (state.lastPullAt ?? 0) > 1500) pullTranscript()
 		source.onopen = () => { state.lastFrameAt = Date.now(); setLink('live') }
 		source.onerror = () => {
 			// 会话本身打不开时，EventSource 会一直自动重连 —— 每三秒一次，一直不停。
@@ -2673,14 +2678,32 @@
 
 	/* --------------------------------------------------------------- boot */
 
-	api('api/bootstrap')
+	// 打开时**一次请求**把"会话列表 + 上次那个会话的对话"都拿回来：
+	// 隧道慢的时候（一个来回好几秒），省掉一个来回就是省掉好几秒。
+	const remembered = readLocal('dshm.session')
+	bootStep(12, '正在连电脑')
+	api('api/boot' + (remembered === '' ? '' : '?sessionId=' + encodeURIComponent(remembered)))
 		.then((body) => {
-			// 先看宿主记的"这台手机看过说明页没有"，再决定弹不弹 —— 顺序反了就等于白记。
 			if (body !== null && body !== undefined && body.welcomed === true) welcomedOnServer = true
+			// 对话先铺上，再让 loadSessions 去挑会话（它可能换成另一个）。
+			if (body?.transcript !== undefined && body.transcript !== null) {
+				applySnapshot({
+					records: Array.isArray(body.transcript.records) ? body.transcript.records : [],
+					cursor: body.transcript.cursor ?? 0,
+					hasMore: body.transcript.hasMore === true,
+				})
+				// 刚开机那次已经在 /api/boot 里拿到同一份对话了 —— 接着 connect() 要开长
+				// 连接，它默认会顺手再拉一次（防 SSE 把大包缓冲住）；这次已经是最新的，
+				// 再拉就是白白多一个来回，慢网络上那正是"进去慢"的来源。
+				// 记的是"哪一份"（会话 id），不是"多久以前"：loadSessions 之后可能选中的
+				// 是另一个会话，那时候必须照拉。
+				state.lastPullAt = Date.now()
+				state.lastPullSession = remembered
+				state.lastFrameAt = Date.now()
+			}
 			bootStep(30, '已连上电脑')
 			hide(gate); show(app); switchTab('task')
 			maybeWelcome()
-			// 把这一份直接交给 loadSessions —— 再要一次纯属多花一个往返（手机上很明显）。
 			return loadSessions(body)
 		})
 		.then(() => { bootDone() })

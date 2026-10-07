@@ -1038,6 +1038,44 @@ async function readInteraction(reader) {
 		afterCut.status === 200, `status ${afterCut.status}`)
 }
 
+/* --- 开机只跑一个来回（/api/boot） -------------------------------------- */
+/*
+ * 现场：手机上"开始使用"之后要等两次往返 —— 先 bootstrap（会话列表＋背景），
+ * 再 transcript（上次那个会话的对话）。5G/Funnel 上一次往返一两秒，加起来就是
+ * 用户看到的"进去太慢"。所以合并成一个请求：一次拿齐列表＋对话。
+ * 慢网络上少一个来回 ≈ 少一两秒，这是纯粹的等待时间，没法靠缓存省掉。
+ */
+{
+	const boot = await (await fetch(`${base}/api/boot?sessionId=session-test`, authed)).json()
+	check('GET /api/boot 一次带回会话列表', boot.sessions?.length === 2, JSON.stringify(boot.sessions?.length))
+	check('GET /api/boot 一次带回对话快照',
+		Array.isArray(boot.transcript?.records) && boot.transcript.records.length === 2,
+		`${boot.transcript?.records?.length} records`)
+	check('GET /api/boot 带回 cursor / hasMore，页面不用再问一次',
+		Number.isInteger(boot.transcript?.cursor) && boot.transcript.hasMore === false,
+		`cursor=${boot.transcript?.cursor} hasMore=${boot.transcript?.hasMore}`)
+	check('GET /api/boot 也带背景和 welcomed（等同 bootstrap 的那几项）',
+		'background' in boot && typeof boot.welcomed === 'boolean',
+		`welcomed=${boot.welcomed}`)
+	check('GET /api/boot 与 bootstrap 用同一个 pageTag（两套入口不会各说各话）',
+		boot.pageTag === pageTag, `${boot.pageTag} vs ${pageTag}`)
+
+	// 没记住上次是哪个会话时（第一次装、清了站点数据），boot 只当 bootstrap 用。
+	const bare = await fetch(`${base}/api/boot`, authed)
+	const bareBody = await bare.json()
+	check('没带 sessionId 的 boot 只回列表、不报错（首装那一趟也只用一次往返）',
+		bare.status === 200 && bareBody.sessions?.length === 2 && bareBody.transcript === null,
+		`status ${bare.status} transcript=${JSON.stringify(bareBody.transcript)}`)
+
+	const hugeBoot = await (await fetch(`${base}/api/boot?sessionId=session-huge`, authed)).json()
+	check('boot 里的对话同样会裁剪巨型历史（不能因为是新入口就绕过预算）',
+		JSON.stringify(hugeBoot).length <= 320 * 1024 && hugeBoot.transcript?.hasMore === true,
+		`${Math.round(JSON.stringify(hugeBoot).length / 1024)} KB`)
+
+	const bootNoAuth = await fetch(`${base}/api/boot?sessionId=session-test`)
+	check('未登录的 /api/boot 同样被拒（新入口不能开天窗）', bootNoAuth.status === 401, `status ${bootNoAuth.status}`)
+}
+
 /* --- surviving a restart ------------------------------------------------- */
 /*
  * Tokens used to live only in the bridge's memory, so every `dsh web` restart
