@@ -681,6 +681,8 @@
 		lastFrameAt: 0,
 		/** 最后一次用普通请求补拉对话的时刻，给补拉限速用。 */
 		lastPullAt: 0,
+		/** 最后一次主动重开长连接的时刻（半死时自愈用）。 */
+		lastReconnectAt: 0,
 		/**
 		 * 用 `{kind:'session'}` 地址打不开的会话（agent 自己派生的子会话）：id -> 原因。
 		 * 遇到过的会话不再重连、不再谎报"地址失效"，直接说清楚让用户换一个。
@@ -2374,19 +2376,25 @@
 	// 哨兵：连接还在、但已经不再来数据（电脑睡眠最典型）时，onerror 不会响，
 	// 手机上看着就是"卡住了"。靠宿主每 20 秒的 ping 判断，超过 45 秒没动静就报警。
 	const WATCHDOG_PULL_MS = 60000
-	setInterval(() => {
-		if (state.source === null || state.sessionId === null) return
-		// 手机锁屏 / 切到别的 App 时页面在后台，这时候探活纯属烧电烧流量；回到前台会补一次。
-		if (window.document.visibilityState === 'hidden') return
-		const quiet = state.lastFrameAt === 0 ? 0 : Date.now() - state.lastFrameAt
-		if (state.link === 'live' && quiet > 45000) setLink('stale')
-		// 长连接超过一个心跳周期（20 秒）还没送来任何东西，说明这条通道可能把大响应
-		// 缓冲住了 —— 用普通请求把对话补上。
-		// 但必须限速：这个 tick 是 5 秒一次，之前条件只有 quiet > 25000，于是静置的
-		// 手机【每 5 秒】就拉一次对话 —— 一次最大二百多 KB，一小时七百多次。流量、
-		// 电、日志全被它烧掉，而画面并不会因此更及时（没动静就是没动静）。
-		if (quiet > 25000 && Date.now() - state.lastPullAt > WATCHDOG_PULL_MS) pullTranscript()
-	}, 5000)
+	/** 半死时最多多久主动重开一条流（别让"断开"挂太久）。 */
+	const WATCHDOG_RECONNECT_MS = 90000
+		setTimeout(() => {
+			if (state.source === null || state.sessionId === null) return
+			// 手机锁屏 / 切到别的 App 时页面在后台，这时候探活纯属烧电烧流量；回到前台会补一次。
+			if (window.document.visibilityState === 'hidden') return
+			const quiet = state.lastFrameAt === 0 ? 0 : Date.now() - state.lastFrameAt
+			if (state.link === 'live' && quiet > 45000) setLink('stale')
+			// 长连接超过一个心跳周期（20 秒）还没送来任何东西，说明这条通道可能把大响应
+			// 缓冲住了，或者已经半死（隧道那头把空闲连接切了）。先补拉一次对话，
+			// 再**主动重开一条流** —— 光等浏览器自己重连，会一直挂在"断开"上。
+			// 但必须限速：这个 tick 是 5 秒一次，之前条件只有 quiet > 25000，于是静置的
+			// 手机【每 5 秒】就拉一次对话 —— 一次最大二百多 KB，一小时七百多次。
+			if (quiet > 25000 && Date.now() - state.lastPullAt > WATCHDOG_PULL_MS) pullTranscript()
+			if (quiet > 45000 && Date.now() - state.lastReconnectAt > WATCHDOG_RECONNECT_MS) {
+				state.lastReconnectAt = Date.now()
+				connect()
+			}
+		}, 2000)
 
 	// 回到前台补一次：锁屏期间可能已经错过了推送。
 	window.document.addEventListener('visibilitychange', () => {
