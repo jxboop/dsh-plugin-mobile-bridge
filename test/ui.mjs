@@ -103,6 +103,10 @@ let transcriptRecords = []
 let transcriptHold = null
 /** 专门喂给 session-older 的记录：竞态测试要能分辨"这份是哪个会话的"。 */
 let olderTranscriptRecords = []
+/** 分片上传收到的片（每片一条），断言"大文件真的被切片了"。 */
+const uploaded = []
+/** 宿主下发的背景（bootstrap 里带）。设成 null 就模拟"没配背景"。 */
+let backdropInfo = { url: 'api/background', mediaType: 'video/quicktime', kind: 'video', bytes: 4096 }
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -151,12 +155,24 @@ async function stubFetch(input, options = {}) {
 	if (path.startsWith('/api/bootstrap')) return jsonResponse({
 		sessions: SESSIONS,
 		failure: null,
+		background: backdropInfo,
 		// 真宿主也会发这个：断线时它是同 WiFi 下的兜底出路。
 		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
 		// 和页面当前 origin 不同的正式地址：用来验证「切到当前地址」。
 		publicUrl: 'https://example.ts.net/0123456789abcdef/',
 	})
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
+	if (path.startsWith('/api/upload')) {
+		const body = JSON.parse(options.body ?? '{}')
+		uploaded.push(body)
+		return jsonResponse({
+			ok: true,
+			done: body.index === body.total - 1,
+			name: body.name,
+			mediaType: body.mediaType,
+			path: 'C:\\Users\\Kim\\.dsh\\mobile-uploads\\test-' + body.name,
+		})
+	}
 	if (path.startsWith('/api/prompt')) {
 		// 提权过期：令牌有效，但这台机器要你重新证明是本人（宿主重启后即是此态）。
 		if (promptNeedsPin) return jsonResponse({ error: '需要重新输入 PIN 才能执行操作', needPin: true }, 403)
@@ -209,6 +225,9 @@ const dom = new JSDOM(html, {
 	beforeParse(window) {
 		window.fetch = stubFetch
 		window.EventSource = FakeEventSource
+		// jsdom 不会解码图片：给一个假 bitmap，让"转格式"那条路能走到画布那一步
+		// （没有 canvas 包时 getContext 返回 null，于是页面按设计退回"当文件发"）。
+		window.createImageBitmap = async () => ({ width: 4, height: 4, close() {} })
 		// jsdom does not implement window.open; the top-up button needs it.
 		window.open = (url) => { opened.push(String(url)); return null }
 		window.confirm = (message) => { confirms.push(String(message)); return confirmAnswer }
@@ -364,6 +383,61 @@ check('the picked photo is sent as base64 with its media type',
 	imageBody.images.length === 1 && imageBody.images[0].mediaType === 'image/png' && imageBody.images[0].data.length > 20,
 	`mediaType=${imageBody.images[0]?.mediaType} dataLen=${imageBody.images[0]?.data?.length}`)
 check('the preview is cleared after sending', $('thumbs').querySelectorAll('img').length === 0)
+
+/* --- 动图 / 视频 / 别的图片格式：一个都不许静默丢掉 ---------------------- */
+/*
+ * 现场：用户在手机上发动图，点了半天只有"发送失败"。宿主只认 png/jpeg/webp/gif，
+ * 别的格式（HEIC/BMP…）在手机上先转成 PNG；转不了的、以及视频，走 files 那条路 ——
+ * 电脑把它们存成文件、把路径写进任务，agent 照样能用。
+ */
+{
+	const pick = (f) => {
+		Object.defineProperty($('file'), 'files', { value: [f], configurable: true })
+		$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	}
+
+	// 1) GIF：宿主认，就直接当图片发
+	pick(new window.File([new Uint8Array([71, 73, 70, 56, 57, 97])], 'funny.gif', { type: 'image/gif' }))
+	await wait(140)
+	check('动图（GIF）当图片预览，不会被丢掉', $('thumbs').querySelectorAll('img').length === 1,
+		`${$('thumbs').querySelectorAll('img').length} img / ${$('thumbs').querySelectorAll('.chip').length} chip`)
+
+	// 2) 视频：变成一张待发卡片
+	pick(new window.File([new Uint8Array([0, 0, 0, 24, 102, 116, 121, 112])], 'clip.mp4', { type: 'video/mp4' }))
+	await wait(160)
+	check('视频变成一张待发卡片（不是静默丢弃）',
+		$('thumbs').querySelectorAll('.chip').length === 1
+		&& $('thumbs').textContent.includes('clip.mp4'),
+		$('thumbs').textContent.trim().slice(0, 40))
+
+	const before = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	uploaded.length = 0
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(200)
+	const sentBody = JSON.parse(requests.filter((entry) => entry.path.startsWith('/api/prompt')).pop().options.body)
+	check('视频先分片上传，再只把路径放进任务（大包必被隧道掐断）',
+		requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === before + 1
+		&& uploaded.length >= 1 && uploaded[0].total === 1
+		&& uploaded[0].name === 'clip.mp4'
+		&& sentBody.fileRefs?.length === 1 && sentBody.fileRefs[0].path.includes('mobile-uploads')
+		&& sentBody.images.length === 1,
+		JSON.stringify({ 片: uploaded.length, refs: sentBody.fileRefs, images: sentBody.images?.length }))
+	check('分片上传的片名带上了 uploadId 与序号（服务端要靠它拼回去）',
+		uploaded[0].uploadId !== undefined && uploaded[0].index === 0,
+		JSON.stringify({ id: uploaded[0]?.uploadId, index: uploaded[0]?.index, total: uploaded[0]?.total }))
+	check('发完清空：图片和文件卡片都不留下',
+		$('thumbs').querySelectorAll('img').length === 0 && $('thumbs').querySelectorAll('.chip').length === 0)
+
+	// 3) 宿主不认的图片格式：先试着在手机上演成 PNG；转不了就退回"当文件发"
+	pick(new window.File([new Uint8Array([66, 77, 1, 2, 3])], 'shot.bmp', { type: 'image/bmp' }))
+	await wait(200)
+	const fallbackChip = $('thumbs').querySelectorAll('.chip').length === 1
+	check('转不了的图片格式会退回"当文件发"，而不是消失', fallbackChip, $('thumbs').textContent.trim().slice(0, 40))
+	// 清干净，别影响后面的检查
+	$('thumbs').querySelector('button')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('卡片上的 × 能把它拿掉', $('thumbs').querySelectorAll('.chip').length === 0)
+}
 
 /* --- cancel -------------------------------------------------------------- */
 
@@ -912,6 +986,37 @@ check('说明指向了下拉框或读取状态',
 	check('无痕模式下也去拉了对话（不是一片空白）',
 		pullsAfter > pullsBefore, `transcript ${pullsBefore} -> ${pullsAfter}`)
 	proto.setItem = realSet
+}
+
+/* --- 自定义背景：宿主给了就铺，没给就一点痕迹都不留 ---------------------- */
+/*
+ * 用户把自己手机上传的一段 .mov 设成界面背景。iOS 上视频要自动播，muted /
+ * playsinline / autoplay 三个都得在；格式手机不认时必须整层撤掉 —— 背景是装饰，
+ * 不能因为它让界面用不了。
+ */
+{
+	check('宿主给了背景就铺满整屏（body 上打 hasbg）',
+		window.document.body.classList.contains('hasbg'), window.document.body.className)
+	const video = $('backdrop').querySelector('video')
+	check('背景是 <video> 且 muted + loop + playsinline（少一个 iOS 就不播）',
+		video !== null && video.muted === true && video.loop === true
+		&& (video.hasAttribute('playsinline') || video.playsInline === true),
+		video === null ? 'no video' : `muted=${video.muted} loop=${video.loop} playsinline=${video.hasAttribute('playsinline')}`)
+	check('背景地址走密钥段内的相对路径', video !== null && video.getAttribute('src') === 'api/background',
+		video?.getAttribute('src'))
+
+	// 换回"没配背景"：整层要收干净
+	backdropInfo = null
+	click($('reload'))
+	await wait(220)
+	check('没配背景时整层撤掉（页面回到原样，不留黑底）',
+		window.document.body.classList.contains('hasbg') === false
+		&& $('backdrop').querySelectorAll('video, img').length === 0,
+		`class=${window.document.body.className} nodes=${$('backdrop').querySelectorAll('video, img').length}`)
+	backdropInfo = { url: 'api/background', mediaType: 'video/quicktime', kind: 'video', bytes: 4096 }
+	click($('reload'))
+	await wait(220)
+	check('再配回来也照样生效', window.document.body.classList.contains('hasbg'))
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

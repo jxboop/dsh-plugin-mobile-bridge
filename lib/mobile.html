@@ -82,6 +82,36 @@
 		height: 100dvh;
 		overscroll-behavior: none;
 	}
+	/* ---- 自定义背景：手机自己挑的一段视频/一张图铺满整屏 ----
+	   视频在最底层（z-index:0），上面盖一层压暗的纱，保证文字看得清；
+	   #gate / #app 抬到 z-index:1，面板改成半透明才透得出来。 */
+	#backdrop { position: fixed; inset: 0; z-index: 0; display: none; }
+	#backdrop video, #backdrop img {
+		width: 100%; height: 100%; object-fit: cover; display: block;
+	}
+	#backdrop .scrim {
+		position: absolute; inset: 0;
+		background: linear-gradient(180deg, rgba(4,6,16,.45), rgba(4,6,16,.68));
+	}
+	body.hasbg { background: #05060d; }
+	body.hasbg #backdrop { display: block; }
+	body.hasbg #gate, body.hasbg #app { position: relative; z-index: 1; }
+	/* 顶部那条"会话 / 刷新 / 退出"下面就是视频，亮画面（雪地、天空）会把它吃掉。
+	   给顶栏自己一层薄纱，标题和按钮才一直看得清。 */
+	body.hasbg header { background: rgba(8,10,20,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+	/* 半透明面板：既看得见背景，又保证对比度。 */
+	body.hasbg {
+		--bg: transparent;
+		--panel: rgba(20,24,44,.78);
+		--panel-2: rgba(32,38,66,.72);
+		--code-bg: rgba(12,15,32,.72);
+		--user-bubble: rgba(38,52,110,.78);
+	}
+	@media (prefers-color-scheme: light) {
+		body.hasbg { --panel: rgba(255,255,255,.82); --panel-2: rgba(238,241,249,.78); --code-bg: rgba(240,242,249,.8); --user-bubble: rgba(223,230,255,.85); }
+		body.hasbg #backdrop .scrim { background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(232,238,252,.68)); }
+		body.hasbg header { background: rgba(255,255,255,.66); }
+	}
 	button, input, select, textarea { font: inherit; color: inherit; }
 	button { cursor: pointer; }
 
@@ -191,6 +221,17 @@
 	.thumb { position: relative; flex: none; }
 	.thumb img { height: 62px; border-radius: 9px; display: block; }
 	.thumb button {
+		position: absolute; top: -6px; right: -6px; width: 21px; height: 21px; border-radius: 50%;
+		border: 0; background: var(--err); color: #fff; font-size: 13px; line-height: 1; padding: 0;
+	}
+	/* 视频/其它文件：图片放不下缩略图，用一张小卡片说清"要发什么"。 */
+	.chip {
+		position: relative; flex: none; display: flex; align-items: center; gap: 6px;
+		height: 62px; padding: 0 14px; border-radius: 9px; font-size: 12px;
+		background: var(--panel-2); border: 1px solid var(--field-line); max-width: 46vw;
+	}
+	.chip .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.chip button {
 		position: absolute; top: -6px; right: -6px; width: 21px; height: 21px; border-radius: 50%;
 		border: 0; background: var(--err); color: #fff; font-size: 13px; line-height: 1; padding: 0;
 	}
@@ -320,6 +361,9 @@
 </head>
 <body>
 
+<!-- 用户自己挑的背景（视频或图）。没配就整层不显示，页面保持原来的样子。 -->
+<div id="backdrop"><div class="scrim"></div></div>
+
 <div id="gate" data-display="flex">
 	<h1>DSH 手机端</h1>
 	<p>输入电脑上显示的 6 位 PIN。连的是你自己的局域网，不经过任何服务器。</p>
@@ -355,7 +399,7 @@
 					<button id="stop" data-display="inline-block" style="display:none">停止</button>
 				</div>
 			</div>
-			<input id="file" type="file" accept="image/*" multiple hidden>
+			<input id="file" type="file" accept="image/*,video/*" multiple hidden>
 		</section>
 
 		<section class="sheet" id="view-new" data-display="flex" style="display:none">
@@ -492,6 +536,8 @@
 		 * 遇到过的会话不再重连、不再谎报"地址失效"，直接说清楚让用户换一个。
 		 */
 		unsupported: new Map(),
+		/** 图片以外的附件（视频、PDF、宿主不认的图片格式）：名字 + 类型 + base64。 */
+		files: [],
 	}
 
 	/* ------------------------------------------------------------ helpers */
@@ -541,7 +587,14 @@
 	function api(path, options) {
 		return fetch(path, Object.assign({ credentials: 'same-origin' }, options)).then(async (response) => {
 			if (response.status === 401) { showGate(); throw apiError(401, 'unauthorized') }
-			const body = await response.json().catch(() => ({}))
+			// 先取原文再解析：隧道/网关的错误页是 HTML，不是 JSON。以前这种情况只会
+			// 甩一句"HTTP 403"，用户和我们都看不出是谁拒的。
+			let raw = ''
+			let body = {}
+			try {
+				raw = await response.text()
+				body = raw === '' ? {} : JSON.parse(raw)
+			} catch { body = {} }
 			// 401 是"令牌无效"；403 + needPin 是"令牌有效，但这台机器要你重新证明是本人"
 			// —— 宿主重启后恢复的会话**故意**不带提权，读没问题，一动手就会被拒。
 			//
@@ -551,7 +604,15 @@
 				showGate('登录已过期，请重新输入 PIN')
 				throw apiError(403, body.error || '需要重新输入 PIN')
 			}
-			if (!response.ok) throw apiError(response.status, body.error || ('HTTP ' + response.status))
+			if (!response.ok) {
+				const hint = body.error !== undefined && body.error !== null && body.error !== ''
+					? String(body.error)
+					: 'HTTP ' + response.status + (raw === '' ? '（空响应）' : '：' + raw.replace(/\s+/g, ' ').slice(0, 70))
+				const error = apiError(response.status, hint)
+				// 宿主明确说"这个会话在手机上打不开"时带上标记，页面才好说人话。
+				if (body.unsupported === true) error.unsupported = true
+				throw error
+			}
 			return body
 		})
 	}
@@ -1146,6 +1207,51 @@
 		}
 	}
 
+	/* --------------------------------------------------------- 自定义背景 */
+
+	/**
+	 * 把用户挑的视频/图铺成手机界面的背景。
+	 *
+	 * iOS 上视频要能自动播，必须同时满足 muted + playsinline + autoplay；少一个
+	 * 就只有一张黑屏。加载失败（格式手机不认、文件没了）就把整层撤掉，页面回到
+	 * 原来的样子 —— 背景是装饰，绝不能因为它让界面用不了。
+	 */
+	let backdropKey = ''
+	function applyBackdrop(info) {
+		const layer = $('backdrop')
+		const key = info === null || info === undefined ? '' : String(info.url) + ':' + String(info.bytes)
+		if (key === backdropKey) return
+		backdropKey = key
+		layer.querySelectorAll('video, img').forEach((node) => node.remove())
+		if (key === '') {
+			document.body.classList.remove('hasbg')
+			return
+		}
+		const node = info.kind === 'video' ? document.createElement('video') : document.createElement('img')
+		node.setAttribute('aria-hidden', 'true')
+		if (info.kind === 'video') {
+			node.muted = true
+			node.defaultMuted = true
+			node.loop = true
+			node.autoplay = true
+			node.playsInline = true
+			node.setAttribute('playsinline', '')
+			node.setAttribute('webkit-playsinline', '')
+			node.preload = 'auto'
+		}
+		node.addEventListener('error', () => {
+			document.body.classList.remove('hasbg')
+			backdropKey = ''
+		})
+		node.src = info.url
+		layer.insertBefore(node, layer.firstChild)
+		document.body.classList.add('hasbg')
+		if (info.kind === 'video') {
+			const played = node.play()
+			if (played && typeof played.catch === 'function') played.catch(() => { /* 自动播被拦：留个静止画面也不算坏 */ })
+		}
+	}
+
 	/* -------------------------------------------------------------- 任务 */
 
 	function loadSessions() {
@@ -1161,6 +1267,7 @@
 			}
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
+			applyBackdrop(body.background)
 			state.sessions = body.sessions || []
 			sessionSelect.innerHTML = state.sessions.map((item) =>
 				'<option value="' + escapeHtml(item.sessionId) + '">' +
@@ -1206,7 +1313,7 @@
 
 	function send() {
 		const body = text.value.trim()
-		if (body === '' && state.images.length === 0) return
+		if (body === '' && state.images.length === 0 && state.files.length === 0) return
 		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
 		// 键盘路径（Ctrl/Cmd+Enter）绕过了按钮，只靠 disabled 挡不住连按两下 ——
 		// 同一个 prompt 会被发两次，两次都是要花钱的一轮。
@@ -1214,48 +1321,265 @@
 		// 运行中发的这条进的是队列（queue = 追加到当前回合之后），对话里不会马上
 		// 出现。必须回一句，否则用户看到"发了没反应"，只会以为又卡住了。
 		const interjecting = state.running
+		// 认准"我发的是哪个会话"：失败回包可能在用户已经换会话之后才到。
+		const target = state.sessionId
+		// 图片总量也要收敛：几 MB 的请求在隧道上很慢，甚至会被入口掐断。
+		// 超出的那几张改走"分片上传 + 路径"，一张都不丢。
+		const images = []
+		const overflow = []
+		let budget = 3 * 1024 * 1024
+		for (const image of state.images) {
+			if (image.data.length <= budget) { images.push(image); budget -= image.data.length; continue }
+			overflow.push({ name: image.name || 'image', mediaType: image.mediaType, data: image.data })
+		}
+		const files = state.files.concat(overflow)
+		if (overflow.length > 0) flash('图片比较大，超出的会切片上传（慢一点，但不会再失败）。', 4000)
 		sendBtn.disabled = true
-		api('api/prompt', {
+		// 附件先分片传上去（大文件一整块发会被隧道入口掐断），拿到路径再发任务。
+		const prepared = files.length === 0
+			? Promise.resolve([])
+			: (async () => {
+				const refs = []
+				for (let index = 0; index < files.length; index += 1) {
+					try {
+						refs.push(await uploadInChunks(files[index], files[index].name, index + 1, files.length))
+					} catch (error) {
+						error.upload = true
+						throw error
+					}
+				}
+				return refs
+			})()
+		prepared.then((fileRefs) => api('api/prompt', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ sessionId: state.sessionId, text: body, images: state.images }),
-		}).then(() => {
+			body: JSON.stringify({ sessionId: target, text: body, images, fileRefs }),
+		})).then((result) => {
 			text.value = ''
 			text.style.height = 'auto'
 			state.images = []
+			state.files = []
 			renderThumbs()
 			state.stick = true
+			if (result && result.degraded === true) {
+				// 图片被宿主拒了（动图最常见）：电脑那边已经改成"存成文件 + 给路径"再发一次。
+				flash('这张图电脑解不开，已经当文件发过去了（agent 会拿到路径）。', 6000)
+				return
+			}
 			if (interjecting) flash('已插话：这一轮跑完就接着处理你这条，不用在这儿等。', 5000)
-		}).catch((error) => flash('发送失败：' + error.message))
+		}).catch((error) => {
+			// 上传是分片的：断了就再来一次（分片不做断点续传，但每片很小，重来不心疼）。
+			if (error.upload === true) {
+				flash('上传失败：' + error.message + '（网络慢或断了，再点一次「发送」会重传）', 7000)
+				return
+			}
+			// 会话本身在手机上打不开（子会话）时不要甩一句"发送失败"——换一个会话才是出路。
+			if (error.unsupported === true) { markUnsupported(target, error.message); return }
+			flash('发送失败：' + error.message)
+		})
 			.finally(() => { sendBtn.disabled = false })
 	}
 
 	function renderThumbs() {
-		thumbs.innerHTML = state.images.map((image, index) =>
+		const pics = state.images.map((image, index) =>
 			'<div class="thumb"><img src="data:' + image.mediaType + ';base64,' + image.data + '">' +
-			'<button data-drop="' + index + '">×</button></div>').join('')
+			'<button data-drop="' + index + '">×</button></div>')
+		const files = state.files.map((file, index) =>
+			'<div class="chip">' + (String(file.mediaType).startsWith('video/') ? '🎬' : '📎') +
+			'<span class="nm">' + escapeHtml(file.name) + '</span>' +
+			'<button data-dropfile="' + index + '">×</button></div>')
+		thumbs.innerHTML = pics.concat(files).join('')
 	}
 
 	thumbs.addEventListener('click', (event) => {
-		const index = event.target.getAttribute && event.target.getAttribute('data-drop')
-		if (index === null) return
-		state.images.splice(Number(index), 1)
-		renderThumbs()
+		const target = event.target
+		const drop = target.getAttribute && target.getAttribute('data-drop')
+		if (drop !== null && drop !== undefined) {
+			state.images.splice(Number(drop), 1)
+			renderThumbs()
+			return
+		}
+		const dropFile = target.getAttribute && target.getAttribute('data-dropfile')
+		if (dropFile !== null && dropFile !== undefined) {
+			state.files.splice(Number(dropFile), 1)
+			renderThumbs()
+		}
 	})
 
-	fileInput.addEventListener('change', () => {
-		const files = Array.from(fileInput.files || [])
-		fileInput.value = ''
-		for (const file of files) {
-			if (!file.type.startsWith('image/')) continue
+	/* -------------------------------------------------- 从手机里挑东西发 */
+
+	/** 宿主（DSH）的图片白名单。别的图片格式先在手机上演成 PNG 再发。 */
+	const HOST_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+	/** 单张图上限（原文件字节）。超过就先压一压，不然 base64 会顶爆请求。 */
+	const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+	/** 视频/其它文件上限（原文件字节）。 */
+	const MAX_FILE_BYTES = 28 * 1024 * 1024
+
+	function readBase64(blob) {
+		return new Promise((resolve, reject) => {
 			const reader = new FileReader()
 			reader.onload = () => {
 				const result = String(reader.result)
 				const comma = result.indexOf(',')
-				state.images.push({ mediaType: file.type, data: comma < 0 ? '' : result.slice(comma + 1), name: file.name })
-				renderThumbs()
+				resolve(comma < 0 ? '' : result.slice(comma + 1))
 			}
-			reader.readAsDataURL(file)
+			reader.onerror = () => reject(new Error('读取失败'))
+			reader.readAsDataURL(blob)
+		})
+	}
+
+	/** 用画布把"宿主不认的图片"转成 PNG（HEIC / BMP / TIFF / AVIF…）。 */
+	async function toPngBlob(file) {
+		let source = null
+		let bitmap = null
+		try {
+			if (typeof createImageBitmap === 'function') bitmap = await createImageBitmap(file)
+		} catch { bitmap = null }
+		if (bitmap === null) {
+			// 老 Safari 没有 createImageBitmap：走 <img> + objectURL。
+			// 要带超时：某些格式在有些机型上既不 onload 也不 onerror，
+			// 不设上限就会永远卡在"转码中"，用户什么提示都看不到。
+			source = URL.createObjectURL(file)
+			bitmap = await new Promise((resolve, reject) => {
+				const img = new Image()
+				const timer = setTimeout(() => reject(new Error('这个格式解不开（超时）')), 5000)
+				img.onload = () => { clearTimeout(timer); resolve(img) }
+				img.onerror = () => { clearTimeout(timer); reject(new Error('这个格式手机自己也解不开')) }
+				img.src = source
+			})
+		}
+		const width = bitmap.width || bitmap.naturalWidth
+		const height = bitmap.height || bitmap.naturalHeight
+		const canvas = document.createElement('canvas')
+		canvas.width = width
+		canvas.height = height
+		canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height)
+		if (bitmap.close) bitmap.close()
+		if (source !== null) URL.revokeObjectURL(source)
+		const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+		if (blob === null) throw new Error('转码失败')
+		return blob
+	}
+
+	/** 超大图先缩到长边 2000 像素再发：手机上根本看不出差别，请求却小一个量级。 */
+	async function shrinkImage(file, maxEdge, quality) {
+		const bitmap = await createImageBitmap(file)
+		const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height))
+		const canvas = document.createElement('canvas')
+		canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+		canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+		canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+		bitmap.close && bitmap.close()
+		const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality))
+		return blob === null ? file : blob
+	}
+
+	/* ------------------------------------------------ 大文件：分片上传 */
+
+	/**
+	 * 一片 384 KB 原文件（base64 后约 512 KB 的请求体）。
+	 *
+	 * 为什么必须分片：隧道入口会掐断"慢而大"的请求（实测 IPv6 入口 16 MB 回 408，
+	 * 6.7 MB 要 89 秒，手机上行更慢）。一整块发过去必然死在边缘，而边缘的错误页
+	 * 不是 JSON —— 用户只看到"发送失败 http 403"，谁也猜不出是什么。
+	 */
+	const CHUNK_BYTES = 384 * 1024
+
+	function base64ToBytes(b64) {
+		const bin = atob(b64)
+		const out = new Uint8Array(bin.length)
+		for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i)
+		return out
+	}
+
+	function bytesToBase64(bytes) {
+		let bin = ''
+		const step = 0x8000
+		for (let i = 0; i < bytes.length; i += step) {
+			bin += String.fromCharCode.apply(null, bytes.subarray(i, i + step))
+		}
+		return btoa(bin)
+	}
+
+	/** 把一个附件分片传上去，返回 { name, mediaType, path }。 */
+	async function uploadInChunks(entry, label, position, count) {
+		const uploadId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+		const bytes = base64ToBytes(entry.data)
+		const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES))
+		let last = null
+		for (let index = 0; index < total; index += 1) {
+			const slice = bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES)
+			last = await api('api/upload', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					uploadId,
+					index,
+					total,
+					name: entry.name,
+					mediaType: entry.mediaType,
+					data: bytesToBase64(slice),
+				}),
+			})
+			const pct = Math.round(((index + 1) / total) * 100)
+			flash('正在上传 ' + label + (count > 1 ? '（' + position + '/' + count + '）' : '') + ' … ' + pct + '%')
+		}
+		return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
+	}
+
+	/** 挑进来的东西：该缩的缩、该当文件的当文件，一个都不许静默丢掉。 */
+	async function addAttachment(file) {
+		const type = String(file.type || '')
+		if (type.startsWith('image/')) {
+			let blob = file
+			let mediaType = type
+			// 动图不能过画布（一过就只剩一帧），所以要么原样发，要么当文件发。
+			const animated = type === 'image/gif' || type === 'image/webp'
+			try {
+				if (!HOST_IMAGE_TYPES.has(type)) {
+					blob = await toPngBlob(file)
+					mediaType = 'image/png'
+				} else if (!animated && file.size > 900 * 1024) {
+					// 手机照片动辄 3-8 MB，base64 再涨三分之一 —— 隧道那头会掐断。
+					// 长边 1600、质量 0.82 之后通常只有几百 KB，手机上看不出差别。
+					blob = await shrinkImage(file, 1600, 0.82)
+					mediaType = 'image/jpeg'
+				}
+			} catch {
+				// 转不了/缩不了就退回"当文件发"：电脑那边会存成文件并把路径交给 agent。
+				state.files.push({ name: file.name || 'image', mediaType: type || 'application/octet-stream', data: await readBase64(file) })
+				renderThumbs()
+				return
+			}
+			const data = await readBase64(blob)
+			// 还是太大（比如几 MB 的动图）：走分片上传，别赌隧道那一口气。
+			if (data.length > 2 * 1024 * 1024) {
+				state.files.push({ name: file.name || 'image', mediaType, data })
+				renderThumbs()
+				flash('这张图比较大，会切片上传（慢一点，但不会再失败）。', 4000)
+				return
+			}
+			state.images.push({ mediaType, data, name: file.name || '' })
+			renderThumbs()
+			return
+		}
+		if (file.size > MAX_FILE_BYTES) {
+			flash(`${file.name || '文件'} 太大（上限 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB）`)
+			return
+		}
+		state.files.push({
+			name: file.name || 'file',
+			mediaType: type === '' ? 'application/octet-stream' : type,
+			data: await readBase64(file),
+		})
+		renderThumbs()
+	}
+
+	fileInput.addEventListener('change', () => {
+		const picked = Array.from(fileInput.files || [])
+		fileInput.value = ''
+		for (const file of picked) {
+			addAttachment(file).catch((error) => flash('读取失败：' + error.message))
 		}
 	})
 

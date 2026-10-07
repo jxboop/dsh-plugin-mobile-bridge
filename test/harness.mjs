@@ -11,7 +11,7 @@
  * (and therefore the real PIN) is left alone.
  */
 
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { request } from 'node:http'
 import net from 'node:net'
@@ -25,9 +25,13 @@ process.env.DSH_HOME = scratch
 // without this the harness would die on EADDRINUSE — or, worse, run its
 // assertions against the live server and look green for the wrong reason.
 const PORT = 31417
+// 背景：真文件放在上传目录里，配置指过去 —— 和用户自己挑一段 .mov 的路径一样。
+const BACKDROP_BYTES = Buffer.from('FAKEMOV-0123456789')
+await mkdir(join(scratch, 'mobile-uploads'), { recursive: true })
+await writeFile(join(scratch, 'mobile-uploads', 'bg.mov'), BACKDROP_BYTES)
 await writeFile(
 	join(scratch, 'mobile-bridge.json'),
-	JSON.stringify({ version: 1, port: PORT, pin: '123456', answerOnPhone: true }),
+	JSON.stringify({ version: 1, port: PORT, pin: '123456', answerOnPhone: true, backgroundFile: 'bg.mov' }),
 	'utf8',
 )
 
@@ -150,6 +154,12 @@ const stubController = {
 	},
 	async prompt(request) {
 		STATE.prompts.push(request)
+		// 真宿主的图片解码器啃不动多帧图 —— 手机发来的**动图**就是这么被拒的。
+		// 桩里复现这一条，才能钉住"被拒之后改成存文件再发一次"那条退路。
+		const frames = Array.isArray(request?.content) ? request.content : []
+		if (frames.some((entry) => entry?.type === 'image' && entry?.mediaType === 'image/gif')) {
+			throw new Error('image decode failed: animated gif is not supported')
+		}
 		return { accepted: true }
 	},
 	async cancel(request) {
@@ -320,6 +330,132 @@ const badImage = await fetch(`${base}/api/prompt`, {
 	body: JSON.stringify({ sessionId: 'session-test', images: [{ mediaType: 'application/pdf', data: 'AAAA' }] }),
 })
 check('non-image media type is rejected', badImage.status === 400, String(badImage.status))
+
+/* --- 手机发来的不只是图片：动图被拒要能兜住，视频要有地方落 --------------- */
+/*
+ * 现场：用户在手机上发动图，点了半天只有"发送失败"（500）。宿主只认
+ * png/jpeg/webp/gif，而且多帧图会让它的解码器直接抛。所以桥必须（a）图片以外的
+ * 东西存成文件、把路径交给 agent；（b）图片被拒时自动降级成"存文件再发一次"。
+ */
+{
+	const promptsBefore = STATE.prompts.length
+	// (a) 视频：存盘 + 路径进任务
+	const video = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			sessionId: 'session-test',
+			text: '看看这个视频',
+			files: [{ name: 'clip.mp4', mediaType: 'video/mp4', data: Buffer.from('FAKEVIDEO').toString('base64') }],
+		}),
+	})
+	const videoBody = await video.json()
+	check('视频会被接住（不是 400/500）', video.status === 200 && videoBody.accepted === true, JSON.stringify(videoBody))
+	const videoPrompt = STATE.prompts[promptsBefore]
+	const videoNote = (videoPrompt?.content ?? []).find((entry) => entry.type === 'text' && entry.text.includes('手机上传的文件'))
+	check('任务里带上了文件路径（agent 才有得用）',
+		videoNote !== undefined && videoNote.text.includes('clip.mp4'), JSON.stringify(videoNote)?.slice(0, 160))
+	const videoPath = /→\s*(.+)$/m.exec(videoNote?.text ?? '')?.[1]?.trim() ?? ''
+	check('文件真的落到磁盘上了，内容一字不差',
+		videoPath !== '' && (await readFile(videoPath, 'utf8')) === 'FAKEVIDEO', videoPath)
+	check('路径在上传目录里（不会跑到别处去）', videoPath.includes('mobile-uploads'), videoPath)
+	check('文件名带路径分隔符也跳不出目录', !videoPath.includes('..'), videoPath)
+
+	// (b) 动图：宿主拒绝 → 桥自动降级成"存文件 + 再发一次"
+	const promptsBeforeGif = STATE.prompts.length
+	const gif = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			sessionId: 'session-test',
+			text: '这个动图好笑吗',
+			images: [{ mediaType: 'image/gif', data: Buffer.from('GIF89a-fake').toString('base64'), name: 'funny.gif' }],
+		}),
+	})
+	const gifBody = await gif.json()
+	check('动图被宿主拒了也不许失败：自动当文件再发一次',
+		gif.status === 200 && gifBody.accepted === true && gifBody.degraded === true, `${gif.status} ${JSON.stringify(gifBody)}`)
+	const retry = STATE.prompts[promptsBeforeGif + 1]
+	check('重试那次不再带图片，只有文字 + 文件路径',
+		(retry?.content ?? []).every((entry) => entry.type === 'text')
+		&& (retry?.content ?? []).some((entry) => entry.text.includes('funny.gif')),
+		JSON.stringify(retry?.content)?.slice(0, 200))
+}
+
+/* --- 分片上传：大文件只能靠它，而且路径不许跑出上传目录 ------------------ */
+/*
+ * 隧道入口会掐断"慢而大"的请求（实测 IPv6 16 MB 回 408、6.7 MB 要 89 秒），
+ * 所以手机把文件切成 384 KB 一片发。这里验证：片能拼回原样，路径校验挡得住越界。
+ */
+{
+	const parts = ['AAAA', 'BBBB', 'CCCC']
+	let last = null
+	for (let index = 0; index < parts.length; index += 1) {
+		const res = await fetch(`${base}/api/upload`, {
+			method: 'POST',
+			headers: { cookie, 'content-type': 'application/json' },
+			body: JSON.stringify({
+				uploadId: 'probe-upload-1', index, total: parts.length,
+				name: 'big.mp4', mediaType: 'video/mp4', data: Buffer.from(parts[index]).toString('base64'),
+			}),
+		})
+		last = await res.json()
+	}
+	check('分片收完才回路径（前面几片只报进度）',
+		last?.done === true && String(last.path).includes('mobile-uploads'), JSON.stringify(last))
+	check('拼回来的内容和原文件一字不差', (await readFile(last.path, 'utf8')) === 'AAAABBBBCCCC',
+		await readFile(last.path, 'utf8').catch(() => '(读不到)'))
+
+	const escapeRef = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', text: 'x', fileRefs: [{ name: 'win.ini', path: 'C:\\Windows\\win.ini' }] }),
+	})
+	check('引用上传目录以外的文件会被拒（接口不能变成任意文件读取）',
+		escapeRef.status === 400, String(escapeRef.status))
+
+	const badId = await fetch(`${base}/api/upload`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ uploadId: '../evil', index: 0, total: 1, name: 'x', data: 'AAAA' }),
+	})
+	check('uploadId 里带路径分隔符直接拒', badId.status === 400, String(badId.status))
+}
+
+/* --- 自定义背景：Range / 304 / 鉴权，一个都不能少 ------------------------ */
+/*
+ * 用户把自己手机上传的一段 .mov 设成手机界面背景。iOS Safari 放视频会先发
+ * `Range: bytes=0-1` 试探，只回 200 它可能直接不播；ETag 让第二次打开走 304，
+ * 免得在移动网络下把几 MB 再下一遍。
+ */
+{
+	const noCookie = await fetch(`${base}/api/background`)
+	check('背景也要鉴权（无 cookie → 401）', noCookie.status === 401, String(noCookie.status))
+
+	const full = await fetch(`${base}/api/background`, authed)
+	const body = Buffer.from(await full.arrayBuffer())
+	check('背景原样发出去（内容一字不差）',
+		full.status === 200 && body.equals(BACKDROP_BYTES), `${full.status} ${body.length} bytes`)
+	check('背景带上正确的 content-type 和 accept-ranges',
+		full.headers.get('content-type') === 'video/quicktime' && full.headers.get('accept-ranges') === 'bytes',
+		`${full.headers.get('content-type')} / ${full.headers.get('accept-ranges')}`)
+
+	const partial = await fetch(`${base}/api/background`, { headers: { ...authed.headers, range: 'bytes=0-3' } })
+	const slice = Buffer.from(await partial.arrayBuffer())
+	check('Range 请求回 206 + content-range（iOS 靠它判断能不能播）',
+		partial.status === 206 && slice.toString('utf8') === 'FAKE'
+		&& partial.headers.get('content-range') === `bytes 0-3/${BACKDROP_BYTES.length}`,
+		`${partial.status} ${slice.toString('utf8')} ${partial.headers.get('content-range')}`)
+
+	const etag = full.headers.get('etag')
+	const cached = await fetch(`${base}/api/background`, { headers: { ...authed.headers, 'if-none-match': String(etag) } })
+	check('带了 ETag 再来一次走 304（不重复下载几 MB）', cached.status === 304, `${cached.status}`)
+
+	const advertised = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('bootstrap 把背景告诉页面（页面才知道要不要铺）',
+		advertised.background?.kind === 'video' && advertised.background?.url === 'api/background',
+		JSON.stringify(advertised.background))
+}
 
 const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
 const reader = stream.body.getReader()
