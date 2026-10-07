@@ -240,6 +240,14 @@
 		border: 1px solid rgba(255,255,255,.18); background: rgba(6,10,20,.35);
 	}
 	.shothint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+	/* agent 交付的素材清单（桌面端那块"交付物"）*/
+	.deliver {
+		border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 12px;
+		background: rgba(10,16,30,.28); box-shadow: var(--glass-edge);
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+	}
+	.deliver .dtitle { font-size: 12px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+	.deliver .drow { font-size: 13px; padding: 3px 0; }
 	/* 全屏看图：真 URL 的图，长按就是"存储到照片"。 */
 	#viewer {
 		position: fixed; inset: 0; z-index: 80; display: none; flex-direction: column;
@@ -972,6 +980,20 @@
 				)
 			} else if (item.kind === 'note') {
 				parts.push('<div class="note">' + escapeHtml(item.text) + '</div>')
+			} else if (item.kind === 'deliver') {
+				// agent 交付的素材：图片/视频直接给缩略图（能点开、能长按存相册），
+				// 其它文件给一行"描述 + 文件名"，至少让手机上知道电脑上有什么。
+				const rows = item.files.map((file) => {
+					const path = String(file?.path ?? '')
+					const description = String(file?.description ?? '')
+					const media = mediaPathHtml(path)
+					if (media !== '') {
+						return media + (description === '' ? '' : '<div class="shothint">' + escapeHtml(description) + '</div>')
+					}
+					const name = path.split(/[\\/]/).pop() ?? path
+					return '<div class="drow">📄 ' + escapeHtml(description === '' ? name : description + ' · ' + name) + '</div>'
+				}).join('')
+				parts.push('<div class="deliver"><div class="dtitle">📦 素材 / 交付物</div>' + rows + '</div>')
 			}
 		}
 		// innerHTML resets the scroll offset, so put it back where the reader was.
@@ -1122,6 +1144,13 @@
 				// 排队内容变了：靠 rpcId 认出哪条是手机上刚发的 → 知道它的队列表项 id。
 				noteInboxSpliced(event)
 				break
+			case 'deliverables/presented': {
+				// 桌面端会把 agent 交付的文件列成"交付物"，手机以前完全忽略这个事件 ——
+				// 而"电脑给的素材"指的往往就是它们（封面图、数据图、视频、文案 md）。
+				const files = Array.isArray(data.files) ? data.files : []
+				if (files.length > 0) state.items.push({ kind: 'deliver', files })
+				break
+			}
 			case 'assistant/message': {
 				state.live = null
 				state.reasoning = null

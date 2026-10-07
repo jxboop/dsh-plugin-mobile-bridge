@@ -364,6 +364,37 @@ check('history image element is present', window.document.querySelectorAll('#log
 	check('关闭按钮收起看图层', $('viewer').classList.contains('on') === false)
 }
 
+/* --- 桌面端那块「交付物」也要出现在手机上 --------------------------------- */
+/*
+ * agent 交付素材时发的是 `deliverables/presented` 事件，页面以前完全忽略它 ——
+ * 而"电脑给的素材"往往就是这里列的文件（封面图、数据图、文案 md）。
+ */
+{
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'deliverables/presented', seq: 41, time: 41,
+			data: {
+				turn: 4, callId: 'c41',
+				files: [
+					{ description: '封面：成都绕城绿道 104.2 公里', path: 'D:\\自媒体\\图片\\第4篇-1-封面.png' },
+					{ description: '文案草稿', path: 'D:\\自媒体\\第4篇-发布素材.md' },
+				],
+			},
+		},
+	})
+	await wait(150)
+	const box = window.document.querySelector('#log .deliver')
+	check('交付物事件会渲染成一块「素材」区（以前整条被丢掉）', box !== null, box === null ? '没有 .deliver' : 'ok')
+	check('交付物里的图片给缩略图（能点开、能长按存相册）',
+		box !== null && box.querySelector('img.shot') !== null
+		&& String(box.querySelector('img.shot').getAttribute('src')).startsWith('api/file?path='),
+		box?.querySelector('img.shot')?.getAttribute('src'))
+	check('交付物里的文字文件也给一行说明（至少知道电脑上有什么）',
+		box !== null && box.textContent.includes('发布素材.md') && box.textContent.includes('文案草稿'),
+		box?.textContent?.trim().slice(0, 60))
+}
+
 /* --- live streaming ------------------------------------------------------ */
 
 source.emit({ t: 'event', event: { type: 'turn/start', seq: 5, time: 5, data: { turn: 2 } } })
