@@ -788,8 +788,19 @@
 		renderLink()
 	}
 
-	function renderLink() {
-		const bar = $('linkbar')
+	/**
+	 * 这个地址手机真的能用吗。
+	 *
+	 * Tailscale 的 CGNAT 段（100.64.0.0/10）只对装了 Tailscale 的设备有意义 ——
+	 * 手机没装 App，点了也是打不开。宁可少给一个按钮，也别给人一条死路。
+	 */
+	function isUsableLanUrl(url) {
+		const match = /^https?:\/\/([^/:]+)/.exec(String(url))
+		if (match === null) return false
+		return /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./.test(match[1]) === false
+	}
+
+	function renderLink() {		const bar = $('linkbar')
 		if (state.link === 'live') { bar.textContent = ''; hide(bar); return }
 		show(bar)
 		bar.textContent = ''
@@ -813,10 +824,12 @@
 		const ago = seconds < 90 ? seconds + ' 秒' : Math.round(seconds / 60) + ' 分钟'
 		bar.appendChild(mk('div', undefined,
 			(stale ? '最后收到电脑的消息是在 ' + ago + '前。' : '现在连不上电脑。')
-			+ '常见原因：电脑睡眠 / 合盖了，或者隧道换了新网址（免费隧道每次重启都会变）。'))
+			+ '常见原因：电脑睡了 / 合盖了，或者网络断了。'))
 
 		// 同一 WiFi 下的兜底：局域网地址不受隧道死活影响。
-		const lan = state.addresses.find((entry) => entry && typeof entry.url === 'string' && entry.url !== '')
+		// 但要跳过 Tailscale 的 CGNAT 段（100.64.0.0/10）——手机没装 Tailscale 时
+		// 那个地址根本连不上，摆出来只会把人带进死胡同（"改用局域网地址"点了也没用）。
+		const lan = state.addresses.find((entry) => entry && typeof entry.url === 'string' && entry.url !== '' && isUsableLanUrl(entry.url))
 		const acts = mk('div', 'acts')
 		// 最高优先：停在一条【已经失效的旧地址】上时，唯一能自救的就是切到当前地址。
 		// 页面还能从内存显示，但所有请求都失败 —— 用户看到的就是"一片空白 + 发送失败"。
