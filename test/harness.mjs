@@ -352,6 +352,29 @@ check('prompt uses queue mode and a fresh request id', sent?.mode === 'queue' &&
 check('prompt 把 requestId 回给手机（手机靠它对上排队条目、给出撤回）',
 	promptBody.requestId === sent?.requestId, `${promptBody.requestId} vs ${sent?.requestId}`)
 
+// 手机可以自带 requestId（重试用同一个）：宿主对同 id 幂等，重试不会变两条。
+{
+	const retry = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', text: '重试同一条', requestId: 'client-retry-1' }),
+	})
+	const retryBody = await retry.json()
+	check('手机带 requestId 时用它（重试幂等，不会变成两条）',
+		retry.status === 200 && retryBody.requestId === 'client-retry-1'
+		&& STATE.prompts.at(-1)?.requestId === 'client-retry-1',
+		JSON.stringify(retryBody))
+	const bogus = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', text: 'x', requestId: '../evil' }),
+	})
+	const bogusBody = await bogus.json()
+	check('非法 requestId 被丢掉、改用宿主自己生成的',
+		bogus.status === 200 && bogusBody.requestId !== '../evil' && String(bogusBody.requestId).length > 8,
+		String(bogusBody.requestId))
+}
+
 /* --- 撤回：把还没开始处理的那条从队列里拿掉 ----------------------------- */
 {
 	const ok = await fetch(`${base}/api/recall`, {

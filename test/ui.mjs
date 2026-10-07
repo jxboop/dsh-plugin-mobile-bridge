@@ -114,6 +114,10 @@ let promptSeq = 0
 const recalls = []
 /** 宿主侧"这台手机看过说明页"的标记（bootstrap 里下发 / POST /api/welcomed 里写回）。 */
 let welcomedOnServer = false
+/** 让接下来 N 次 /api/prompt 在 fetch 层直接失败（模拟隧道抖动 → 页面该自动重试）。 */
+let promptFailTimes = 0
+/** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
+const promptIds = []
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -189,7 +193,14 @@ async function stubFetch(input, options = {}) {
 	if (path.startsWith('/api/prompt')) {
 		// 提权过期：令牌有效，但这台机器要你重新证明是本人（宿主重启后即是此态）。
 		if (promptNeedsPin) return jsonResponse({ error: '需要重新输入 PIN 才能执行操作', needPin: true }, 403)
-		lastPromptRequestId = 'req-' + (++promptSeq)
+		const body = JSON.parse(options.body ?? '{}')
+		promptIds.push(body.requestId)
+		// 模拟"隧道抖一下"：fetch 层直接失败（连状态码都没有），页面该自动重试。
+		if (promptFailTimes > 0) {
+			promptFailTimes -= 1
+			return Promise.reject(new TypeError('Load failed'))
+		}
+		lastPromptRequestId = body.requestId ?? ('req-' + (++promptSeq))
 		return jsonResponse({ accepted: true, requestId: lastPromptRequestId })
 	}
 	if (path.startsWith('/api/recall')) {
@@ -1198,6 +1209,56 @@ check('说明指向了下拉框或读取状态',
 	check('再配回来也照样生效（同样要等它真的播起来）',
 		window.document.body.classList.contains('hasbg') && again !== null,
 		window.document.body.className)
+}
+
+/* --- 加载页 / 原图模式 / 发送自动重试 ------------------------------------ */
+{
+	// 加载页的 HTML 必须一渲染就有（等 JS 起来再画就晚了）。
+	check('页面自带加载页（HTML 一渲染就显示）',
+		html.includes('id="boot"') && html.includes('id="bootFill"'))
+	check('加载页按真实进度推进完就收起',
+		$('boot') === null || $('boot').classList.contains('done'),
+		$('boot') === null ? '已移除' : $('boot').className)
+
+	// 原图模式：不压缩、不转格式，直接当文件原样传（发背景那种要画质的图）
+	const rawToggle = $('rawToggle')
+	check('有个「原图」开关', rawToggle !== null)
+	rawToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('打开后按钮亮起', rawToggle.classList.contains('on'))
+
+	const bigPng = new window.File([new Uint8Array(4096).fill(7)], 'cover.png', { type: 'image/png' })
+	Object.defineProperty($('file'), 'files', { value: [bigPng], configurable: true })
+	$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(180)
+	check('原图模式下图片变成"原文件"卡片（不再走压缩那条路）',
+		$('thumbs').querySelectorAll('.chip').length === 1 && $('thumbs').querySelectorAll('img').length === 0,
+		$('thumbs').textContent.trim().slice(0, 30))
+
+	uploaded.length = 0
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(260)
+	check('原图模式下按原字节分片上传（电脑拿到的就是原图）',
+		uploaded.length >= 1 && uploaded[0].name === 'cover.png'
+		&& uploaded[0].mediaType === 'image/png',
+		JSON.stringify({ 片: uploaded.length, 名: uploaded[0]?.name }))
+
+	// 关掉原图模式，别影响后面的检查；顺便验证自动重试：
+	// 第一次网络层失败（fetch 直接抛）→ 自动再试一次 → 成功，而且 requestId 复用。
+	rawToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('再点一下关掉原图模式', rawToggle.classList.contains('on') === false)
+
+	promptFailTimes = 1
+	promptIds.length = 0
+	$('text').value = '自动重试一次也要发出去'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(2200)
+	check('网络抖一下（第一次直接失败）会自动重试并成功',
+		promptIds.length === 2, `${promptIds.length} 次尝试`)
+	check('重试用的是同一个 requestId（宿主幂等，不会变成两条）',
+		promptIds.length === 2 && promptIds[0] === promptIds[1], promptIds.join(' / '))
+	promptFailTimes = 0
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

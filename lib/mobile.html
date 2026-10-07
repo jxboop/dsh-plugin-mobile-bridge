@@ -101,6 +101,19 @@
 		-webkit-backdrop-filter: var(--glass-blur);
 		backdrop-filter: var(--glass-blur);
 	}
+	/* ---- 进插件时的加载页 ---- */
+	#boot {
+		position: fixed; inset: 0; z-index: 90; display: flex; align-items: center; justify-content: center;
+		background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+		transition: opacity .25s;
+	}
+	#boot.done { opacity: 0; pointer-events: none; }
+	#boot .bootbox { width: 74%; max-width: 320px; text-align: center; }
+	#boot .boottitle { font-size: 14px; color: var(--text); margin-bottom: 12px; font-weight: 600; }
+	#boot .bootbar { height: 6px; border-radius: 99px; background: var(--panel-2); overflow: hidden; box-shadow: var(--glass-edge); }
+	#boot .bootbar i { display: block; height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .2s; }
+	#boot .boottext { margin-top: 10px; font-size: 12px; color: var(--muted); }
+
 	/* ---- 自定义背景：手机自己挑的一段视频/一张图铺满整屏 ----
 	   视频在最底层（z-index:0），上面盖一层压暗的纱，保证文字看得清；
 	   #gate / #app 抬到 z-index:1，面板改成半透明才透得出来。 */
@@ -329,6 +342,9 @@
 	#send { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
 	#stop { background: var(--stop-bg); }
 	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 13px; flex: none; box-shadow: var(--glass-edge); }
+	/* 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用） */
+	#rawToggle { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 10px; flex: none; font-size: 12px; color: var(--muted); box-shadow: var(--glass-edge); }
+	#rawToggle.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
 
 	/* ------------------------------------------------------------- sheet */
 	/* Full-screen panel rather than a third tab: the tab bar is covered while
@@ -470,6 +486,16 @@
 	<div class="tip">长按图片（或视频）→「存储到照片」就能存进手机相册</div>
 </div>
 
+<!-- 进插件时的加载页：HTML 一渲染就显示，JS 再按真实进度推进（连上电脑 / 会话列表 /
+     对话内容 / 背景下载都算一步），免得用户在空白页前干等。 -->
+<div id="boot">
+	<div class="bootbox">
+		<div class="boottitle">正在进入手机桥…</div>
+		<div class="bootbar"><i id="bootFill"></i></div>
+		<div class="boottext" id="bootText">准备中</div>
+	</div>
+</div>
+
 <div id="gate" data-display="flex">
 	<h1>DSH 手机端</h1>
 	<p>输入电脑上显示的 6 位 PIN。连的是你自己的局域网，不经过任何服务器。</p>
@@ -500,6 +526,7 @@
 				<div id="thumbs"></div>
 				<div id="compose">
 					<button id="pick">图片</button>
+					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
 					<textarea id="text" rows="1" placeholder="给 agent 下达任务…"></textarea>
 					<button id="send" data-display="inline-block">发送</button>
 					<button id="stop" data-display="inline-block" style="display:none">停止</button>
@@ -644,6 +671,8 @@
 		unsupported: new Map(),
 		/** 图片以外的附件（视频、PDF、宿主不认的图片格式）：名字 + 类型 + base64。 */
 		files: [],
+		/** 「原图」开关：开着就不压缩、不转格式（发背景这类要画质的图用）。 */
+		raw: false,
 		/**
 		 * 刚发出去、还没进对话的消息（本地回声）。
 		 *
@@ -1304,6 +1333,7 @@
 		const records = Array.isArray(body.records) ? body.records : []
 		// 空结果不许覆盖已经画出来的对话：拉取失败或竞态会把画面清空。
 		if (records.length === 0 && state.items.length > 0) return
+		bootStep(58, '正在读对话内容')
 		// 普通请求能通，就证明电脑还在（只是长连接没把大包推过来）。这时候顶部那条
 		// "好像和电脑失去联系了"是误报 —— 恰恰在这个接口存在的场景里，它会一直挂着。
 		state.lastFrameAt = Date.now()
@@ -1545,6 +1575,27 @@
 		}).join('')
 	}
 
+	/** 加载页：把真实步骤换算成百分比，别让用户在空白页前猜。 */
+	let bootSeen = 0
+	let bootDoneAt = 0
+	function bootStep(percent, text) {
+		const fill = $('bootFill')
+		const label = $('bootText')
+		if (fill === null || label === null) return
+		const value = Math.max(bootSeen, Math.min(100, Math.round(percent)))
+		bootSeen = value
+		fill.style.width = value + '%'
+		if (typeof text === 'string' && text !== '') label.textContent = text + ' · ' + value + '%'
+	}
+	function bootDone() {
+		const boot = $('boot')
+		if (boot === null) return
+		bootStep(100, '好了')
+		bootDoneAt = Date.now()
+		setTimeout(() => { boot.classList.add('done') }, 220)
+		setTimeout(() => { if (boot.parentNode) boot.parentNode.removeChild(boot) }, 700)
+	}
+
 	/* --------------------------------------------------------- 自定义背景 */
 
 	/**
@@ -1590,7 +1641,28 @@
 		} catch { /* 没本地缓存（或不让存）：走网络 */ }
 		const response = await fetch(info.url, { credentials: 'same-origin' })
 		if (response.ok !== true) throw new Error('background fetch failed')
-		const buffer = await response.arrayBuffer()
+		// 背景是手机进插件时最大的一笔下载：把它算进加载页的百分比里，
+		// 用户才知道"还在下、不是卡住了"。
+		const total = Number(response.headers.get('content-length') ?? 0)
+		let buffer
+		if (total > 0 && typeof response.body?.getReader === 'function') {
+			const reader = response.body.getReader()
+			const chunks = []
+			let received = 0
+			for (;;) {
+				const { value, done } = await reader.read()
+				if (done === true) break
+				chunks.push(value)
+				received += value.byteLength
+				bootStep(60 + 35 * (received / total), '正在下载背景')
+			}
+			buffer = new Uint8Array(received)
+			let offset = 0
+			for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.byteLength }
+			buffer = buffer.buffer
+		} else {
+			buffer = await response.arrayBuffer()
+		}
 		try {
 			await idbRun('readwrite', (store) => {
 				// 顺手清掉旧背景，别在手机里越堆越多。
@@ -1718,6 +1790,7 @@
 			}
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
+			bootStep(50, '正在读会话列表')
 			applyBackdrop(body.background)
 			if (body.welcomed === true) welcomedOnServer = true
 			state.sessions = body.sessions || []
@@ -1802,11 +1875,26 @@
 				}
 				return refs
 			})()
-		prepared.then((fileRefs) => api('api/prompt', {
-			method: 'POST',
-			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ sessionId: target, text: body, images, fileRefs }),
-		})).then((result) => {
+		prepared.then((fileRefs) => {
+			// 一次发送用一个固定 requestId：隧道抖一下自动重试时复用它，
+			// 宿主对同一个 id 是幂等的 —— 重试不会变成两条消息。
+			const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+			const post = () => api('api/prompt', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: target, text: body, images, fileRefs, requestId: clientId }),
+			})
+			const attempt = (tries) => post().catch((error) => {
+				// 网络层失败（隧道一抖就是 TypeError: Load failed）自动再来一次 ——
+				// 用户看到的"发不出去"，其实往往只差再试一遍。
+				const transient = error === null || error === undefined || typeof error.status !== 'number'
+				if (tries > 0 && transient) {
+					return new Promise((resolve) => setTimeout(resolve, 1200)).then(() => attempt(tries - 1))
+				}
+				throw error
+			})
+			return attempt(1)
+		}).then((result) => {
 			text.value = ''
 			text.style.height = 'auto'
 			state.images = []
@@ -1991,6 +2079,18 @@
 	/** 挑进来的东西：该缩的缩、该当文件的当文件，一个都不许静默丢掉。 */
 	async function addAttachment(file) {
 		const type = String(file.type || '')
+		// 原图模式：一个字节都不动，直接走分片上传当文件发（电脑那边存原样）。
+		// 用来发背景这种要画质的图 —— 压缩过的图当全屏背景会糊。
+		if (state.raw === true) {
+			state.files.push({
+				name: file.name || 'file',
+				mediaType: type === '' ? 'application/octet-stream' : type,
+				data: await readBase64(file),
+			})
+			renderThumbs()
+			flash('原图模式：这张不压缩，直接传原文件', 3000)
+			return
+		}
 		if (type.startsWith('image/')) {
 			let blob = file
 			let mediaType = type
@@ -2258,6 +2358,11 @@
 	})
 
 	$('pick').addEventListener('click', () => fileInput.click())
+	$('rawToggle').addEventListener('click', () => {
+		state.raw = state.raw !== true
+		$('rawToggle').classList.toggle('on', state.raw)
+		flash(state.raw ? '原图模式：图片不压缩，画质最高（传得慢一点）' : '已关闭原图模式（图片会压缩后再发）', 3000)
+	})
 	sendBtn.addEventListener('click', send)
 	stopBtn.addEventListener('click', () => {
 		api('api/cancel', {
@@ -2495,11 +2600,13 @@
 		.then((body) => {
 			// 先看宿主记的"这台手机看过说明页没有"，再决定弹不弹 —— 顺序反了就等于白记。
 			if (body !== null && body !== undefined && body.welcomed === true) welcomedOnServer = true
+			bootStep(30, '已连上电脑')
 			hide(gate); show(app); switchTab('task')
 			maybeWelcome()
 			return loadSessions()
 		})
-		.catch(() => { /* 401 already routed to the gate */ })
+		.then(() => { bootDone() })
+		.catch(() => { bootDone() /* 没登录成功就交给 PIN 门，别让加载页挡着 */ })
 })()
 </script>
 </body>
