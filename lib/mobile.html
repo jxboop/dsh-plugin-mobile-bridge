@@ -12,75 +12,94 @@
 <title>DSH 手机端</title>
 <style>
 	:root {
-		--bg: #0d1020;
-		--panel: #161a2e;
-		--panel-2: #1e2440;
-		--line: #2b3050;
-		--field-line: var(--field-line);
-		--text: #e7ebff;
-		--muted: #8f9ac4;
-		--accent: #4d6bfe;
-		--accent-ink: #ffffff;
-		--ok: #37d67a;
-		--err: #ff6b6b;
-		--err-ink: #ffffff;
-		--warn: #ffb020;
-		--user-bubble: #26346e;
-		--user-border: #3a4c96;
-		--code-bg: #12162a;
-		--code-line: #46508a;
-		--code-name: #a9b6ff;
-		--tool-err: #ffb4b4;
-		--think-line: #4a4270;
-		--banner-bg: #3a2a12;
+		/* 冰雪色板：跟用户自己挑的背景（雪、松树、冷调）同一个调子。
+		   面板都是"毛玻璃"：半透明 + blur，背景在下面流动，字还在最上面。 */
+		--bg: #0b1220;
+		--bg-2: #101d33;
+		--panel: rgba(18,28,45,.72);
+		--panel-2: rgba(32,46,68,.66);
+		--line: rgba(150,190,230,.22);
+		--field-line: rgba(160,200,240,.30);
+		--text: #eaf2ff;
+		--muted: #9fb3d0;
+		--accent: #57a8ff;
+		--accent-ink: #06121f;
+		--accent-2: #7fd4ff;
+		--ok: #4fd6a0;
+		--err: #ff7a85;
+		--err-ink: #2a0a0f;
+		--warn: #ffc46b;
+		--user-bubble: rgba(70,150,235,.30);
+		--user-border: rgba(130,195,255,.45);
+		--code-bg: rgba(9,16,29,.55);
+		--code-line: rgba(125,175,225,.55);
+		--code-name: #9fd0ff;
+		--tool-err: #ffb3ba;
+		--think-line: rgba(140,175,215,.45);
+		--banner-bg: rgba(58,42,18,.72);
 		--banner-ink: #ffd9a0;
-		--banner-line: #5a4318;
-		--err-bg: #3a1c22;
-		--err-line: #6b2b34;
+		--banner-line: rgba(150,110,40,.5);
+		--err-bg: rgba(58,28,34,.72);
+		--err-line: rgba(140,60,72,.6);
 		--err-ink: #ffc9c9;
-		--stop-bg: #7a2c3a;
+		--stop-bg: rgba(122,44,58,.72);
+		--glass-blur: blur(16px) saturate(1.2);
+		--glass-edge: inset 0 1px 0 rgba(255,255,255,.10);
+		--glass-shadow: 0 12px 32px rgba(3,8,18,.42);
+		--radius: 16px;
 		--mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	}
 	/* Follow the phone's own light/dark setting instead of forcing dark. */
 	@media (prefers-color-scheme: light) {
 		:root {
-			--bg: #f4f6fc;
-			--panel: #ffffff;
-			--panel-2: #eef1f9;
-			--line: #d8deee;
-			--field-line: #c9d2e8;
-			--text: #1a1f36;
-			--muted: #6b7490;
-			--accent: #3b57e0;
-			--ok: #14a05a;
-			--err: #d64545;
-			--warn: #b8791a;
-			--user-bubble: #dfe6ff;
-			--user-border: #b9c8f5;
-			--code-bg: #f0f2f9;
-			--code-line: #b9c2dd;
-			--code-name: #3b4bb0;
+			--bg: #e9f1fb;
+			--bg-2: #dbe8f8;
+			--panel: rgba(255,255,255,.78);
+			--panel-2: rgba(255,255,255,.62);
+			--line: rgba(120,160,210,.26);
+			--field-line: rgba(120,160,210,.34);
+			--text: #10203a;
+			--muted: #5b7292;
+			--accent: #2f7fe0;
+			--accent-ink: #ffffff;
+			--accent-2: #4aa8f0;
+			--ok: #12a06a;
+			--err: #d64550;
+			--user-bubble: rgba(178,212,255,.60);
+			--user-border: rgba(120,170,235,.5);
+			--code-bg: rgba(255,255,255,.55);
+			--code-line: rgba(140,175,215,.6);
+			--code-name: #2f5fb0;
 			--tool-err: #a12a2a;
-			--think-line: #c9c2e4;
-			--banner-bg: #fff3d6;
+			--think-line: rgba(150,175,210,.6);
+			--banner-bg: rgba(255,243,214,.85);
 			--banner-ink: #7a5410;
-			--banner-line: #ecd9a8;
-			--err-bg: #fdeaea;
-			--err-line: #f0c2c2;
+			--banner-line: rgba(200,170,110,.6);
+			--err-bg: rgba(253,234,234,.9);
+			--err-line: rgba(235,180,180,.8);
 			--err-ink: #9c2b2b;
-			--stop-bg: #f3d7dc;
+			--stop-bg: rgba(243,215,220,.85);
+			--glass-edge: inset 0 1px 0 rgba(255,255,255,.75);
+			--glass-shadow: 0 10px 26px rgba(70,110,170,.16);
 		}
 	}
 	* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 	html, body { margin: 0; height: 100%; }
 	body {
-		background: var(--bg);
+		/* 没配背景时也不是一块死板的纯色：一层很淡的冰蓝渐变，毛玻璃才有东西可透。 */
+		background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
 		color: var(--text);
 		font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 		display: flex;
 		flex-direction: column;
 		height: 100dvh;
 		overscroll-behavior: none;
+	}
+	/* 统一给主要表面挂上毛玻璃：背景在下面流动，文字永远在上面。 */
+	header, #tabs, .sessionbar, #composer, .bubble, .tool, .chip, .pick, .card,
+	#gate input, #gate button, .actions button, .iconbtn, #linkbar, #banner, .sheet, .sheetbar {
+		-webkit-backdrop-filter: var(--glass-blur);
+		backdrop-filter: var(--glass-blur);
 	}
 	/* ---- 自定义背景：手机自己挑的一段视频/一张图铺满整屏 ----
 	   视频在最底层（z-index:0），上面盖一层压暗的纱，保证文字看得清；
@@ -96,21 +115,25 @@
 	body.hasbg { background: #05060d; }
 	body.hasbg #backdrop { display: block; }
 	body.hasbg #gate, body.hasbg #app { position: relative; z-index: 1; }
-	/* 顶部那条"会话 / 刷新 / 退出"下面就是视频，亮画面（雪地、天空）会把它吃掉。
-	   给顶栏自己一层薄纱，标题和按钮才一直看得清。 */
-	body.hasbg header { background: rgba(8,10,20,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
-	/* 半透明面板：既看得见背景，又保证对比度。 */
+	/* 有背景时把面板再压实一点：毛玻璃透出来的画面越亮，越需要这点对比度。
+	   注意【不要】动 --bg：toast 的前景/背景、以及没背景时的渐变都靠它。 */
 	body.hasbg {
-		--bg: transparent;
-		--panel: rgba(20,24,44,.78);
-		--panel-2: rgba(32,38,66,.72);
-		--code-bg: rgba(12,15,32,.72);
-		--user-bubble: rgba(38,52,110,.78);
+		--panel: rgba(16,25,41,.78);
+		--panel-2: rgba(30,43,64,.72);
+		--code-bg: rgba(8,14,26,.66);
+		--glass-shadow: 0 14px 34px rgba(2,6,14,.5);
 	}
+	/* 顶部那条"会话 / 刷新 / 退出"下面就是视频，亮画面（雪地、天空）会把它吃掉。 */
+	body.hasbg header { background: rgba(10,17,30,.62); }
 	@media (prefers-color-scheme: light) {
-		body.hasbg { --panel: rgba(255,255,255,.82); --panel-2: rgba(238,241,249,.78); --code-bg: rgba(240,242,249,.8); --user-bubble: rgba(223,230,255,.85); }
-		body.hasbg #backdrop .scrim { background: linear-gradient(180deg, rgba(255,255,255,.5), rgba(232,238,252,.68)); }
-		body.hasbg header { background: rgba(255,255,255,.66); }
+		body.hasbg {
+			--panel: rgba(255,255,255,.84);
+			--panel-2: rgba(255,255,255,.70);
+			--code-bg: rgba(255,255,255,.60);
+			--glass-shadow: 0 14px 30px rgba(70,110,170,.18);
+		}
+		body.hasbg #backdrop .scrim { background: linear-gradient(180deg, rgba(250,253,255,.62), rgba(226,236,250,.74)); }
+		body.hasbg header { background: rgba(255,255,255,.72); }
 	}
 	button, input, select, textarea { font: inherit; color: inherit; }
 	button { cursor: pointer; }
@@ -124,10 +147,14 @@
 	#gate h1 { font-size: 20px; margin: 0; }
 	#gate p { color: var(--muted); margin: 0; font-size: 13px; }
 	#gate input {
-		background: var(--panel); border: 1px solid var(--field-line); border-radius: 12px;
+		background: var(--panel); border: 1px solid var(--field-line); border-radius: var(--radius);
 		padding: 16px; font-size: 26px; letter-spacing: 10px; text-align: center; width: 100%;
+		box-shadow: var(--glass-edge);
 	}
-	#gate button { background: var(--accent); border: 0; border-radius: 12px; padding: 15px; font-weight: 600; }
+	#gate button {
+		background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink);
+		border: 0; border-radius: var(--radius); padding: 15px; font-weight: 600; box-shadow: var(--glass-edge);
+	}
 	#gateError { color: var(--err); min-height: 20px; font-size: 13px; text-align: center; }
 
 	/* -------------------------------------------------------------- app */
@@ -135,6 +162,7 @@
 	header {
 		display: flex; align-items: center; gap: 8px; padding: 10px 12px;
 		background: var(--panel); border-bottom: 1px solid var(--line);
+		box-shadow: var(--glass-edge);
 		padding-top: max(10px, env(safe-area-inset-top)); flex: none;
 	}
 	header .grow { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -143,8 +171,8 @@
 	#dot.busy { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
 	#dot.down { background: var(--err); }
 	.iconbtn {
-		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 9px;
-		padding: 8px 11px; font-size: 13px; flex: none;
+		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 11px;
+		padding: 8px 11px; font-size: 13px; flex: none; box-shadow: var(--glass-edge);
 	}
 
 	main { flex: 1; min-height: 0; }
@@ -155,6 +183,7 @@
 	/* ------------------------------------------------------------- tabs */
 	#tabs {
 		display: flex; flex: none; background: var(--panel); border-top: 1px solid var(--line);
+		box-shadow: var(--glass-edge);
 		padding-bottom: env(safe-area-inset-bottom);
 	}
 	#tabs button {
@@ -165,21 +194,27 @@
 	#tabs button.active { color: var(--accent); }
 
 	/* ------------------------------------------------------------- task */
-	.sessionbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+	.sessionbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge); }
 	.sessionbar select {
 		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
-		border-radius: 9px; padding: 9px 10px; font-size: 14px;
+		border-radius: 12px; padding: 10px 11px; font-size: 14px; box-shadow: var(--glass-edge);
 	}
 	#log { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px 4px; }
 	.row { margin-bottom: 12px; display: flex; }
 	.row.user { justify-content: flex-end; }
+	/* 对话气泡：一块冰。用户那头偏蓝、agent 那头偏白，靠"哪边对齐"和色调一眼分清，
+	   圆角朝自己那一侧收紧一点，像从对话框里长出来的。 */
 	.bubble {
-		max-width: 88%; border-radius: 14px; padding: 10px 12px;
+		max-width: 88%; border-radius: var(--radius) var(--radius) var(--radius) 6px; padding: 11px 13px;
 		background: var(--panel); border: 1px solid var(--line);
+		box-shadow: var(--glass-edge), var(--glass-shadow);
 		white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
 	}
-	.row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
-	.bubble img { max-width: 100%; border-radius: 10px; display: block; margin-top: 6px; }
+	.row.user .bubble {
+		background: var(--user-bubble); border-color: var(--user-border);
+		border-radius: var(--radius) var(--radius) 6px var(--radius);
+	}
+	.bubble img { max-width: 100%; border-radius: 12px; display: block; margin-top: 6px; }
 	.bubble img:not([src]) { min-height: 110px; background: var(--code-bg); }
 
 	/* 思考与输出分开：思考是回答之外的一块可折叠区域，不再混在气泡里当斜体段落 */
@@ -199,8 +234,9 @@
 	}
 
 	.tool {
-		border-left: 3px solid var(--code-line); background: var(--code-bg); border-radius: 0 10px 10px 0;
-		padding: 8px 11px; font-size: 13px; margin-bottom: 12px;
+		border-left: 3px solid var(--code-line); background: var(--code-bg); border-radius: 12px;
+		padding: 9px 12px; font-size: 13px; margin-bottom: 12px;
+		box-shadow: var(--glass-edge);
 	}
 	.tool .name { color: var(--code-name); font-weight: 600; }
 	.tool .body {
@@ -215,7 +251,7 @@
 
 	#banner { padding: 8px 12px; font-size: 12px; background: var(--banner-bg); color: var(--banner-ink); border-bottom: 1px solid var(--banner-line); flex: none; }
 
-	#composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 10px; }
+	#composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 10px; box-shadow: var(--glass-edge); }
 	#thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
 	#thumbs:empty { display: none; }
 	.thumb { position: relative; flex: none; }
@@ -238,30 +274,35 @@
 	#compose { display: flex; gap: 8px; align-items: flex-end; }
 	#text {
 		flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--field-line);
-		border-radius: 12px; padding: 11px 12px; resize: none; max-height: 130px; min-height: 44px;
+		border-radius: 14px; padding: 11px 13px; resize: none; max-height: 130px; min-height: 44px;
+		box-shadow: var(--glass-edge);
 	}
-	#send, #stop { border: 0; border-radius: 12px; padding: 12px 15px; font-weight: 600; flex: none; }
+	#send, #stop { border: 0; border-radius: 14px; padding: 12px 16px; font-weight: 600; flex: none; box-shadow: var(--glass-edge); }
 	/* 运行中「插话」和「停止」要同时站着，窄屏上把它们收窄，别把输入框挤没。 */
 	#compose.two #send, #compose.two #stop { padding: 12px 11px; }
-	#send { background: var(--accent); }
+	#send { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
 	#stop { background: var(--stop-bg); }
-	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 11px 13px; flex: none; }
+	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 13px; flex: none; box-shadow: var(--glass-edge); }
 
 	/* ------------------------------------------------------------- sheet */
 	/* Full-screen panel rather than a third tab: the tab bar is covered while
 	   it is open, so the primary action can never sit under a thumb that is
 	   reaching for a tab, and 取消 is always on screen. */
-	.sheet { position: fixed; inset: 0; z-index: 50; background: var(--bg); flex-direction: column; }
+	.sheet {
+		position: fixed; inset: 0; z-index: 50; flex-direction: column;
+		/* 半透明 + blur：背景视频还在后面，但盖一层足够厚的纱，读长文不费眼。 */
+		background: color-mix(in srgb, var(--bg) 88%, transparent);
+	}
 	.sheetbar {
 		flex: none; display: flex; align-items: center; gap: 8px;
 		padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top));
-		border-bottom: 1px solid var(--line); background: var(--panel);
+		border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge);
 	}
 	.sheetbar .title { flex: 1; text-align: center; font-weight: 600; font-size: 14px; }
 	.sheetbar .spacer { width: 56px; flex: none; }
 	.sheetfoot {
 		flex: none; padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
-		border-top: 1px solid var(--line); background: var(--panel);
+		border-top: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge);
 	}
 
 	/* ------------------------------------------------------- new task */
@@ -271,7 +312,8 @@
 	.picklist { display: flex; flex-direction: column; gap: 8px; }
 	.pick {
 		display: flex; gap: 10px; align-items: flex-start; text-align: left;
-		background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 11px 12px; width: 100%;
+		background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 13px; width: 100%;
+		box-shadow: var(--glass-edge);
 	}
 	.pick.on { border-color: var(--accent); background: var(--panel-2); }
 	.pick .mark { flex: none; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--code-line); margin-top: 1px; }
@@ -281,39 +323,41 @@
 	.pick .p { font-size: 11px; color: var(--muted); word-break: break-all; display: block; margin-top: 2px; }
 	select.plain, input.plain, textarea.plain {
 		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
-		border-radius: 11px; padding: 11px 12px;
+		border-radius: 13px; padding: 11px 12px; box-shadow: var(--glass-edge);
 	}
 	textarea.plain { resize: vertical; min-height: 88px; }
 	.primary {
-		width: 100%; border: 0; border-radius: 12px; padding: 14px;
-		background: var(--accent); font-weight: 600;
+		width: 100%; border: 0; border-radius: 14px; padding: 14px;
+		background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink);
+		font-weight: 600; box-shadow: var(--glass-edge);
 	}
 	.primary[disabled] { opacity: .5; }
 
 	/* ---------------------------------------------------------- bill */
 	.card {
-		background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-		padding: 16px; margin-bottom: 12px;
+		background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+		padding: 16px; margin-bottom: 12px; box-shadow: var(--glass-edge), var(--glass-shadow);
 	}
 	.card .cur { font-size: 12px; color: var(--muted); }
 	.card .big { font-size: 34px; font-weight: 700; letter-spacing: -.5px; margin: 2px 0 12px; }
 	.split { display: flex; gap: 10px; }
-	.split div { flex: 1; background: var(--panel-2); border-radius: 10px; padding: 10px 12px; }
+	.split div { flex: 1; background: var(--panel-2); border-radius: 12px; padding: 10px 12px; box-shadow: var(--glass-edge); }
 	.split .k { font-size: 11px; color: var(--muted); }
 	.split .v { font-size: 17px; font-weight: 600; margin-top: 2px; }
 	.meta { font-size: 12px; color: var(--muted); line-height: 1.7; }
 	.actions { display: flex; gap: 10px; margin-top: 6px; }
 	.actions button {
-		flex: 1; border-radius: 12px; padding: 13px; border: 1px solid var(--field-line);
-		background: var(--panel-2); font-weight: 600;
+		flex: 1; border-radius: 14px; padding: 13px; border: 1px solid var(--field-line);
+		background: var(--panel-2); font-weight: 600; box-shadow: var(--glass-edge);
 	}
-	.actions button.go { background: var(--accent); border-color: var(--accent); }
+	.actions button.go { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; }
 	.state { text-align: center; color: var(--muted); padding: 40px 16px; font-size: 14px; }
 	.state .emoji { font-size: 30px; display: block; margin-bottom: 10px; }
 	.err-box { color: var(--err-ink); background: var(--err-bg); border: 1px solid var(--err-line); border-radius: 12px; padding: 12px; font-size: 13px; }
 	#toast {
 		position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(8px);
-		background: var(--text); color: var(--bg); border-radius: 999px; padding: 9px 18px; font-size: 13px;
+		background: var(--text); color: var(--bg); border-radius: 999px; padding: 10px 19px; font-size: 13px;
+		box-shadow: var(--glass-shadow);
 		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 60; max-width: 80vw; text-align: center;
 	}
 	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
@@ -325,10 +369,10 @@
 	#linkbar .lg { font-weight: 600; margin-bottom: 3px; }
 	#linkbar .acts { display: flex; gap: 8px; margin-top: 9px; flex-wrap: wrap; }
 	#linkbar .acts button {
-		flex: 1 1 40%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--banner-line);
-		background: var(--panel); color: var(--text); font: inherit; font-size: 13px;
+		flex: 1 1 40%; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--banner-line);
+		background: var(--panel); color: var(--text); font: inherit; font-size: 13px; box-shadow: var(--glass-edge);
 	}
-	#linkbar .acts button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+	#linkbar .acts button.primary { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; }
 	#linkbar code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
 
 	/* ---- 首次进入的「开始使用」说明页 ---- */
@@ -337,12 +381,17 @@
 	.welcometip ul { margin: 0 0 12px; padding-left: 20px; }
 	.welcometip li { margin-bottom: 7px; }
 	.welcomego {
-		width: 100%; margin-top: 8px; padding: 14px; border: 0; border-radius: 10px;
-		background: var(--accent); color: var(--accent-ink); font: inherit; font-size: 16px; font-weight: 600;
+		width: 100%; margin-top: 8px; padding: 15px; border: 0; border-radius: var(--radius);
+		background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink);
+		font: inherit; font-size: 16px; font-weight: 600; box-shadow: var(--glass-edge);
 	}
 
 	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */	#ask { flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
-	.askcard { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px; }
+	.askcard {
+		background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 11px 12px;
+		box-shadow: var(--glass-edge), var(--glass-shadow);
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+	}
 	.askcard h4 { margin: 0 0 6px; font-size: 12.5px; color: var(--muted); font-weight: 600; }
 	.askcard .q { margin: 0 0 4px; font-size: 15px; }
 	.askcard .qd { margin: 0 0 8px; font-size: 12.5px; color: var(--muted); white-space: pre-wrap; }
