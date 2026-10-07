@@ -142,13 +142,17 @@
 	body.hasbg header { background: rgba(10,17,30,.62); }
 	@media (prefers-color-scheme: light) {
 		body.hasbg {
-			--panel: rgba(255,255,255,.84);
-			--panel-2: rgba(255,255,255,.70);
-			--code-bg: rgba(255,255,255,.60);
+			--panel: rgba(255,255,255,.90);
+			--panel-2: rgba(255,255,255,.82);
+			--code-bg: rgba(255,255,255,.74);
 			--glass-shadow: 0 14px 30px rgba(70,110,170,.18);
 		}
-		body.hasbg #backdrop .scrim { background: linear-gradient(180deg, rgba(250,253,255,.62), rgba(226,236,250,.74)); }
-		body.hasbg header { background: rgba(255,255,255,.72); }
+		/* 亮色主题下，纱也要压暗一点：背景是照片/视频时，白纱会把亮画面糊成一片白，
+		   字反而看不清（实测一张亮图整个界面都发白）。 */
+		body.hasbg #backdrop .scrim { background: linear-gradient(180deg, rgba(8,12,24,.30), rgba(8,12,24,.46)); }
+		body.hasbg header { background: rgba(255,255,255,.88); }
+		body.hasbg .bubble { background: rgba(255,255,255,.66); border-color: rgba(255,255,255,.8); }
+		body.hasbg .row.user .bubble { background: rgba(170,208,255,.62); }
 	}
 	button, input, select, textarea { font: inherit; color: inherit; }
 	button { cursor: pointer; }
@@ -343,8 +347,10 @@
 	#stop { background: var(--stop-bg); }
 	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 13px; flex: none; box-shadow: var(--glass-edge); }
 	/* 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用） */
-	#rawToggle { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 10px; flex: none; font-size: 12px; color: var(--muted); box-shadow: var(--glass-edge); }
+	#rawToggle { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 9px; flex: none; font-size: 12px; color: var(--muted); box-shadow: var(--glass-edge); }
 	#rawToggle.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+	/* 一排四个键（图片/原图/插话/停止）时把左右内边距收紧，别把输入框挤成两行。 */
+	#compose.two #pick, #compose.two #rawToggle, #compose.two #send, #compose.two #stop { padding-left: 9px; padding-right: 9px; }
 
 	/* ------------------------------------------------------------- sheet */
 	/* Full-screen panel rather than a third tab: the tab bar is covered while
