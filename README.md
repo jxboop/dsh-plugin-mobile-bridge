@@ -358,6 +358,21 @@ npm run test:all  # 再加上 ui 的 116 项，共 281 项
 
 ---
 
+## HEIC 素材（iPhone 照片）
+
+iPhone 拍的照片是 HEIC，而且**扩展名经常骗人**（名字叫 `..jpeg`，内容却是 `ftypheic`）。
+浏览器不一定解得了，插件里的背景/素材预览就会显示不出来。桥会**按内容**认出它是 HEIC
+（而不是当视频），但要在任何浏览器里都能显示，最好先转成 JPEG：
+
+``powershell
+powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-MaxEdge 1600]
+``
+
+它借 Windows 自带的 HEIF 解码器（`Microsoft.HEIFImageExtension`）转码，只读输入、
+写输出。转出来的 1600px JPEG 任何浏览器都能显示，也能直接当手机界面背景。
+
+---
+
 ## 已知坑（作者踩过的，写在代码注释里）
 
 1. `res.write()` 写到已断开的响应上**不会同步抛错**，而是**异步 emit `'error'`** —— 无人监听时 Node 直接抛出，整个宿主进程陪葬。所以每一处响应都要挂 `res.on('error')`。
