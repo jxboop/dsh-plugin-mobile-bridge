@@ -1616,6 +1616,7 @@
 			if (body.failure) flash('会话列表读取失败：' + body.failure)
 			else hide(banner)
 			applyBackdrop(body.background)
+			if (body.welcomed === true) welcomedOnServer = true
 			state.sessions = body.sessions || []
 			sessionSelect.innerHTML = state.sessions.map((item) =>
 				'<option value="' + escapeHtml(item.sessionId) + '">' +
@@ -2103,8 +2104,8 @@
 			}
 			hide(gate); show(app)
 			switchTab('task')
-			maybeWelcome()
-			loadSessions()
+			// 等会话列表回来（bootstrap 里带着宿主的"看过说明页"标记）再决定弹不弹。
+			loadSessions().then(() => maybeWelcome())
 		}).catch(() => { $('gateError').textContent = '网络不通' })
 	})
 	$('pin').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('gateBtn').click() })
@@ -2358,26 +2359,43 @@
 	/* --------------------------------------------------------- 首次说明页 */
 
 	const welcome = $('welcome')
-	// localStorage 写不进去（无痕/隐私模式）时的兜底：至少同一次打开里别再反复弹。
+	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
+	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
+	// 是不同 origin，localStorage 各存各的）、无痕浏览、清了站点数据，本地标记都会没，
+	// 那份不会 —— 否则就是用户遇到的"每次退出重进都弹一遍"。
+	let welcomedOnServer = false
 
-	/** 第一次连上时讲一遍怎么用；之后靠 localStorage 记住，不再打扰。 */
+	function markWelcomed() {
+		welcomed = true
+		writeLocal('dshm.welcomed', '1')
+		if (welcomedOnServer === true) return
+		welcomedOnServer = true
+		api('api/welcomed', { method: 'POST' }).catch(() => { welcomedOnServer = false })
+	}
+
+	/** 第一次连上时讲一遍怎么用；之后本地或服务端任一处记着就不再打扰。 */
 	function maybeWelcome() {
-		if (welcomed) return
+		if (welcomed || welcomedOnServer) return
 		if (readLocal('dshm.welcomed') === '1') return
 		show(welcome)
 	}
 
 	$('welcomeGo').addEventListener('click', () => {
-		welcomed = true
-		writeLocal('dshm.welcomed', '1')
+		markWelcomed()
 		hide(welcome)
 	})
 
 	/* --------------------------------------------------------------- boot */
 
 	api('api/bootstrap')
-		.then(() => { hide(gate); show(app); switchTab('task'); maybeWelcome(); return loadSessions() })
+		.then((body) => {
+			// 先看宿主记的"这台手机看过说明页没有"，再决定弹不弹 —— 顺序反了就等于白记。
+			if (body !== null && body !== undefined && body.welcomed === true) welcomedOnServer = true
+			hide(gate); show(app); switchTab('task')
+			maybeWelcome()
+			return loadSessions()
+		})
 		.catch(() => { /* 401 already routed to the gate */ })
 })()
 </script>

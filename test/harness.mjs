@@ -310,6 +310,24 @@ check('correct PIN issues a session cookie', login.status === 200 && cookie.star
 
 const authed = { headers: { cookie } }
 const bootstrap = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+
+/* --- 「开始使用」说明页只该弹一次（服务端也记一份） ---------------------- */
+/*
+ * 现场：手机上每次退出重进都弹一遍说明页。页面自己用 localStorage 记，但换地址
+ * （Funnel ↔ 局域网是不同 origin，各存各的）、无痕浏览、清了站点数据之后标记就没了。
+ * 所以宿主也记一份，并且跟令牌文件一起落盘。
+ */
+{
+	check('没看过之前 bootstrap 说 welcomed=false', bootstrap.welcomed === false, String(bootstrap.welcomed))
+	const seen = await fetch(`${base}/api/welcomed`, { method: 'POST', headers: { cookie } })
+	check('点「开始使用」会写回宿主', seen.status === 200, String(seen.status))
+	const after = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('之后 bootstrap 说 welcomed=true（页面据此不再弹）', after.welcomed === true, String(after.welcomed))
+	const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.tokens.json'), 'utf8'))
+	check('这份标记跟着令牌文件落盘（重载/重启也不丢）',
+		Object.keys(stored.welcomed ?? {}).length > 0, JSON.stringify(stored.welcomed))
+}
+
 check('bootstrap lists sessions with titles', bootstrap.sessions?.length === 2 && bootstrap.sessions[0].title === '手机桥接测试',
 	JSON.stringify(bootstrap.sessions?.map((item) => item.title)))
 check('bootstrap titles fall back to the folder name', bootstrap.sessions?.[1]?.title === 'tool', bootstrap.sessions?.[1]?.title)

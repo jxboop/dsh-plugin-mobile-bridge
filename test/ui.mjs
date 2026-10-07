@@ -112,6 +112,8 @@ let lastPromptRequestId = ''
 let promptSeq = 0
 /** 撤回请求（POST /api/recall）。 */
 const recalls = []
+/** 宿主侧"这台手机看过说明页"的标记（bootstrap 里下发 / POST /api/welcomed 里写回）。 */
+let welcomedOnServer = false
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -161,11 +163,17 @@ async function stubFetch(input, options = {}) {
 		sessions: SESSIONS,
 		failure: null,
 		background: backdropInfo,
+		// 宿主记着"这台手机看过说明页"没有（换地址/无痕时本地标记会丢，靠它兜底）。
+		welcomed: welcomedOnServer,
 		// 真宿主也会发这个：断线时它是同 WiFi 下的兜底出路。
 		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
 		// 和页面当前 origin 不同的正式地址：用来验证「切到当前地址」。
 		publicUrl: 'https://example.ts.net/0123456789abcdef/',
 	})
+	if (path.startsWith('/api/welcomed')) {
+		welcomedOnServer = true
+		return jsonResponse({ ok: true })
+	}
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	if (path.startsWith('/api/upload')) {
 		const body = JSON.parse(options.body ?? '{}')
@@ -1090,6 +1098,12 @@ check('说明指向了下拉框或读取状态',
 		window.getComputedStyle($('welcome')).display === 'none'
 		&& window.localStorage.getItem('dshm.welcomed') === '1',
 		`display=${$('welcome').style.display} flag=${window.localStorage.getItem('dshm.welcomed')}`)
+	// 光记在手机本地不够：换地址（Funnel ↔ 局域网是不同 origin）、无痕浏览、清站点数据
+	// 都会把本地标记弄丢 —— 那正是"每次退出重进都弹一遍"的原因。所以要告诉宿主一份。
+	check('同时把"看过了"写到宿主那边（换地址/无痕也不会重复弹）',
+		welcomedOnServer === true
+		&& requests.some((entry) => entry.path.startsWith('/api/welcomed')),
+		`server=${welcomedOnServer}`)
 
 	// 第二次连上不该再弹。localStorage 被清掉（无痕模式）这种极端情况，也要靠内存里的
 	// 标记兜住 —— 否则同一台手机上每次重连都弹一遍，比没有说明页还烦。
