@@ -293,9 +293,65 @@ check('user text renders', body.includes('帮我看下这张图'))
 check('assistant text renders', body.includes('这是鲸鱼'))
 check('tool call renders with its result merged',
 	body.includes('read') && body.includes('文件内容 ABC'), body.replace(/\s+/g, ' ').slice(0, 90))
-check('history image is requested once', requests.filter((entry) => entry.path.startsWith('/api/attachment')).length === 1,
-	`${requests.filter((entry) => entry.path.startsWith('/api/attachment')).length} attachment fetches`)
+// 附件现在直接给真 URL（api/media），不再取 base64 拼 data: —— iOS 对 data: 图片的
+// 长按菜单里没有"存储到照片"，用户就没法把素材存进相册。
+{
+	const img = window.document.querySelector('#log img')
+	const src = img === null ? '' : img.getAttribute('src')
+	check('历史图片走真 URL（能长按存相册，不是 data:）',
+		img !== null && src.startsWith('api/media?') && src.includes('attachmentId=att-9')
+		&& img.getAttribute('data-full') === src,
+		src)
+	check('附件不再走 base64 的 /api/attachment',
+		requests.filter((entry) => entry.path.startsWith('/api/attachment')).length === 0,
+		`${requests.filter((entry) => entry.path.startsWith('/api/attachment')).length} attachment fetches`)
+}
 check('history image element is present', window.document.querySelectorAll('#log img').length === 1)
+
+/* --- agent 在电脑上产出的素材：路径要变成能看、能存的图 ------------------- */
+/*
+ * 现场：agent 在电脑上做了图/视频，对话里只有一行绝对路径 —— 手机上什么都看不到，
+ * 更别说存进相册。页面现在把这种路径渲染成真图（api/file），点开全屏、长按可存。
+ */
+{
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'assistant/message', seq: 40, time: 40,
+			data: {
+				turn: 4, step: 1,
+				message: {
+					id: 'm40', role: 'assistant',
+					content: [{ type: 'text', text: '素材做好了：D:\\learn\\deepseek学习\\out\\封面.png 和 D:\\learn\\deepseek学习\\out\\成片.mp4' }],
+				},
+			},
+		},
+	})
+	await wait(140)
+	const shots = [...window.document.querySelectorAll('#log img.shot')]
+		.filter((node) => String(node.getAttribute('src')).startsWith('api/file?path='))
+	const videos = window.document.querySelectorAll('#log video.shot')
+	check('回复里的图片路径变成了真图（api/file，能长按存相册）',
+		shots.length === 1 && String(shots[0].getAttribute('src')).includes(encodeURIComponent('封面.png')),
+		`${shots.length} 图 / src=${shots[0]?.getAttribute('src')}`)
+	check('视频路径变成可播放的视频条', videos.length === 1, `${videos.length} video`)
+	check('图片下面告诉用户怎么存进相册',
+		window.document.querySelector('#log .shothint') !== null
+		&& window.document.querySelector('#log').textContent.includes('存储到照片'))
+
+	// 点图 → 全屏看图（真 URL，长按就是"存储到照片"）
+	shots[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	const viewer = $('viewer')
+	check('点图打开全屏看图（长按可存）',
+		viewer !== null && viewer.classList.contains('on')
+		&& viewer.querySelector('img') !== null
+		&& String(viewer.querySelector('img').getAttribute('src')).startsWith('api/file?path='),
+		viewer === null ? 'no #viewer' : viewer.querySelector('img')?.getAttribute('src'))
+	$('viewerClose').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('关闭按钮收起看图层', $('viewer').classList.contains('on') === false)
+}
 
 /* --- live streaming ------------------------------------------------------ */
 

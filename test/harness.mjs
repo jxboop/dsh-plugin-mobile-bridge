@@ -457,6 +457,40 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		JSON.stringify(advertised.background))
 }
 
+/* --- 电脑上的素材要能发给手机，而且只发该发的 ---------------------------- */
+/*
+ * 用户原话：「我手机看不到电脑给的素材」。agent 在电脑上做的图/视频在对话里只是一行
+ * 路径，手机既看不到也存不下。现在有两条路：
+ *   /api/media  附件 → 真二进制（iOS 长按才能"存储到照片"，data: 不行）
+ *   /api/file   磁盘上的图片/视频 → 只能发桥认识的目录，别的拒掉
+ */
+{
+	const media = await fetch(`${base}/api/media?sessionId=session-test&attachmentId=att-1`, authed)
+	const mediaBody = Buffer.from(await media.arrayBuffer())
+	check('附件能按真二进制取（长按可存相册）',
+		media.status === 200 && media.headers.get('content-type') === 'image/png' && mediaBody.length > 0,
+		`${media.status} ${media.headers.get('content-type')} ${mediaBody.length} bytes`)
+	check('附件接口缺参数时给 400 而不是 500',
+		(await fetch(`${base}/api/media`, authed)).status === 400)
+
+	const noCookie = await fetch(`${base}/api/file?path=${encodeURIComponent(join(scratch, 'mobile-uploads', 'bg.mov'))}`)
+	check('/api/file 也要鉴权', noCookie.status === 401, String(noCookie.status))
+
+	// 上传目录（在 DSH_HOME 下）里的媒体：放行
+	const allowed = await fetch(`${base}/api/file?path=${encodeURIComponent(join(scratch, 'mobile-uploads', 'bg.mov'))}`, authed)
+	check('DSH 目录里的媒体能发给手机', allowed.status === 200, String(allowed.status))
+
+	// 系统目录里的图片：拒绝（接口绝不能变成任意文件读取）
+	const outside = await fetch(`${base}/api/file?path=${encodeURIComponent('C:\\Windows\\secret.png')}`, authed)
+	check('允许目录以外的路径被拒（403）', outside.status === 403, String(outside.status))
+	const sneaky = await fetch(`${base}/api/file?path=${encodeURIComponent('C:\\Windows\\..\\Windows\\secret.png')}`, authed)
+	check('带 .. 绕一圈也还是被拒', sneaky.status === 403, String(sneaky.status))
+
+	// 目录内但不是媒体：拒绝
+	const notMedia = await fetch(`${base}/api/file?path=${encodeURIComponent(join(scratch, 'mobile-bridge.json'))}`, authed)
+	check('只发图片/视频，配置文件不给（415）', notMedia.status === 415, String(notMedia.status))
+}
+
 const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
 const reader = stream.body.getReader()
 const decoder = new TextDecoder()

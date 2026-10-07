@@ -202,20 +202,45 @@
 	#log { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px 4px; }
 	.row { margin-bottom: 12px; display: flex; }
 	.row.user { justify-content: flex-end; }
-	/* 对话气泡：一块冰。用户那头偏蓝、agent 那头偏白，靠"哪边对齐"和色调一眼分清，
-	   圆角朝自己那一侧收紧一点，像从对话框里长出来的。 */
+	/* 对话气泡：**透明**的玻璃 —— 用户要看的是背景，文字只是浮在上面。
+	   所以底色压到很淡，靠 blur + 一圈极细的亮边把文字托住，而不是靠一块实心色。 */
 	.bubble {
 		max-width: 88%; border-radius: var(--radius) var(--radius) var(--radius) 6px; padding: 11px 13px;
-		background: var(--panel); border: 1px solid var(--line);
-		box-shadow: var(--glass-edge), var(--glass-shadow);
+		background: rgba(10,16,30,.34); border: 1px solid rgba(255,255,255,.14);
+		-webkit-backdrop-filter: blur(10px) saturate(1.15); backdrop-filter: blur(10px) saturate(1.15);
+		box-shadow: 0 6px 20px rgba(3,8,18,.22);
+		text-shadow: 0 1px 2px rgba(3,8,18,.35);
 		white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
 	}
 	.row.user .bubble {
-		background: var(--user-bubble); border-color: var(--user-border);
+		background: rgba(70,150,235,.20); border-color: rgba(140,200,255,.34);
 		border-radius: var(--radius) var(--radius) 6px var(--radius);
 	}
-	.bubble img { max-width: 100%; border-radius: 12px; display: block; margin-top: 6px; }
-	.bubble img:not([src]) { min-height: 110px; background: var(--code-bg); }
+	@media (prefers-color-scheme: light) {
+		.bubble { background: rgba(255,255,255,.38); border-color: rgba(255,255,255,.62); text-shadow: none; }
+		.row.user .bubble { background: rgba(168,205,255,.36); border-color: rgba(255,255,255,.66); }
+	}
+	.bubble img.shot, .tool img.shot { max-width: 100%; border-radius: 12px; display: block; margin-top: 6px; }
+	.bubble img.shot:not([src]) { min-height: 110px; background: var(--code-bg); }
+	/* agent 在电脑上产出的素材：路径 → 真图/视频，点开可看大图、长按可存相册。 */
+	.shotwrap { margin-top: 8px; }
+	.shotwrap img.shot, .shotwrap video.shot {
+		max-width: 100%; max-height: 320px; border-radius: 12px; display: block;
+		border: 1px solid rgba(255,255,255,.18); background: rgba(6,10,20,.35);
+	}
+	.shothint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+	/* 全屏看图：真 URL 的图，长按就是"存储到照片"。 */
+	#viewer {
+		position: fixed; inset: 0; z-index: 80; display: none; flex-direction: column;
+		background: rgba(4,6,14,.92); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+		padding: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+	}
+	#viewer.on { display: flex; }
+	#viewer .bar { display: flex; align-items: center; gap: 10px; color: #eaf2ff; font-size: 13px; flex: none; }
+	#viewer .bar .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#viewer .stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+	#viewer img, #viewer video { max-width: 100%; max-height: 100%; border-radius: 10px; }
+	#viewer .tip { flex: none; text-align: center; color: #9fb3d0; font-size: 12px; padding-top: 8px; }
 
 	/* 思考与输出分开：思考是回答之外的一块可折叠区域，不再混在气泡里当斜体段落 */
 	.think {
@@ -412,6 +437,17 @@
 
 <!-- 用户自己挑的背景（视频或图）。没配就整层不显示，页面保持原来的样子。 -->
 <div id="backdrop"><div class="scrim"></div></div>
+
+<!-- 看大图：真 URL，长按可存进手机相册 -->
+<div id="viewer">
+	<div class="bar">
+		<button class="iconbtn" id="viewerClose">关闭</button>
+		<div class="grow" id="viewerName"></div>
+		<a class="iconbtn" id="viewerOpen" target="_blank" rel="noreferrer">新窗口打开</a>
+	</div>
+	<div class="stage" id="viewerStage"></div>
+	<div class="tip">长按图片（或视频）→「存储到照片」就能存进手机相册</div>
+</div>
 
 <div id="gate" data-display="flex">
 	<h1>DSH 手机端</h1>
@@ -822,34 +858,48 @@
 
 	/* ---------------------------------------------------------- rendering */
 
+	/**
+	 * 附件直接给一个**真 URL**（`api/media`），不再取 base64 拼 data: URI。
+	 *
+	 * 理由很实在：iOS 上 `data:` 图片长按只有"拷贝"，**没有"存储到照片"** —— 而用户
+	 * 的诉求正是把电脑给的素材存进手机相册。真 URL 才长按可存，也省掉 33% 膨胀。
+	 */
 	function imageTag(sessionId, attachmentId) {
-		const key = attachmentId
-		if (state.imageCache.has(key)) return '<img src="' + state.imageCache.get(key) + '" alt="">'
-		const holderId = 'img-' + key.replace(/[^A-Za-z0-9_-]/g, '')
-		// A full re-render runs on every frame, so only one request per
-		// attachment may ever be in flight.
-		if (!state.imagePending.has(key)) {
-			state.imagePending.add(key)
-			fetch('api/attachment?sessionId=' + encodeURIComponent(sessionId) + '&attachmentId=' + encodeURIComponent(attachmentId), { credentials: 'same-origin' })
-				.then((response) => response.ok ? response.json() : null)
-				.then((body) => {
-					if (!body) return
-					const src = 'data:' + body.mediaType + ';base64,' + body.data
-					state.imageCache.set(key, src)
-					const img = document.getElementById(holderId)
-					if (img) img.src = src
-				})
-				.catch(() => {})
-				.finally(() => { state.imagePending.delete(key) })
+		const src = 'api/media?sessionId=' + encodeURIComponent(sessionId) + '&attachmentId=' + encodeURIComponent(attachmentId)
+		return '<img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="图片">'
+	}
+
+	/** 文字里出现的图片/视频路径，变成能看、能存的东西。 */
+	const MEDIA_EXT = /\.(png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)$/i
+	const PATH_RE = /[A-Za-z]:\\[^\s"'<>|?*]+?\.(?:png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)/gi
+
+	/** agent 在电脑上产出的素材：路径 → 缩略图 / 视频条 + "点开可长按保存"。 */
+	function mediaPathHtml(text) {
+		const found = String(text ?? '').match(PATH_RE)
+		if (found === null || found.length === 0) return ''
+		const seen = new Set()
+		let html = ''
+		for (const raw of found.slice(0, 6)) {
+			if (seen.has(raw)) continue
+			seen.add(raw)
+			const src = 'api/file?path=' + encodeURIComponent(raw)
+			const name = raw.split(/[\\/]/).pop() ?? raw
+			if (/\.(mp4|mov|webm|m4v)$/i.test(raw)) {
+				html += '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata"></video>' +
+					'<div class="shothint">长按视频可存到相册</div></div>'
+			} else {
+				html += '<div class="shotwrap"><img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="' + escapeHtml(name) + '">' +
+					'<div class="shothint">点开看大图 · 长按图片 → 存储到照片</div></div>'
+			}
 		}
-		return '<img id="' + holderId + '" alt="图片加载中…">'
+		return html
 	}
 
 	function blocksToHtml(blocks, sessionId) {
 		let html = ''
 		for (const block of blocks || []) {
 			if (!block || typeof block !== 'object') continue
-			if (block.type === 'text') html += escapeHtml(block.text)
+			if (block.type === 'text') html += escapeHtml(block.text) + mediaPathHtml(block.text)
 			else if (block.type === 'reasoning') html += '<div class="think-body">' + escapeHtml(block.text) + '</div>'
 			else if (block.type === 'image' && block.attachment) html += imageTag(sessionId, block.attachment.attachmentId)
 			else if (block.type === 'file' && block.attachment) html += '<div class="note">附件：' + escapeHtml(block.attachment.name || '文件') + '</div>'
@@ -895,6 +945,9 @@
 					'<div class="tool' + (item.open ? ' open' : '') + '" data-i="' + index + '">' +
 					'<div class="name">🔧 ' + escapeHtml(item.name) + '</div>' +
 					'<div class="body' + (item.error ? ' error' : '') + '">' + escapeHtml(body) + '</div>' +
+					// 素材缩略图必须放在折叠区【外面】：.body 默认只有 132px 高、
+					// 超出裁掉，图放里面就等于没放（用户还是什么都看不到）。
+					mediaPathHtml(body) +
 					'</div>'
 				)
 			} else if (item.kind === 'note') {
@@ -973,6 +1026,12 @@
 	}
 
 	log.addEventListener('click', (event) => {
+		// 点图片/视频 → 全屏看，然后长按存相册。先判这个，再判下面的工具栏展开。
+		const shot = event.target.closest && event.target.closest('img.shot, video.shot')
+		if (shot) {
+			const full = shot.getAttribute('data-full') ?? shot.getAttribute('src')
+			if (full) { openViewer(full, shot.getAttribute('alt') ?? '素材'); return }
+		}
 		const tool = event.target.closest('.tool')
 		if (!tool) return
 		const item = state.items[Number(tool.dataset.i)]
@@ -1300,6 +1359,34 @@
 			if (played && typeof played.catch === 'function') played.catch(() => { /* 自动播被拦：留个静止画面也不算坏 */ })
 		}
 	}
+
+	/* ------------------------------------------------------- 看大图 / 存相册 */
+
+	/**
+	 * 全屏看图。图用**真 URL**（`api/media` 或 `api/file`），不是 data: —— iOS 对
+	 * `data:` 图片的长按菜单里没有"存储到照片"，用户就没法把素材存进相册。
+	 */
+	function openViewer(src, name) {
+		const viewer = $('viewer')
+		const stage = $('viewerStage')
+		stage.textContent = ''
+		const node = /\.(mp4|mov|webm|m4v)(\?|$)/i.test(src) || src.includes('video')
+			? document.createElement('video')
+			: document.createElement('img')
+		node.src = src
+		if (node.tagName === 'VIDEO') { node.controls = true; node.playsInline = true; node.setAttribute('playsinline', '') }
+		node.alt = name
+		stage.appendChild(node)
+		$('viewerName').textContent = name
+		$('viewerOpen').href = src
+		viewer.classList.add('on')
+	}
+	function closeViewer() {
+		$('viewerStage').textContent = ''
+		$('viewer').classList.remove('on')
+	}
+	$('viewerClose').addEventListener('click', closeViewer)
+	$('viewer').addEventListener('click', (event) => { if (event.target === $('viewer')) closeViewer() })
 
 	/* -------------------------------------------------------------- 任务 */
 
