@@ -1825,9 +1825,13 @@
 
 	/* -------------------------------------------------------------- 任务 */
 
-	function loadSessions() {
-		return api('api/bootstrap').then((body) => {
-			checkPageTag(body.pageTag)
+	async function loadSessions(prefetched) {
+		// boot 那一步已经拿到过一份 bootstrap 了，别再要一遍 —— 手机上一次多余往返
+		// 就是好几百毫秒，而"进去太慢"用户是能感觉到的。
+		const body = prefetched !== undefined && prefetched !== null
+			? prefetched
+			: await api('api/bootstrap')
+		checkPageTag(body.pageTag)
 			// 宿主早就把这些候选地址发过来了，以前页面收下就扔 —— 断线时就少了
 			// 最有用的一条出路（同一 WiFi 下走局域网，完全不依赖隧道）。
 			if (Array.isArray(body.addresses)) state.addresses = body.addresses
@@ -1881,7 +1885,6 @@
 				writeLocal('dshm.session', state.sessionId)
 				connect()
 			}
-		})
 	}
 
 	function send() {
@@ -2677,7 +2680,8 @@
 			bootStep(30, '已连上电脑')
 			hide(gate); show(app); switchTab('task')
 			maybeWelcome()
-			return loadSessions()
+			// 把这一份直接交给 loadSessions —— 再要一次纯属多花一个往返（手机上很明显）。
+			return loadSessions(body)
 		})
 		.then(() => { bootDone() })
 		.catch(() => { bootDone() /* 没登录成功就交给 PIN 门，别让加载页挡着 */ })
