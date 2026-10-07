@@ -2336,6 +2336,9 @@
 		else loadSessions().then(() => pullTranscript())
 	})
 	$('logout').addEventListener('click', () => {
+		// 二次确认：点一下就把这台手机的登录权撤掉 —— 而且**所有**开着的页面一起掉线
+		// （日志里见过 6 秒内 6 次 logout，然后满屏 401，用户以为"发不出消息"）。
+		if (window.confirm('要退出登录吗？退出后手机上需要重新输入 PIN。') !== true) return
 		api('api/logout', { method: 'POST' }).catch(() => {}).finally(() => showGate())
 	})
 
