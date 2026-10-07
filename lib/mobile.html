@@ -1760,8 +1760,37 @@
 			}
 		}
 		backdropSource(info)
-			.then((src) => mount(src))
+			.then((src) => {
+				// HEIC/AVIF 这类"浏览器不一定认"的图片：用手机自己的解码器先转成 JPEG。
+				// iOS Safari 能解 HEIC，转一道就万无一失（也比原图小得多）。
+				if (info.kind === 'image' && /^image\/(heic|heif|avif)$/i.test(String(info.mediaType))) {
+					return transcodeToJpeg(src).then((converted) => { mount(converted ?? src) }).catch(() => mount(src))
+				}
+				mount(src)
+			})
 			.catch(() => mount(info.url))
+	}
+
+	/** 把浏览器可能不认的图片（HEIC/AVIF）用画布转成 JPEG；转不了返回 null。 */
+	async function transcodeToJpeg(src) {
+		const image = await new Promise((resolve, reject) => {
+			const node = new Image()
+			const timer = setTimeout(() => reject(new Error('decode timeout')), 8000)
+			node.onload = () => { clearTimeout(timer); resolve(node) }
+			node.onerror = () => { clearTimeout(timer); reject(new Error('decode failed')) }
+			node.src = src
+		})
+		const width = image.naturalWidth || image.width
+		const height = image.naturalHeight || image.height
+		if (width === 0 || height === 0) return null
+		// 长边压到 1600：手机屏幕就这么宽，背景再大也看不出来，文件却小一个量级。
+		const scale = Math.min(1, 1600 / Math.max(width, height))
+		const canvas = document.createElement('canvas')
+		canvas.width = Math.max(1, Math.round(width * scale))
+		canvas.height = Math.max(1, Math.round(height * scale))
+		canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height)
+		const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.9))
+		return blob === null ? null : URL.createObjectURL(blob)
 	}
 
 	/* ------------------------------------------------------- 看大图 / 存相册 */
