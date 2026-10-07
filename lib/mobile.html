@@ -1513,9 +1513,12 @@
 		state.pending = state.pending.filter((entry) => now - entry.at < 10 * 60 * 1000)
 		const mine = state.pending.filter((entry) => entry.sessionId === state.sessionId)
 		if (mine.length === 0) return ''
-		return mine.map((entry) => {
+		return mine.map((entry, index) => {
+			// 说清楚"为什么没反应"：排队中的消息要等这一轮跑完才轮到它。
+			// 不写清楚，用户就会以为没发出去，然后一遍遍重发 —— 越重发排得越长。
+			const ahead = mine.length - index - 1
 			const label = entry.state === 'queued'
-				? (entry.canRecall === false ? '排队中' : '排队中 · 还没轮到它')
+				? (ahead > 0 ? `排队中 · 前面还有 ${ahead} 条` : '排队中 · 等这一轮跑完就轮到它')
 				: (entry.state === 'started' ? '已开始处理' : '已发出')
 			const extra = entry.extra > 0 ? '<div class="pmeta">' + entry.extra + ' 个附件</div>' : ''
 			const buttons = entry.state === 'queued' || entry.state === 'sent'
@@ -1530,6 +1533,64 @@
 	}
 
 	/* --------------------------------------------------------- 自定义背景 */
+
+	/**
+	 * 背景视频存手机本地，别每次打开都重下。
+	 *
+	 * 实测：iOS 的媒体元素不太吃 HTTP 缓存（响应带了 `max-age=3600` + ETag，日志里
+	 * 仍然是每 50 秒左右重拉一次整段 3.9 MB，132 次里 0 次 304）。所以这里自己存一份：
+	 * 第一次 fetch 下来放进 IndexedDB，之后用 blob URL 播，**再打开就是零流量**。
+	 * 存不了（无痕/隐私模式）就退回原来的网络 URL，功能不受影响。
+	 */
+	const BG_DB = 'dshm-media'
+	const BG_STORE = 'blobs'
+
+	function openBgDb() {
+		return new Promise((resolve, reject) => {
+			if (typeof indexedDB === 'undefined' || indexedDB === null) { reject(new Error('no idb')); return }
+			const request = indexedDB.open(BG_DB, 1)
+			request.onupgradeneeded = () => { request.result.createObjectStore(BG_STORE) }
+			request.onsuccess = () => resolve(request.result)
+			request.onerror = () => reject(request.error ?? new Error('idb open failed'))
+		})
+	}
+
+	function idbRun(mode, work) {
+		return openBgDb().then((db) => new Promise((resolve, reject) => {
+			const tx = db.transaction(BG_STORE, mode)
+			const store = tx.objectStore(BG_STORE)
+			let value
+			try { value = work(store) } catch (error) { reject(error); return }
+			tx.oncomplete = () => { db.close(); resolve(value?.result) }
+			tx.onerror = () => { db.close(); reject(tx.error ?? new Error('idb tx failed')) }
+		}))
+	}
+
+	/** 拿背景的可用地址：本地有就用本地，没有就下一次、存下来。 */
+	async function backdropSource(info) {
+		const key = 'bg:' + info.url + ':' + String(info.bytes)
+		try {
+			const cached = await idbRun('readonly', (store) => store.get(key))
+			if (cached instanceof ArrayBuffer && cached.byteLength > 0) {
+				return URL.createObjectURL(new Blob([cached], { type: info.mediaType }))
+			}
+		} catch { /* 没本地缓存（或不让存）：走网络 */ }
+		const response = await fetch(info.url, { credentials: 'same-origin' })
+		if (response.ok !== true) throw new Error('background fetch failed')
+		const buffer = await response.arrayBuffer()
+		try {
+			await idbRun('readwrite', (store) => {
+				// 顺手清掉旧背景，别在手机里越堆越多。
+				store.getAllKeys().onsuccess = (event) => {
+					for (const oldKey of event.target.result ?? []) {
+						if (typeof oldKey === 'string' && oldKey.startsWith('bg:') && oldKey !== key) store.delete(oldKey)
+					}
+				}
+				store.put(buffer, key)
+			})
+		} catch { /* 存不下也无所谓，这次能用就行 */ }
+		return URL.createObjectURL(new Blob([buffer], { type: info.mediaType }))
+	}
 
 	/**
 	 * 把用户挑的视频/图铺成手机界面的背景。
@@ -1583,14 +1644,22 @@
 		} else {
 			node.addEventListener('load', reveal)
 		}
-		node.src = info.url
-		layer.insertBefore(node, layer.firstChild)
-		if (info.kind === 'video') {
-			const played = node.play()
-			if (played && typeof played.catch === 'function') {
-				played.catch(() => { /* 自动播被拦（低电量/省流量）：就当没配背景 */ })
+		// 先要"本地那份"（第一次会下一遍并存进手机；之后是零流量）。
+		// 拿不到才退回网络地址 —— 顺序反了就等于同一次打开下两遍。
+		const mount = (src) => {
+			if (node.isConnected === true) return
+			node.src = src
+			layer.insertBefore(node, layer.firstChild)
+			if (info.kind === 'video') {
+				const played = node.play()
+				if (played && typeof played.catch === 'function') {
+					played.catch(() => { /* 自动播被拦（低电量/省流量）：就当没配背景 */ })
+				}
 			}
 		}
+		backdropSource(info)
+			.then((src) => mount(src))
+			.catch(() => mount(info.url))
 	}
 
 	/* ------------------------------------------------------- 看大图 / 存相册 */
