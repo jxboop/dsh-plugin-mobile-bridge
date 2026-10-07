@@ -222,6 +222,17 @@
 	}
 	.bubble img.shot, .tool img.shot { max-width: 100%; border-radius: 12px; display: block; margin-top: 6px; }
 	.bubble img.shot:not([src]) { min-height: 110px; background: var(--code-bg); }
+	/* 刚发出去、还没进对话的那条：虚线边 + 状态 + 撤回，一眼看出"这是我的、还没轮到"。 */
+	.bubble.pending { border-style: dashed; opacity: .96; }
+	.bubble.pending .pmeta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+	.bubble.pending .prow { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+	.bubble.pending .pstate { font-size: 11px; color: var(--muted); flex: 1; }
+	.bubble.pending .recall {
+		border: 1px solid rgba(255,255,255,.3); background: rgba(255,255,255,.12); color: var(--text);
+		border-radius: 9px; padding: 5px 11px; font-size: 12px; font-weight: 600;
+	}
+	.bubble.pending .recall.ghost { opacity: .8; font-weight: 400; }
+	.bubble.pending .perr { font-size: 11px; color: var(--tool-err); margin-top: 5px; }
 	/* agent 在电脑上产出的素材：路径 → 真图/视频，点开可看大图、长按可存相册。 */
 	.shotwrap { margin-top: 8px; }
 	.shotwrap img.shot, .shotwrap video.shot {
@@ -623,6 +634,15 @@
 		unsupported: new Map(),
 		/** 图片以外的附件（视频、PDF、宿主不认的图片格式）：名字 + 类型 + base64。 */
 		files: [],
+		/**
+		 * 刚发出去、还没进对话的消息（本地回声）。
+		 *
+		 * 插话发出去后要等这一轮跑完才进对话 —— 中间那段时间手机上什么都看不到，
+		 * 用户会以为没发出去。所以先在本地把它显示出来，挂上"排队中"，并给一个撤回
+		 * 按钮；真消息到了（或撤回了）就把它撤掉。
+		 * 每项：{ key, requestId, itemId, sessionId, text, note, state, error }
+		 */
+		pending: [],
 	}
 
 	/* ------------------------------------------------------------ helpers */
@@ -968,7 +988,8 @@
 		}
 		const pinned = state.stick
 		const previousTop = log.scrollTop
-		log.innerHTML = parts.join('')
+		// 本地回声排在最后：用户刚发的那句永远在眼前，而不是"发出去就消失了"。
+		log.innerHTML = parts.join('') + pendingHtml()
 		log.scrollTop = pinned ? log.scrollHeight : previousTop
 	}
 
@@ -1084,9 +1105,22 @@
 	function applyEvent(event) {
 		const data = event.data || {}
 		switch (event.type) {
-			case 'user/message':
+			case 'user/message': {
 				state.live = null
 				state.items.push({ kind: 'user', content: data.content || [] })
+				// 真消息进对话了 → 把对应的本地回声撤掉（否则同一句话显示两遍）。
+				 
+				const text = (data.content || [])
+					.filter((block) => block?.type === 'text')
+					.map((block) => block.text)
+					.join('\n')
+					.trim()
+				dropPending((entry) => entry.sessionId === state.sessionId && (text === '' || entry.text === text))
+				break
+			}
+			case 'agent/inbox/spliced':
+				// 排队内容变了：靠 rpcId 认出哪条是手机上刚发的 → 知道它的队列表项 id。
+				noteInboxSpliced(event)
 				break
 			case 'assistant/message': {
 				state.live = null
@@ -1193,6 +1227,8 @@
 		for (const record of frame.records || []) {
 			if (record && record.type === 'event' && record.event) applyEvent(record.event)
 		}
+		// 快照里已经有那句话了 → 本地回声让位（重连/刷新时最容易撞上重复）。
+		reconcilePending()
 	}
 
 	/* -------------------------------------------------------------- stream */
@@ -1313,6 +1349,153 @@
 			}
 			scheduleRender()
 		}
+	}
+
+	/* -------------------------------------------------- 本地回声与「撤回」 */
+
+	/**
+	 * 刚发出去的消息先本地显示一条，挂上状态：
+	 *   排队中 → 还没轮到它（插话几乎都在这）→ 可以撤回
+	 *   已发出 → 已经交给 agent 了 → 撤不回来，但至少你知道自己发了什么
+	 *
+	 * 撤掉它的时机有两个：真消息进了对话（`user/message` 文本对得上），或者用户点了撤回。
+	 */
+	let pendingSeq = 0
+
+	function addPending({ sessionId, requestId, text, extra, interjecting }) {
+		if ((text ?? '') === '' && !(extra > 0)) return
+		pendingSeq += 1
+		state.pending.push({
+			key: 'p' + pendingSeq,
+			sessionId,
+			requestId: requestId ?? '',
+			itemId: '',
+			text: text ?? '',
+			extra: extra ?? 0,
+			state: interjecting === true ? 'queued' : 'sent',
+			interjecting: interjecting === true,
+			at: Date.now(),
+			error: '',
+		})
+		state.stick = true
+		scheduleRender()
+	}
+
+	/** 快照是权威：里面已经有的话，本地回声就该让位（重连/刷新时最容易撞上）。 */
+	function reconcilePending() {
+		dropPending((entry) => entry.text !== '' && state.items.some((item) =>
+			item.kind === 'user' && itemText(item) === entry.text))
+	}
+
+	/** 真消息到了（或撤回了）就把对应的回声去掉。 */
+	function dropPending(match) {
+		const before = state.pending.length
+		state.pending = state.pending.filter((entry) => match(entry) === false)
+		if (state.pending.length !== before) scheduleRender()
+	}
+
+	function dropPendingOf(sessionId) {
+		state.pending = state.pending.filter((entry) => entry.sessionId !== sessionId)
+	}
+
+	/** 宿主把排队内容推过来了：靠 rpcId 认出"这条就是我刚才发的那句"。 */
+	function noteInboxSpliced(event) {
+		const data = event?.data ?? {}
+		const inserted = Array.isArray(data.inserted) ? data.inserted : []
+		for (const item of inserted) {
+			const rpcId = item?.source?.rpcId ?? ''
+			const id = String(item?.id ?? '')
+			if (id === '') continue
+			const mine = state.pending.find((entry) =>
+				entry.sessionId === state.sessionId
+				&& (rpcId !== '' ? entry.requestId === rpcId : entry.text !== '' && textOfMessage(item) === entry.text))
+			if (mine !== undefined) {
+				mine.itemId = id
+				if (mine.state === 'sent') mine.state = 'queued'
+			}
+		}
+		if (inserted.length > 0 || (data.removedCount ?? 0) > 0) scheduleRender()
+	}
+
+	function textOfMessage(item) {
+		const parts = []
+		for (const block of item?.content ?? []) {
+			if (block?.type === 'text') parts.push(block.text)
+		}
+		return parts.join('\n').trim()
+	}
+
+	/** 对话里的某一条（state.items 里的用户消息）的文本。 */
+	function itemText(item) {
+		return (item?.content ?? [])
+			.filter((block) => block?.type === 'text')
+			.map((block) => block.text)
+			.join('\n')
+			.trim()
+	}
+
+	async function recallPending(entry) {
+		if (entry.itemId === '') {
+			entry.error = '还没拿到队列编号，等一两秒再试'
+			scheduleRender()
+			return
+		}
+		try {
+			await api('api/recall', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: entry.sessionId, itemId: entry.itemId }),
+			})
+			dropPending((candidate) => candidate.key === entry.key)
+			flash('已撤回', 3000)
+		} catch (error) {
+			entry.error = error.message
+			if (error.status === 409) {
+				// 已经开始处理了：如实说，并把按钮收掉（再点也没用）。
+				entry.state = 'started'
+				entry.itemId = ''
+			}
+			scheduleRender()
+		}
+	}
+
+	log.addEventListener('click', (event) => {
+		const recall = event.target.closest && event.target.closest('[data-recall]')
+		if (recall) {
+			const key = recall.getAttribute('data-recall')
+			const entry = state.pending.find((candidate) => candidate.key === key)
+			if (entry !== undefined) void recallPending(entry)
+			return
+		}
+		const drop = event.target.closest && event.target.closest('[data-dismiss]')
+		if (drop) {
+			dropPending((candidate) => candidate.key === drop.getAttribute('data-dismiss'))
+			return
+		}
+	})
+
+	/** 回声那一小块：虚线边，和真消息区分开；带状态与撤回按钮。 */
+	function pendingHtml() {
+		// 兜底：十分钟还没等到真消息的回声就别再挂着了（重连、消息被别处撤掉等），
+		// 免得屏幕上永远吊着一条"排队中"。
+		const now = Date.now()
+		state.pending = state.pending.filter((entry) => now - entry.at < 10 * 60 * 1000)
+		const mine = state.pending.filter((entry) => entry.sessionId === state.sessionId)
+		if (mine.length === 0) return ''
+		return mine.map((entry) => {
+			const label = entry.state === 'queued'
+				? (entry.canRecall === false ? '排队中' : '排队中 · 还没轮到它')
+				: (entry.state === 'started' ? '已开始处理' : '已发出')
+			const extra = entry.extra > 0 ? '<div class="pmeta">' + entry.extra + ' 个附件</div>' : ''
+			const buttons = entry.state === 'queued' || entry.state === 'sent'
+				? '<button class="recall" data-recall="' + entry.key + '">撤回</button>'
+				: '<button class="recall ghost" data-dismiss="' + entry.key + '">知道了</button>'
+			return '<div class="row user"><div class="bubble pending">' +
+				escapeHtml(entry.text || '（附件）') + extra +
+				'<div class="prow"><span class="pstate">' + label + '</span>' + buttons + '</div>' +
+				(entry.error === '' ? '' : '<div class="perr">' + escapeHtml(entry.error) + '</div>') +
+				'</div></div>'
+		}).join('')
 	}
 
 	/* --------------------------------------------------------- 自定义背景 */
@@ -1497,6 +1680,15 @@
 			state.files = []
 			renderThumbs()
 			state.stick = true
+			// 本地回声：先把"我发了什么"显示出来。插话要等这一轮跑完才进对话，
+			// 中间那段空白就是用户说的"发出去后就看不见了"。
+			addPending({
+				sessionId: target,
+				requestId: result?.requestId ?? '',
+				text: body,
+				extra: images.length + files.length,
+				interjecting: interjecting === true,
+			})
 			if (result && result.degraded === true) {
 				// 图片被宿主拒了（动图最常见）：电脑那边已经改成"存成文件 + 给路径"再发一次。
 				flash('这张图电脑解不开，已经当文件发过去了（agent 会拿到路径）。', 6000)

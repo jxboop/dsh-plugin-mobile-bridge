@@ -37,7 +37,7 @@ await writeFile(
 
 const { apply } = await import('../lib/index.js')
 
-const STATE = { prompts: [], cancelled: [], followed: [], created: [] }
+const STATE = { prompts: [], cancelled: [], followed: [], created: [], queueMutations: [] }
 
 /* The plugin talks to api.deepseek.com through the global fetch; everything
    else on that name still goes to the real network so the harness can reach
@@ -165,6 +165,14 @@ const stubController = {
 	async cancel(request) {
 		STATE.cancelled.push(request)
 		return { accepted: true }
+	},
+	/** 撤回排队消息就走它：`{kind:'remove'}`。桩里记下来，好断言参数对不对。 */
+	async updateQueue(request) {
+		STATE.queueMutations.push(request)
+		if (request?.itemId === 'already-started') {
+			throw new Error('session/queue-item-not-found: queued item is no longer pending')
+		}
+		return { ok: true }
 	},
 	async attachment() {
 		return { attachment: { mediaType: 'image/png' }, data: 'iVBORw0KGgo=' }
@@ -323,6 +331,40 @@ check('prompt carries text then image in order',
 	Array.isArray(sent?.content) && sent.content[0]?.type === 'text' && sent.content[1]?.type === 'image' && sent.content[1]?.mediaType === 'image/jpeg',
 	JSON.stringify(sent?.content))
 check('prompt uses queue mode and a fresh request id', sent?.mode === 'queue' && typeof sent?.requestId === 'string' && sent.requestId.length > 0)
+check('prompt 把 requestId 回给手机（手机靠它对上排队条目、给出撤回）',
+	promptBody.requestId === sent?.requestId, `${promptBody.requestId} vs ${sent?.requestId}`)
+
+/* --- 撤回：把还没开始处理的那条从队列里拿掉 ----------------------------- */
+{
+	const ok = await fetch(`${base}/api/recall`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', itemId: 'queue-item-1' }),
+	})
+	const okBody = await ok.json()
+	const mutation = STATE.queueMutations[0]
+	check('撤回真的调到了宿主的 updateQueue(remove)',
+		ok.status === 200 && okBody.ok === true
+		&& mutation?.sessionId === 'session-test' && mutation?.itemId === 'queue-item-1'
+		&& mutation?.action?.kind === 'remove',
+		JSON.stringify(mutation))
+
+	const tooLate = await fetch(`${base}/api/recall`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', itemId: 'already-started' }),
+	})
+	const tooLateBody = await tooLate.json()
+	check('已经开始处理的撤不回来：409 + 人话（不假装成功）',
+		tooLate.status === 409 && tooLateBody.error.includes('撤不回来'), `${tooLate.status} ${JSON.stringify(tooLateBody)}`)
+
+	const bad = await fetch(`${base}/api/recall`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test' }),
+	})
+	check('撤回缺 itemId 给 400', bad.status === 400, String(bad.status))
+}
 
 const badImage = await fetch(`${base}/api/prompt`, {
 	method: 'POST',

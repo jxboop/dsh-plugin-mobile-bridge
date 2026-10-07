@@ -107,6 +107,11 @@ let olderTranscriptRecords = []
 const uploaded = []
 /** 宿主下发的背景（bootstrap 里带）。设成 null 就模拟"没配背景"。 */
 let backdropInfo = { url: 'api/background', mediaType: 'video/quicktime', kind: 'video', bytes: 4096 }
+/** /api/prompt 回给手机的 requestId（宿主会把它放进 agent/inbox/spliced）。 */
+let lastPromptRequestId = ''
+let promptSeq = 0
+/** 撤回请求（POST /api/recall）。 */
+const recalls = []
 
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
@@ -176,7 +181,13 @@ async function stubFetch(input, options = {}) {
 	if (path.startsWith('/api/prompt')) {
 		// 提权过期：令牌有效，但这台机器要你重新证明是本人（宿主重启后即是此态）。
 		if (promptNeedsPin) return jsonResponse({ error: '需要重新输入 PIN 才能执行操作', needPin: true }, 403)
-		return jsonResponse({ accepted: true })
+		lastPromptRequestId = 'req-' + (++promptSeq)
+		return jsonResponse({ accepted: true, requestId: lastPromptRequestId })
+	}
+	if (path.startsWith('/api/recall')) {
+		const body = JSON.parse(options.body ?? '{}')
+		recalls.push(body)
+		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/cancel')) return jsonResponse({ accepted: true })
 	if (path.startsWith('/api/logout')) return jsonResponse({ ok: true })
@@ -941,6 +952,65 @@ check('换回正常会话后提示条收起',
 		!$('log').textContent.includes('迟到的是 session-older 的内容'), $('log').textContent.trim().slice(0, 60))
 	olderTranscriptRecords = []
 	transcriptHold = null
+}
+
+/* --- 插话发出去以后要看得见、能撤回 -------------------------------------- */
+/*
+ * 现场：手机上插话发出去之后**什么都看不到** —— 排队的内容要等这一轮跑完才进对话，
+ * 中间那段空白让人以为没发出去。现在先在本地显示出来（虚线边 + 状态），并给撤回按钮。
+ */
+{
+	const text = $('text')
+	// 这套测试前面已经发过好几条（插话、Ctrl+Enter、照片、视频），它们也会留下回声；
+	// 这里只认自己刚发的那条，别被前面的条数影响。
+	const mine = (needle) => [...window.document.querySelectorAll('#log .bubble.pending')]
+		.filter((node) => node.textContent.includes(needle))
+	text.value = '这是刚插的话'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(140)
+
+	let bubbles = mine('这是刚插的话')
+	check('发出去之后立刻能在对话里看到自己发了什么（不再是空白）',
+		bubbles.length === 1 && bubbles[0].textContent.includes('这是刚插的话'),
+		`${bubbles.length} 条回声 / ${bubbles[0]?.textContent?.trim().slice(0, 30)}`)
+	check('回声上写着状态（排队中 / 已发出）',
+		/排队中|已发出/.test(bubbles[0]?.textContent ?? ''), bubbles[0]?.textContent?.trim().slice(0, 40))
+	check('回声带撤回按钮', bubbles[0]?.querySelector('[data-recall]') !== null)
+
+	// 宿主把排队内容推过来：靠 rpcId 认出"这条就是手机上刚发的"
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'agent/inbox/spliced', seq: 71, time: 71,
+			data: { target: 'next-turn', start: 0, inserted: [{ id: 'queue-1', role: 'user', source: { kind: 'user', rpcId: lastPromptRequestId }, content: [{ type: 'text', text: '这是刚插的话' }] }] },
+		},
+	})
+	await wait(120)
+	bubbles = mine('这是刚插的话')
+	check('对上排队条目后状态变成"排队中"',
+		/排队中/.test(bubbles[0]?.textContent ?? ''), bubbles[0]?.textContent?.trim().slice(0, 40))
+
+	recalls.length = 0
+	bubbles[0].querySelector('[data-recall]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(160)
+	check('点撤回 → 真的按队列表项 id 去撤（POST /api/recall）',
+		recalls.length === 1 && recalls[0].itemId === 'queue-1' && recalls[0].sessionId === SESSION,
+		JSON.stringify(recalls[0]))
+	check('撤回成功后那条回声消失', mine('这是刚插的话').length === 0, `${mine('这是刚插的话').length} 条`)
+
+	// 不撤回、让真消息进来：回声也要自己让位（否则同一句话显示两遍）
+	text.value = '这句会真的发出去'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(140)
+	check('（前置）又出现一条回声', mine('这句会真的发出去').length === 1)
+	source.emit({
+		t: 'event',
+		event: { type: 'user/message', seq: 72, time: 72, data: { id: 'm72', role: 'user', content: [{ type: 'text', text: '这句会真的发出去' }] } },
+	})
+	await wait(140)
+	check('真消息进对话后回声自动撤掉（不会显示两遍）',
+		mine('这句会真的发出去').length === 0 && $('log').textContent.includes('这句会真的发出去'),
+		`${mine('这句会真的发出去').length} 条回声`)
 }
 
 /* --- 初始对话不能只靠长连接 ---------------------------------------------- */
