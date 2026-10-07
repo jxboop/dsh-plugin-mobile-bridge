@@ -9,6 +9,13 @@
      across a server restart compares it and reloads itself. -->
 <meta name="dsh-page-tag" content="__DSH_PAGE_TAG__">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<!-- 装成 App（PWA）：Safari「分享 → 添加到主屏幕」之后就是全屏 + 独立图标。
+     iOS 只认 PNG 的 apple-touch-icon（SVG 不认），图标见 tools/make-icons.mjs。 -->
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="手机桥">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
 <title>DSH 手机端</title>
 <style>
 	:root {
@@ -113,6 +120,10 @@
 	#boot .bootbar { height: 6px; border-radius: 99px; background: var(--panel-2); overflow: hidden; box-shadow: var(--glass-edge); }
 	#boot .bootbar i { display: block; height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .2s; }
 	#boot .boottext { margin-top: 10px; font-size: 12px; color: var(--muted); }
+
+	/* 长对话的流畅度：这些行一旦滚出屏幕就不参与排版/绘制。
+	   没有 content-visibility 的老浏览器会忽略这行，行为不变。 */
+	.row, .tool, .deliver, .think { content-visibility: auto; contain-intrinsic-size: auto 76px; }
 
 	/* ---- 自定义背景：手机自己挑的一段视频/一张图铺满整屏 ----
 	   视频在最底层（z-index:0），上面盖一层压暗的纱，保证文字看得清；
@@ -2347,8 +2358,25 @@
 
 	// 回到前台补一次：锁屏期间可能已经错过了推送。
 	window.document.addEventListener('visibilitychange', () => {
-		if (window.document.visibilityState === 'visible' && state.sessionId !== null) pullTranscript()
+		const hidden = window.document.visibilityState === 'hidden'
+		// 背景视频在后台别烧电/流量：看得见才播。
+		const video = $('backdrop') === null ? null : $('backdrop').querySelector('video')
+		if (video !== null) {
+			try {
+				if (hidden) video.pause()
+				else void video.play()
+			} catch { /* 播放被拦就算了，背景而已 */ }
+		}
+		if (hidden === false && state.sessionId !== null) pullTranscript()
 	})
+
+	// 装成 App（PWA）：有 service worker 就能"从主屏幕点开不用等网络"。
+	// 失败也无所谓（无痕模式、老浏览器），页面照常走网络。
+	if ('serviceWorker' in navigator) {
+		window.addEventListener('load', () => {
+			navigator.serviceWorker.register('sw.js').catch(() => {})
+		})
+	}
 
 	sessionSelect.addEventListener('change', () => {
 		state.sessionId = sessionSelect.value

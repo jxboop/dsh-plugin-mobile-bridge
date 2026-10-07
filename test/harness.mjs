@@ -540,6 +540,46 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		JSON.stringify(advertised.background))
 }
 
+/* --- 装成 App：manifest / 图标 / service worker -------------------------- */
+/*
+ * iPhone 上装不了原生 App（要 Mac + 开发者账号 + 上架），但 PWA 不用商店：
+ * Safari「分享 → 添加到主屏幕」之后就是全屏 + 独立图标 + 离线可用。
+ * 这三样东西必须真的能取到，而且图标必须是 PNG（iOS 不认 SVG 图标）。
+ */
+{
+	const manifest = await fetch(`${base}/manifest.webmanifest`, authed)
+	const manifestBody = await manifest.json().catch(() => ({}))
+	check('manifest 能取到、类型正确',
+		manifest.status === 200
+		&& String(manifest.headers.get('content-type')).includes('manifest+json')
+		&& manifestBody.display === 'standalone' && manifestBody.start_url === './',
+		`${manifest.status} ${manifest.headers.get('content-type')}`)
+	check('manifest 里挂的是 PNG 图标（iOS 只认 PNG）',
+		Array.isArray(manifestBody.icons) && manifestBody.icons.length >= 2
+		&& manifestBody.icons.every((icon) => icon.type === 'image/png' && /\.png$/.test(icon.src)),
+		JSON.stringify(manifestBody.icons))
+
+	for (const name of ['icon-180.png', 'icon-192.png', 'icon-512.png']) {
+		const icon = await fetch(`${base}/${name}`, authed)
+		const bytes = Buffer.from(await icon.arrayBuffer())
+		check(`${name} 是真 PNG 且能取到`,
+			icon.status === 200 && icon.headers.get('content-type') === 'image/png'
+			&& bytes.subarray(0, 4).toString('hex') === '89504e47',
+			`${icon.status} ${bytes.length} bytes`)
+	}
+	check('图标白名单挡住目录穿越', (await fetch(`${base}/icons/../../package.json`, authed)).status !== 200)
+
+	const sw = await fetch(`${base}/sw.js`, authed)
+	const swBody = await sw.text()
+	check('service worker 能取到、是 JS、且不吃接口缓存',
+		sw.status === 200 && String(sw.headers.get('content-type')).includes('javascript')
+		&& swBody.includes('addEventListener') && swBody.includes("/api/"),
+		`${sw.status} ${sw.headers.get('content-type')}`)
+	check('页面里的 manifest / apple-touch-icon 用的是相对地址（带密钥段才不会 404）',
+		pageHtml.includes('href="manifest.webmanifest"') && pageHtml.includes('href="icon-180.png"'),
+		'')
+}
+
 /* --- 电脑上的素材要能发给手机，而且只发该发的 ---------------------------- */
 /*
  * 用户原话：「我手机看不到电脑给的素材」。agent 在电脑上做的图/视频在对话里只是一行
