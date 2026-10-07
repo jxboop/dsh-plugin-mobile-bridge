@@ -1166,8 +1166,8 @@ check('说明指向了下拉框或读取状态',
  * 不能因为它让界面用不了。
  */
 {
-	check('宿主给了背景就铺满整屏（body 上打 hasbg）',
-		window.document.body.classList.contains('hasbg'), window.document.body.className)
+	check('宿主给了背景也不会一上来就铺（视频还在加载时那是一整块黑）',
+		window.document.body.classList.contains('hasbg') === false, window.document.body.className)
 	const video = $('backdrop').querySelector('video')
 	check('背景是 <video> 且 muted + loop + playsinline（少一个 iOS 就不播）',
 		video !== null && video.muted === true && video.loop === true
@@ -1175,6 +1175,11 @@ check('说明指向了下拉框或读取状态',
 		video === null ? 'no video' : `muted=${video.muted} loop=${video.loop} playsinline=${video.hasAttribute('playsinline')}`)
 	check('背景地址走密钥段内的相对路径', video !== null && video.getAttribute('src') === 'api/background',
 		video?.getAttribute('src'))
+	// 真的开始播 → 这时候才铺（顺序反了就是给用户一个黑屏）
+	video.dispatchEvent(new window.Event('playing'))
+	await wait(60)
+	check('开始播放后才铺满整屏（body 上打 hasbg）',
+		window.document.body.classList.contains('hasbg'), window.document.body.className)
 
 	// 换回"没配背景"：整层要收干净
 	backdropInfo = null
@@ -1187,7 +1192,12 @@ check('说明指向了下拉框或读取状态',
 	backdropInfo = { url: 'api/background', mediaType: 'video/quicktime', kind: 'video', bytes: 4096 }
 	click($('reload'))
 	await wait(220)
-	check('再配回来也照样生效', window.document.body.classList.contains('hasbg'))
+	const again = $('backdrop').querySelector('video')
+	again?.dispatchEvent(new window.Event('playing'))
+	await wait(60)
+	check('再配回来也照样生效（同样要等它真的播起来）',
+		window.document.body.classList.contains('hasbg') && again !== null,
+		window.document.body.className)
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

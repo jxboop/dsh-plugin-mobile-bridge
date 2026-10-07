@@ -107,6 +107,8 @@
 	#backdrop { position: fixed; inset: 0; z-index: 0; display: none; }
 	#backdrop video, #backdrop img {
 		width: 100%; height: 100%; object-fit: cover; display: block;
+		/* 没真正开始播之前不要露脸：视频元素在加载中是一整块黑，铺出来就是"黑屏"。 */
+		background: transparent;
 	}
 	#backdrop .scrim {
 		position: absolute; inset: 0;
@@ -1559,16 +1561,35 @@
 			node.setAttribute('webkit-playsinline', '')
 			node.preload = 'auto'
 		}
-		node.addEventListener('error', () => {
+		// 【关键】只有媒体真的能显示了才把背景铺上去。
+		// 视频要下几 MB（手机上是 3.9 MB），下载期间这个元素就是**一整块黑** ——
+		// 铺上去等于给用户一个黑屏；iOS 低电量模式还会直接拒绝自动播放。
+		// 所以：视频等到真的开始播（playing）再铺；图片等到 load。拿不到就维持原界面。
+		let shown = false
+		const reveal = () => {
+			if (shown === true) return
+			shown = true
+			document.body.classList.add('hasbg')
+		}
+		const conceal = () => {
+			shown = false
 			document.body.classList.remove('hasbg')
 			backdropKey = ''
-		})
+		}
+		node.addEventListener('error', conceal)
+		if (info.kind === 'video') {
+			node.addEventListener('playing', reveal)
+			node.addEventListener('loadeddata', reveal)
+		} else {
+			node.addEventListener('load', reveal)
+		}
 		node.src = info.url
 		layer.insertBefore(node, layer.firstChild)
-		document.body.classList.add('hasbg')
 		if (info.kind === 'video') {
 			const played = node.play()
-			if (played && typeof played.catch === 'function') played.catch(() => { /* 自动播被拦：留个静止画面也不算坏 */ })
+			if (played && typeof played.catch === 'function') {
+				played.catch(() => { /* 自动播被拦（低电量/省流量）：就当没配背景 */ })
+			}
 		}
 	}
 
