@@ -10,14 +10,40 @@
  *
  * `clickSelector` (optional) clicks one element by selector before capturing —
  * that is how you capture the screen *behind* a first-run sheet like #welcomeGo.
+ *
+ * ⚠️ 这个脚本只允许动**它自己 spawn 出来的那个 Edge**（`edge.kill()`）。
+ *
+ * 血的教训：为了清掉"卡住的旧实例"，曾经在截图前跑过
+ * `Get-Process msedge | Stop-Process -Force` —— 那句话把**用户正在用的浏览器窗口
+ * 也一起杀了**，而且每截一次图就杀一次（现象是"我的浏览器窗口隔一会儿就自己消失"，
+ * 隔壁那个排查脚本为此盯了一整晚的进程树）。
+ *
+ * 现在改成：**每次运行都用独立临时 profile + 随机调试端口**，跑完只删自己那份，
+ * 于是根本不需要去杀任何进程。任何人想"顺手清一下浏览器"之前，先读这段。
  */
 import { spawn } from 'node:child_process'
 import { writeFile } from 'node:fs/promises'
+import { rmSync, readdirSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const EDGE = 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'
 // 随机调试端口：固定端口时，前一次留下的 Edge 还没退出，这一次就会连上【上一次那个
 // 页面】去截图 —— 明明点了「开始使用」，截出来的还是说明页，看起来像功能坏了。
 const DEBUG_PORT = 9400 + Math.floor(Math.random() * 500)
+// 每次独立的临时 profile：既不会和用户自己的浏览器抢单例，也不会读到上一次的缓存。
+const PROFILE_DIR = join(tmpdir(), `dsh-shot-${process.pid}`)
+// 顺手扫掉自己以前留下的临时 profile（只认 dsh-shot-* 这个前缀，且必须超过一小时，
+// 免得误删正在跑的那一份）。Edge 刚被杀时文件还被占着，收尾那一下经常删不掉。
+try {
+	for (const name of readdirSync(tmpdir())) {
+		if (name.startsWith('dsh-shot-') === false) continue
+		const stale = join(tmpdir(), name)
+		try {
+			if (Date.now() - statSync(stale).mtimeMs > 3600_000) rmSync(stale, { recursive: true, force: true })
+		} catch { /* 占着就下次再说 */ }
+	}
+} catch { /* tmpdir 读不到也无所谓 */ }
 const [url, pin, out, widthArg, heightArg, waitArg, clickArg] = process.argv.slice(2)
 if (!url || !pin || !out) {
 	console.error('usage: node shot.mjs <url> <pin> <out.png> [w] [h] [waitMs]')
@@ -49,8 +75,11 @@ const edge = spawn(EDGE, [
 	'--headless=new',
 	'--disable-gpu',
 	'--hide-scrollbars',
+	// 别抢"默认浏览器"、别跑首次运行向导：无头实例安安静静地来、安安静静地走。
+	'--no-first-run',
+	'--no-default-browser-check',
 	`--remote-debugging-port=${DEBUG_PORT}`,
-	`--user-data-dir=${process.env.TEMP}\\dsh-shot-profile`,
+	`--user-data-dir=${PROFILE_DIR}`,
 	'about:blank',
 ], { stdio: 'ignore' })
 
@@ -204,5 +233,17 @@ await writeFile(out, Buffer.from(shot.data, 'base64'))
 console.log(`saved ${out}`)
 
 socket.close()
-edge.kill()
+// 只结束【自己 spawn 出来的那棵树】：Edge 会派生子进程，node 的 kill() 只杀父进程，
+// 所以按 PID 连子树一起清（taskkill /T）。
+//
+// 绝对不要写 `Stop-Process -Name msedge` / `taskkill /IM msedge.exe` —— 那是**按名字**
+// 杀，会把用户正在用的浏览器窗口一起关掉。这条注释是拿一晚上的排查换来的。
+if (edge.pid !== undefined) {
+	const killer = spawn('taskkill', ['/PID', String(edge.pid), '/T', '/F'], { stdio: 'ignore' })
+	await new Promise((resolve) => killer.on('exit', resolve))
+} else {
+	edge.kill()
+}
+// 只清自己这次用的临时 profile；用户自己的浏览器数据一个字节都不碰。
+try { rmSync(PROFILE_DIR, { recursive: true, force: true }) } catch { /* 可能还被占着 */ }
 process.exit(0)
