@@ -3687,10 +3687,28 @@
 
 	/* ------------------------------------------------------------- wiring */
 
-	$('gateBtn').addEventListener('click', () => {
-		const pin = $('pin').value.trim()
-		if (!/^\d{6}$/.test(pin)) { $('gateError').textContent = '请输入 6 位数字'; return }
-		$('gateError').textContent = ''
+	/*
+	 * 登录（PIN）与**失败后的自动重试**。
+	 *
+	 * 为什么必须自己重试：手机把页面装到主屏后，页面本体是从 Service Worker 缓存里**离线打开**的
+	 * —— 电脑刚开机那两三分钟（Tailscale 还没起来）用户看到的是一个能点、但一按就报「网络不通」
+	 * 的登录页，而且**点了不会自己再试**。用户的现场就是："早上好，又显示网络不通" ——
+	 * 他在这两三分钟里反复手点。现在失败后自己退避重试（1.2s 起、最多 6s 一次，约 2 分钟），
+	 * 并且把"电脑刚开机要等一会儿"写在眼前；连上后这一次点击就直接登进去了。
+	 */
+	const GATE_RETRY_MAX = 30
+	const GATE_RETRY_BASE_MS = 1200
+	const GATE_RETRY_CAP_MS = 6000
+	let gateRetryTimer = null
+	let gateAttempts = 0
+
+	function clearGateRetry() {
+		if (gateRetryTimer !== null) clearTimeout(gateRetryTimer)
+		gateRetryTimer = null
+		gateAttempts = 0
+	}
+
+	function submitPin(pin, auto) {
 		fetch('api/login', {
 			method: 'POST',
 			credentials: 'same-origin',
@@ -3698,15 +3716,41 @@
 			body: JSON.stringify({ pin }),
 		}).then(async (response) => {
 			if (!response.ok) {
+				// PIN 本身不对：这是"想清楚了才回"的错，**不重试**（重试只会一直撞）。
+				clearGateRetry()
 				const body = await response.json().catch(() => ({}))
 				$('gateError').textContent = body.error || '连接失败'
 				return
 			}
-			hide(gate); show(app)
+			clearGateRetry()
+			hide(gate)
+			show(app)
 			switchTab('task')
 			// 等会话列表回来（bootstrap 里带着宿主的"看过说明页"标记）再决定弹不弹。
 			loadSessions().then(() => maybeWelcome())
-		}).catch(() => { $('gateError').textContent = '网络不通' })
+		}).catch(() => {
+			// 网络层失败（DNS/连不上/TLS）：电脑可能刚开机、或隧道还没起来 —— 自己再试。
+			gateAttempts += 1
+			if (gateAttempts > GATE_RETRY_MAX) {
+				$('gateError').textContent =
+					'网络不通 —— 试了两分钟都连不上电脑。确认电脑是开着的、和手机在同一个网络' +
+					'（或两边都开着 Tailscale），然后再点一次。'
+				return
+			}
+			const delay = Math.min(GATE_RETRY_CAP_MS, GATE_RETRY_BASE_MS * gateAttempts)
+			$('gateError').textContent =
+				`网络不通 —— 已自动重试 ${gateAttempts} 次，${Math.round(delay / 1000)} 秒后再试。` +
+				'（电脑刚开机的头一两分钟连不上是正常的，Tailscale 还没起来）'
+			gateRetryTimer = setTimeout(() => submitPin(pin, true), delay)
+		})
+	}
+
+	$('gateBtn').addEventListener('click', () => {
+		const pin = $('pin').value.trim()
+		if (!/^\d{6}$/.test(pin)) { $('gateError').textContent = '请输入 6 位数字'; return }
+		$('gateError').textContent = ''
+		clearGateRetry()
+		submitPin(pin, false)
 	})
 	$('pin').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('gateBtn').click() })
 

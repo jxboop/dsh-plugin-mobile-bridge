@@ -123,6 +123,10 @@ let welcomedOnServer = false
 let recallFailStatus = 0
 /** 卡住 /api/boot 的回包：用来验证"本地那份先铺上、不用等下载"。 */
 let bootHold = null
+/** 接下来几次 /api/login 以"网络层失败"结束（模拟电脑没开/隧道没起来）。 */
+let loginFailures = 0
+/** /api/login 的 HTTP 状态（401 = PIN 不对，页面**不该**重试）。 */
+let loginStatus = 200
 /** 记录假的 XHR 报过的 (loaded,total) 组合，验证加载条是按字节走的。 */
 const progressReports = []
 /** 页面发出的每个 XHR（含 boot 那个）—— 用来断言 boot 请求设了超时。 */
@@ -198,7 +202,12 @@ async function stubFetch(input, options = {}) {
 			records: path.includes('session-older') ? olderTranscriptRecords : transcriptRecords,
 		})
 	}
-	if (path.startsWith('/api/login')) return jsonResponse({ ok: true })
+	if (path.startsWith('/api/login')) {
+		// 造"网络层失败"（页面认定：电脑没开/隧道没起来）与"PIN 不对"（HTTP 401）两种情况。
+		if (loginFailures > 0) { loginFailures -= 1; throw new TypeError('Failed to fetch') }
+		if (loginStatus !== 200) return jsonResponse({ error: 'PIN 不对' }, loginStatus)
+		return jsonResponse({ ok: true })
+	}
 	if (path.startsWith('/api/permission')) {
 		if (options.method === 'POST') {
 			const body = JSON.parse(options.body ?? '{}')
@@ -2261,6 +2270,43 @@ check('说明指向了下拉框或读取状态',
 	check('改完收起面板并回一句人话',
 		window.getComputedStyle(permPanel).display === 'none' && $('banner').textContent.includes('权限已改成'),
 		$('banner').textContent)
+
+	/*
+	 * ⚠️ 回归（用户原话：「早上好，又显示网络不通」）：
+	 * 手机把页面装到主屏后，页面本体是从 Service Worker 缓存里**离线打开**的 —— 电脑刚开机那
+	 * 两三分钟（Tailscale 还没起来）里，用户看到的是一个能点、但一按就报「网络不通」的登录页，
+	 * 而且**点了不会自己再试**，只能反复手点。现在失败后自己退避重试，连上就登进去。
+	 */
+	const loginCount = () => requests.filter((entry) => entry.path.startsWith('/api/login')).length
+	loginFailures = 2
+	$('pin').value = '123456'
+	const beforeRetry = loginCount()
+	$('gateBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(120)
+	check('连不上电脑时说人话，并且**已经安排自动重试**',
+		$('gateError').textContent.includes('网络不通') && $('gateError').textContent.includes('自动重试')
+		&& $('gateError').textContent.includes('刚开机'),
+		$('gateError').textContent)
+	check('自动重试在跑（第一次失败后马上又发了一次）',
+		loginCount() > beforeRetry + 1 || loginFailures < 2, `requests=${loginCount()} left=${loginFailures}`)
+	await wait(4200)
+	check('隧道恢复后这一次点击自己登进去了（不用用户再点）',
+		window.getComputedStyle($('app')).display !== 'none'
+		&& window.getComputedStyle($('gate')).display === 'none',
+		`app=${window.getComputedStyle($('app')).display} gate=${window.getComputedStyle($('gate')).display}`)
+
+	// 反例：PIN 本身不对（HTTP 401）是"想清楚了才回"的错，**不能**跟着重试（否则一直撞）。
+	loginStatus = 401
+	$('gate').style.display = ''
+	$('app').style.display = 'none'
+	$('pin').value = '000000'
+	const before401 = loginCount()
+	$('gateBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(1500)
+	check('PIN 错就停手，不跟着重试（401 不是网络问题）',
+		loginCount() === before401 + 1 && $('gateError').textContent.includes('PIN 不对'),
+		`requests=${loginCount() - before401} err=${$('gateError').textContent}`)
+	loginStatus = 200
 
 	// 后面还有会话切换/流式等用例：把它们要的现场还原回去（提到放开档、回到可见状态）。
 	permState.preset = 'danger-full-access'
