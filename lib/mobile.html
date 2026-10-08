@@ -865,7 +865,15 @@
 		return Number.isFinite(n) ? n.toFixed(2) : String(value)
 	}
 
-	function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 120 }
+	/**
+	 * 是不是贴在底部（决定"新消息要不要把视线带过去"）。
+	 *
+	 * 阈值故意很小（24px）。以前是 120px，而流式输出每帧都会重排一次 —— 用户往上
+	 * 滑一点点就会被判成"仍在底部"、下一帧立刻被拽回去；手指滑多少抹多少，看起来
+	 * 就是"光标钉在那儿、怎么滑都回原位"。120px 那种宽容只在担心"差几像素"时有用，
+	 * 24px 够了。
+	 */
+	function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 24 }
 
 	function setStatus(kind) {
 		dot.className = kind
@@ -1386,26 +1394,41 @@
 	for (const type of ['pointerup', 'pointercancel']) log.addEventListener(type, cancelPress, { passive: true })
 
 	log.addEventListener('scroll', () => {
+		// 拖动/惯性期间不改跟随状态：松手时统一判断（见 keepFrozen）。
+		// 以前这里每来一个 scroll 事件就重算 atBottom()，而"离底部 120px 以内算在底部"
+		// 这个宽容阈值会让"往上滑一点点"被判定成仍在底部 → 下一帧又贴回底部。
+		// 加上流式输出每帧都在重排，手指每滑一小段就被抹掉一次 —— 表现就是
+		// "光标卡在那儿，怎么滑都被拽回去"。
+		if (touching) { keepFrozen(); return }
 		state.stick = atBottom()
-		// 还在冻结中就说明这是惯性滚动（iOS 松手后还会滑一段）：把冻结续上，
-		// 否则会在滑动中途重排，位置同样被抢走。
-		if (touching) keepFrozen()
 	})
 
 	/*
-	 * 拖动期间冻结渲染。
+	 * 拖动期间冻结渲染 + 暂停"自动跟随"。
 	 *
-	 * 现场：手机上"界面定在一个地方，拖一下又自动弹回去，看不了消息"。因为流式输出
-	 * 每帧都会重排对话区，而手指底下的滚动位置每次都被重排重置 —— 拖多少都被抹掉。
-	 * 所以：手指按下 → 冻结；松手后等滚动事件停下来（约 160ms 没有新的 scroll）
-	 * → 补画一次。
+	 * 现场：手机上一发消息，界面就牢牢贴着底部的光标，上下滑都会自动弹回那里。
+	 * 两个原因叠在一起：
+	 *   1. 发送/流式输出会把 state.stick 置为"贴底"，而 atBottom() 的阈值有 120px，
+	 *      手指刚滑一点就又被判成"还在底部"→ 立刻贴回去；
+	 *   2. 键盘还开着、输入框还是焦点：iOS 会不停把光标滚进可视区，和用户抢滚动。
+	 * 所以：手指一碰对话区 → 停跟随 + 收键盘；松手后落在底部才恢复跟随。
 	 */
 	let touchIdle = 0
-	function holdFrozen() { touching = true; clearTimeout(touchIdle) }
+	function holdFrozen() {
+		touching = true
+		clearTimeout(touchIdle)
+		// 手指一碰就停止自动跟随，别跟用户抢滚动条。
+		state.stick = false
+		// 收键盘：iOS 上"聚焦的输入框"会把光标一直滚回可视区，用户怎么滑都没用。
+		// 这也是聊天类 App 的常规行为（往下翻 = 收起键盘）。
+		try { if (window.document.activeElement === text) text.blur() } catch { /* 忽略 */ }
+	}
 	function keepFrozen() {
 		clearTimeout(touchIdle)
 		touchIdle = setTimeout(() => {
 			touching = false
+			// 松手落在底部 → 恢复"跟着新消息走"；停在上面 → 保持不动，直到用户自己滑回去。
+			state.stick = atBottom()
 			if (renderHeld) { renderHeld = false; scheduleRender() }
 		}, 160)
 	}
@@ -1688,7 +1711,9 @@
 			state.lastFrameAt = Date.now()
 			if (state.link !== 'live') setLink('live')
 			if (payload.t === 'ping') return
-			state.stick = atBottom()
+			// 手指在屏幕上时不要重算"是否贴底"：那一刻的 atBottom() 有 120px 宽容，
+			// 会把"正在往上滑"误判成"还在底部"，紧接着的重排就把人拽回去了。
+			if (touching === false) state.stick = atBottom()
 			if (payload.t === 'snapshot') {
 				checkPageTag(payload.tag)
 				// partial：宿主按 since 过滤过，里面只有新记录 —— 不能清空重建。

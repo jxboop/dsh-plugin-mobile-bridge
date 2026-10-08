@@ -1687,6 +1687,78 @@ check('说明指向了下拉框或读取状态',
 		log.textContent.replace(/\s+/g, ' ').slice(0, 80))
 }
 
+/* --- 发完消息后"光标钉住视线"：往上滑一点就被拽回底部 ---------------------- */
+/*
+ * 现场：发出一句话之后，界面牢牢贴着底部的那个光标，上下滑都会自动弹回那里，看不了消息。
+ * 两个原因叠在一起：
+ *   1. "算不算在底部"的阈值是 120px，而流式输出每帧都重排一次 —— 手指刚往上滑一点
+ *      就被判成"仍在底部"，立刻贴回去；
+ *   2. 输入框还聚焦着，iOS 会不停把光标滚进可视区，跟用户抢滚动。
+ * 现在：手指一碰对话区就停止跟随 + 收键盘，松手落在底部才恢复跟随；阈值收到 24px。
+ */
+{
+	const log = $('log')
+	const heightOf = () => 200 * log.children.length
+	const viewport = () => 400
+	Object.defineProperty(log, 'scrollHeight', { configurable: true, get: heightOf })
+	Object.defineProperty(log, 'clientHeight', { configurable: true, get: viewport })
+	// jsdom 不夹取 scrollTop，真浏览器会：夹一下，免得"贴底"在测试里跑出可滚动范围。
+	let scrollTopValue = 0
+	Object.defineProperty(log, 'scrollTop', {
+		configurable: true,
+		get: () => scrollTopValue,
+		set: (value) => {
+			const max = Math.max(0, heightOf() - viewport())
+			scrollTopValue = Math.max(0, Math.min(Number(value) || 0, max))
+		},
+	})
+	const bottom = () => Math.max(0, heightOf() - viewport())
+	const notScrolling = () => log.dispatchEvent(new window.Event('scroll'))
+
+	// 先摆在"贴着底部"（等价于刚发完消息那一瞬间）
+	log.scrollTop = bottom()
+	notScrolling()
+
+	// 手指按住，往上滑 60px —— 老阈值 120px 会把这判成"还在底部"
+	log.dispatchEvent(new window.Event('touchstart'))
+	log.scrollTop = log.scrollTop - 60
+	const parked = log.scrollTop
+	// 流式输出还在继续（这会触发重排）
+	source.emit({
+		t: 'event',
+		event: { type: 'assistant/message', seq: 5100, time: 5100, data: { turn: 77, step: 1, message: { id: 'm5100', role: 'assistant', content: [{ type: 'text', text: '滑上去之后又输出了一段' }] } } },
+	})
+	await wait(80)
+	log.dispatchEvent(new window.Event('touchend'))
+	await wait(280)
+	check('往上滑一点就不会被拽回底部（视线不再被光标钉住）',
+		log.scrollTop === parked, `scrollTop=${log.scrollTop} 期望${parked}`)
+	check('确实没有贴到底（贴底才是老 bug 的表现）',
+		log.scrollTop !== bottom(), `scrollTop=${log.scrollTop} 底部=${bottom()}`)
+
+	// 松手时就在底部 → 跟随要恢复（别把"跟着新消息走"一起关掉）
+	log.scrollTop = bottom()
+	log.dispatchEvent(new window.Event('touchstart'))
+	log.dispatchEvent(new window.Event('touchend'))
+	await wait(280)
+	source.emit({
+		t: 'event',
+		event: { type: 'assistant/message', seq: 5101, time: 5101, data: { turn: 77, step: 1, message: { id: 'm5101', role: 'assistant', content: [{ type: 'text', text: '又一段' }] } } },
+	})
+	await wait(90)
+	check('松手时就在底部 → 继续跟着新消息走',
+		log.scrollTop === bottom(), `scrollTop=${log.scrollTop} 底部=${bottom()}`)
+
+	// 键盘：碰对话区就收起来（iOS 上聚焦的输入框会把光标一直滚回可视区）
+	$('text').focus()
+	check('（前置）输入框拿到焦点', window.document.activeElement === $('text'))
+	log.dispatchEvent(new window.Event('touchstart'))
+	check('碰对话区就收起键盘（不然 iOS 会一直把光标滚回来，和用户抢滚动）',
+		window.document.activeElement !== $('text'))
+	log.dispatchEvent(new window.Event('touchend'))
+	await wait(200)
+}
+
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build
    changed. Asserted last, because a real reload would reset the DOM. */
