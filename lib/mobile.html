@@ -860,6 +860,11 @@
 		asks: new Map(),
 		/** 宿主编出来的局域网候选地址（含密钥段的完整 URL），断线时拿来兜底。 */
 		addresses: [],
+		/**
+		 * 这一次打开有没有成功连上电脑（boot 成功）。
+		 * 加载页失败时靠它决定"重试"该做什么：连上过就重开长连接，从没连上就整页重来。
+		 */
+		booted: false,
 		/** 连接状态 live / stale / down —— 决定顶部那条提示说什么。 */
 		link: 'live',
 		/** 当前会话是不是空的（用来解释"为什么一片白"）。 */
@@ -961,12 +966,23 @@
 	 * 再倒退。XHR 的 progress 事件和 content-length 是同一个口径（都是线上的字节），
 	 * 所以进度是准的。没有进度事件（老浏览器）时退化成普通请求，靠慢爬的动画兜住。
 	 */
+	/**
+	 * 请求超时。**必须设**：不设的话，一条被黑洞掉的连接（SYN 丢包、NAT 表超时、
+	 * 手机从 WiFi 切到流量那一瞬间）会让请求**永远 pending** —— boot 的 promise
+	 * 既不 resolve 也不 reject，`.catch(bootDone)` 永远不跑，用户就**永远卡在加载页**
+	 * 上，一个字都不说。手机上报"一直卡在加载页"就是这个。
+	 */
+	const REQUEST_TIMEOUT_MS = 20000
+	/** JSON 接口的超时（比 boot 宽一点：prompt 之类要等宿主处理完）。 */
+	const API_TIMEOUT_MS = 30000
+
 	function apiProgress(path, onProgress) {
 		return new Promise((resolve, reject) => {
 			let request
 			try { request = new XMLHttpRequest() } catch (error) { reject(error); return }
 			request.open('GET', path, true)
 			request.withCredentials = true
+			request.timeout = REQUEST_TIMEOUT_MS
 			request.setRequestHeader('accept', 'application/json')
 			if (typeof request.onprogress === 'undefined') {
 				// 不支持进度事件：直接走 api()，别为了进度条把功能搭进去。
@@ -1002,7 +1018,13 @@
 	}
 
 	function api(path, options) {
-		return fetch(path, Object.assign({ credentials: 'same-origin' }, options)).then(async (response) => {
+		// fetch 同样没有默认超时：黑洞连接会让它永远挂着（发送按钮一直转、取消也点不动）。
+		// 调用方自己带了 signal 就不插手（那是它自管的取消）。
+		const own = options?.signal === undefined && typeof AbortController === 'function'
+		const controller = own ? new AbortController() : null
+		const timer = controller === null ? 0 : setTimeout(() => controller.abort(), API_TIMEOUT_MS)
+		const init = Object.assign({ credentials: 'same-origin' }, options, controller === null ? {} : { signal: controller.signal })
+		return fetch(path, init).then(async (response) => {
 			if (response.status === 401) { showGate(); throw apiError(401, 'unauthorized') }
 			// 先取原文再解析：隧道/网关的错误页是 HTML，不是 JSON。以前这种情况只会
 			// 甩一句"HTTP 403"，用户和我们都看不出是谁拒的。
@@ -1031,7 +1053,7 @@
 				throw error
 			}
 			return body
-		})
+		}).finally(() => { if (timer !== 0) clearTimeout(timer) })
 	}
 
 	function showGate(message) {
@@ -1165,8 +1187,11 @@
 			hint.appendChild(document.createTextNode(' —— 换地址后要重新输一次 PIN'))
 			bar.appendChild(hint)
 		}
-		const retry = mk('button', lan === undefined ? 'primary' : undefined, '重试连接')
-		retry.addEventListener('click', () => { connect() })
+		// 从没连上过（加载页就失败了）时，"重试"该是**整页重来**：connect() 只是开长连接，
+		// 那种情况下连 boot 都没成功，开连接必然也是失败。
+		const booted = state.booted === true
+		const retry = mk('button', lan === undefined ? 'primary' : undefined, booted ? '重试连接' : '重新加载')
+		retry.addEventListener('click', () => { if (booted) connect(); else location.reload() })
 		acts.appendChild(retry)
 		bar.appendChild(acts)
 
@@ -2809,7 +2834,12 @@
 		checkPageTag(body.pageTag)
 			// 宿主早就把这些候选地址发过来了，以前页面收下就扔 —— 断线时就少了
 			// 最有用的一条出路（同一 WiFi 下走局域网，完全不依赖隧道）。
-			if (Array.isArray(body.addresses)) state.addresses = body.addresses
+			if (Array.isArray(body.addresses)) {
+				state.addresses = body.addresses
+				// 存一份：**第一次开机就失败**（连不上）时，断线提示条里那个
+				// "改用局域网地址"才拿得到候选 —— 否则它只能在成功连上过之后才有用。
+				try { writeLocal('dshm.addresses', JSON.stringify(body.addresses)) } catch { /* 存不下就算了 */ }
+			}
 			// 记住宿主当前的正式地址：万一以后停在一条失效的旧地址上，能一键切回来。
 			if (typeof body.publicUrl === 'string' && body.publicUrl !== '') {
 				state.canonical = body.publicUrl
@@ -3933,6 +3963,11 @@
 	// ⚠️ 缓存只往 DOM 里铺，**不提前显示**：能不能看要等 /api/boot 的 200（那就是
 	// 鉴权）。否则捡到手机的人不输 PIN 就能读到上一次的对话。
 	const remembered = readLocal('dshm.session')
+	// 上次拿到过的地址表：开机就失败时，断线提示条里的"改用局域网地址"得有候选。
+	try {
+		const savedAddresses = JSON.parse(readLocal('dshm.addresses') === '' ? '[]' : readLocal('dshm.addresses'))
+		if (Array.isArray(savedAddresses)) state.addresses = savedAddresses
+	} catch { /* 存坏了就当没有 */ }
 	// 读本地那份缓存是异步的，所以这段包在异步块里；其余代码照旧同步执行。
 	void (async () => {
 		let restored = null
@@ -3980,11 +4015,19 @@
 			}
 			bootStep(70, '已连上电脑')
 			hide(gate); show(app); switchTab('task')
+			state.booted = true
 			maybeWelcome()
 			return loadSessions(body)
 		})
 			.then(() => { bootDone() })
-			.catch(() => { bootDone() /* 没登录成功就交给 PIN 门，别让加载页挡着 */ })
+			.catch(() => {
+				// 连不上 / 没登录成功：**别让加载页挡着**（以前请求被黑洞时会永远卡在那儿，
+				// 一个字都不说），也别让屏幕上一个字都没有 —— 把断线提示条摆出来，
+				// 里面就有"重试""改用局域网地址""切到当前地址"三条出路。
+				bootDone()
+				state.booted = false
+				setLink('down')
+			})
 	})()
 })()
 </script>

@@ -125,6 +125,8 @@ let recallFailStatus = 0
 let bootHold = null
 /** 记录假的 XHR 报过的 (loaded,total) 组合，验证加载条是按字节走的。 */
 const progressReports = []
+/** 页面发出的每个 XHR（含 boot 那个）—— 用来断言 boot 请求设了超时。 */
+const xhrRequests = []
 /** 让接下来 N 次 /api/prompt 在 fetch 层直接失败（模拟隧道抖动 → 页面该自动重试）。 */
 let promptFailTimes = 0
 /** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
@@ -352,10 +354,12 @@ const dom = new JSDOM(html, {
 			constructor() {
 				this.status = 0
 				this.responseText = ''
+				this.timeout = 0
 				this.onprogress = null
 				this.onload = null
 				this.onerror = null
 				this.ontimeout = null
+				xhrRequests.push(this)
 			}
 			open(method, path) { this.path = String(path) }
 			setRequestHeader() {}
@@ -448,6 +452,15 @@ const textOf = (id) => $(id).textContent.trim()
 		$('bootText').textContent.includes('已等'), $('bootText').textContent)
 	check('等再久也不会自己报 100（100 只能由加载完成给，进度条不许替加载撒谎）',
 		bootC.shown <= 96 && bootC.target < 100, JSON.stringify(bootC))
+
+	// 「一直卡在加载页」的根因：apiProgress 只挂了 ontimeout 处理器，**没设 timeout** ——
+	// 连接被黑洞（丢包/NAT 超时）时请求永远 pending，boot 的 promise 既不成功也不失败，
+	// `.catch(bootDone)` 永远不跑，加载页就永远挂在那儿。这条断言守的就是那个 timeout。
+	check('boot 请求设了超时（不设 = 连接被黑洞时永远卡在加载页）',
+		xhrRequests.length >= 1 && xhrRequests[0].timeout > 0 && xhrRequests[0].timeout <= 60000,
+		`timeout=${xhrRequests[0]?.timeout}`)
+	check('boot 请求挂了 ontimeout 处理（超时要能落到"断线"那条路，而不是静默悬挂）',
+		typeof xhrRequests[0]?.ontimeout === 'function')
 
 	// 放行 /api/boot：带上 since=9 → 宿主只回"没有新记录"的增量，历史必须留着
 	releaseBoot()
