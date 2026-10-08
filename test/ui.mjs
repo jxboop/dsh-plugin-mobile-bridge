@@ -1530,7 +1530,8 @@ check('说明指向了下拉框或读取状态',
 {
 	const log = $('log')
 	// jsdom 不做排版，把"高度"喂进去才能测滚动锚定：高度按子节点数算，好预测。
-	const heightOf = () => 200 * log.children.length
+	// 高度按"子节点数 + 文字长度"算：这样"内容变长"在测试里也能反映到 scrollHeight 上。
+	const heightOf = () => 200 * log.children.length + log.textContent.length
 	Object.defineProperty(log, 'scrollHeight', { configurable: true, get: heightOf })
 	Object.defineProperty(log, 'clientHeight', { configurable: true, get: () => 400 })
 	// 派发一次 scroll，让页面按真实语义更新 state.stick（jsdom 里改 scrollTop 不会自己触发）。
@@ -1588,22 +1589,38 @@ check('说明指向了下拉框或读取状态',
 		stable(prefix).every((node) => afterStream.includes(node)) && stable(prefixNow).every((node) => afterStream.includes(node)),
 		`${prefix.length} 个前缀节点`)
 
-	// 3) 结构变了（快照重放）才整段重排 —— 但要按"离底部多远"锚回来：
-	//    写回同一个 scrollTop 是错的，重排后 scrollHeight 变了，那段内容就不在眼前了。
-	const countBefore = log.children.length
+	// 3) 中间的内容变了（早先那条长高了）→ 位置按"离底部多远"锚回来，
+	//    并且后面已经铺好的节点**一个都不重建** —— 这是 iOS 上"回弹"的真正解药：
+	//    在滚动容器里删/建节点会让 iOS 把滚动位置复位，而流式输出每帧都在改 DOM。
+	//    先摆三条：用户 → 工具（早先的那条） → 助手（最后一条）。
+	source.emit({
+		t: 'snapshot',
+		cursor: 600,
+		hasMore: false,
+		records: [
+			{ type: 'event', event: { type: 'user/message', seq: 601, time: 601, data: { id: 'k1', role: 'user', content: [{ type: 'text', text: '锚定测试的第一条' }] } } },
+			{ type: 'event', event: { type: 'tool/call', seq: 602, time: 602, data: { turn: 91, step: 2, callId: 'anchor-call', name: 'pwsh', arguments: '{}' } } },
+			{ type: 'event', event: { type: 'assistant/message', seq: 603, time: 603, data: { turn: 91, step: 3, message: { id: 'k3', role: 'assistant', content: [{ type: 'text', text: '锚定测试的最后一条' }] } } } },
+		],
+	})
+	await wait(150)
+	const tailNode = log.lastElementChild
 	log.scrollTop = 300
 	noteScrolled()
 	const gapFromBottom = heightOf() - 300
-	const records = []
-	for (let seq = 1; seq <= Math.max(countBefore + 4, 8); seq += 1) {
-		records.push({ type: 'event', event: { type: 'user/message', seq, time: seq, data: { id: 'r' + seq, role: 'user', content: [{ type: 'text', text: '快照重放第 ' + seq + ' 条' }] } } })
-	}
-	source.emit({ t: 'snapshot', cursor: 999, hasMore: false, records })
-	await wait(140)
+	await wait(460) // 让"刚被用户滚过"的窗口过去（真实场景里内容变化通常晚得多）
+	// 工具的输出来了 → 中间那条变长（它后面还有人，所以属于"结构变化"）
+	source.emit({
+		t: 'event',
+		event: { type: 'tool/result', seq: 604, time: 604, data: { turn: 91, step: 2, message: { id: 'k4', role: 'user', content: [{ type: 'tool-result', toolCallId: 'anchor-call', content: [{ type: 'text', text: '很长很长的工具输出'.repeat(40) }] }] } } },
+	})
+	await wait(160)
+	check('早先的内容变长时，后面已铺好的节点原地不动（按 key 复用，不重建）',
+		log.lastElementChild === tailNode, log.lastElementChild === tailNode ? 'same node' : 'node was recreated')
 	const expected = Math.max(0, heightOf() - gapFromBottom)
-	check('结构重排后按"离底部多远"锚回（而不是写回旧的 scrollTop）',
+	check('位置按"离底部多远"锚回来（不是写回旧的 scrollTop）',
 		log.scrollTop === expected && expected !== 300,
-		`scrollTop=${log.scrollTop}（期望 ${expected}，旧写法会停在 300）`)
+		`scrollTop=${log.scrollTop}（期望 ${expected}，写回旧值会停在 300）`)
 
 	// 4) 手指按住时冻结渲染：拖动期间绝不能被重排抢走位置，松手后必须补画。
 	const frozenAt = log.children.length
@@ -1757,6 +1774,25 @@ check('说明指向了下拉框或读取状态',
 		window.document.activeElement !== $('text'))
 	log.dispatchEvent(new window.Event('touchend'))
 	await wait(200)
+
+	// 「回到最新」：不再自动把视线拽回去，但给一个明确的回去入口。
+	log.scrollTop = Math.max(0, bottom() - 300)
+	log.dispatchEvent(new window.Event('touchstart'))
+	log.dispatchEvent(new window.Event('touchend'))
+	await wait(280)
+	source.emit({
+		t: 'event',
+		event: { type: 'assistant/message', seq: 5200, time: 5200, data: { turn: 99, step: 1, message: { id: 'm5200', role: 'assistant', content: [{ type: 'text', text: '新内容来了，但不许拽我' }] } } },
+	})
+	await wait(90)
+	check('往上翻着看时出现「回到最新」（有明确出路，而不是自动拽回去）',
+		window.getComputedStyle($('tonew')).display !== 'none', window.getComputedStyle($('tonew')).display)
+	check('新内容没有把视线拽走', log.scrollTop < bottom(), `scrollTop=${log.scrollTop} 底部=${bottom()}`)
+	$('tonew').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(90)
+	check('点它就贴回底部并收起按钮',
+		log.scrollTop === bottom() && window.getComputedStyle($('tonew')).display === 'none',
+		`scrollTop=${log.scrollTop} 底部=${bottom()} display=${window.getComputedStyle($('tonew')).display}`)
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

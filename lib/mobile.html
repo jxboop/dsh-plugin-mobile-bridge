@@ -233,7 +233,17 @@
 		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
 		border-radius: 12px; padding: 10px 11px; font-size: 14px; box-shadow: var(--glass-edge);
 	}
-	#log { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 12px 4px; }
+	#log { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 4px; }
+	/* 「回到最新」：往上翻着看历史时，新内容在下面长出来，给一个明确的回去入口。
+	   以前是自动把视线拽回底部（和用户抢滚动条），现在改成"用户说了算"。 */
+	#tonew {
+		position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 6;
+		border: 1px solid var(--glass-edge); border-radius: 99px; padding: 7px 14px;
+		font-size: 12px; font-weight: 600; color: var(--text);
+		background: var(--panel-2); box-shadow: var(--glass-shadow);
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+	}
+	#task { position: relative; }
 	.row { margin-bottom: 12px; display: flex; }
 	.row.user { justify-content: flex-end; }
 	/* 对话气泡：**透明**的玻璃 —— 用户要看的是背景，文字只是浮在上面。
@@ -543,6 +553,7 @@
 			<div class="sessionbar"><select id="session"></select></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
+			<button id="tonew" style="display:none">↓ 回到最新</button>
 			<div id="composer">
 				<div id="thumbs"></div>
 				<div id="compose">
@@ -1216,43 +1227,55 @@
 	}
 
 	/**
-	 * 只动尾部：新消息、正在流式输出的那一条、本地回声。
+	 * 把这一组条目铺到对话区，**按 key 复用已有节点**。
 	 *
-	 * 用户往上翻着看历史时，尾部是在视口【下面】长高的，浏览器不会动 scrollTop ——
-	 * 读者的位置天然保住。以前这里整段重排，于是每一条流式增量都把位置抹掉一次，
-	 * 表现就是"拖一下又弹回原处"。
+	 * 为什么必须复用：手机（iOS Safari）在滚动容器里"边滚边改 DOM"会把滚动位置复位到
+	 * 改动之前 —— 而流式输出每帧都在改。以前的写法只要变化出现在中间，就会把后面的
+	 * 节点（包括底部的本地回声）整段删掉重建，手指底下的位置因此被拽回去；而且重建
+	 * 会丢掉 content-visibility 记住的行高、让已经加载好的图片重新解码。
+	 *
+	 * 现在：内容真的变了的那一个节点才重建（`innerHTML` 换掉），其余节点一个字节都不动，
+	 * 顺序变化只是 `insertBefore` 移动既有节点 —— 移动不会丢记住的高度，也不会重新解码图片。
 	 */
-	function renderTail(entries, keep) {
-		while (log.childNodes.length > keep) log.removeChild(log.lastChild)
-		for (let index = keep; index < entries.length; index += 1) {
-			const node = nodeOf(entries[index].html)
-			if (node !== null) log.appendChild(node)
+	function reconcile(entries) {
+		const pool = new Map()
+		for (const node of Array.from(log.childNodes)) {
+			const key = node.dataset === undefined ? undefined : node.dataset.key
+			if (key !== undefined && pool.has(key) === false) pool.set(key, node)
 		}
-		// 贴着底部看直播时继续跟着走；往上翻的时候绝不抢滚动条。
-		if (state.stick) log.scrollTop = log.scrollHeight
+		let cursor = log.firstChild
+		for (const entry of entries) {
+			let node = pool.get(entry.key)
+			if (node === undefined) {
+				node = nodeOf(entry.html)
+				if (node === null) continue
+				node.dataset.key = entry.key
+				node.__html = entry.html
+			} else {
+				pool.delete(entry.key)
+				if (node.__html !== entry.html) {
+					node.innerHTML = entry.html
+					node.__html = entry.html
+				}
+			}
+			if (node !== cursor) log.insertBefore(node, cursor)
+			else cursor = cursor.nextSibling
+		}
+		// 这一份里没有的节点（换会话、条目被删）从尾部清掉。
+		while (cursor !== null) {
+			const next = cursor.nextSibling
+			log.removeChild(cursor)
+			cursor = next
+		}
 	}
 
 	/**
-	 * 结构变了（换会话、快照重放、前面的条目被改）才整段重排 —— 但要把读者的位置
-	 * 锚回去，而且不能写回同一个 scrollTop：重排后 scrollHeight 变了，同一个
-	 * scrollTop 对应的内容已经不是原来那段了。按【离底部多远】锚才稳。
+	 * 需要把位置锚回去时用的：按【离底部多远】。写回同一个 scrollTop 是错的 ——
+	 * 内容长高之后，同一个 scrollTop 对应的已经不是原来那段了。
 	 */
-	function renderAll(entries) {
-		const pinned = state.stick
-		const gapFromBottom = Math.max(0, log.scrollHeight - log.scrollTop)
-		while (log.childNodes.length > 0) log.removeChild(log.lastChild)
-		for (const entry of entries) {
-			const node = nodeOf(entry.html)
-			if (node !== null) log.appendChild(node)
-		}
-		const restore = () => {
-			if (touching) return
-			log.scrollTop = pinned ? log.scrollHeight : Math.max(0, log.scrollHeight - gapFromBottom)
-		}
-		restore()
-		// 布局落定后高度还会变一次（图片、折叠区、字体）：再锚一帧就好。
-		// 只补这一帧 —— 一直抢滚动条就又变成"拖不动"了。
-		requestAnimationFrame(restore)
+	function anchorScroll(pinned, gapFromBottom) {
+		if (touching || userScrolledRecently()) return
+		setScrollTop(pinned ? log.scrollHeight : Math.max(0, log.scrollHeight - gapFromBottom))
 	}
 
 	function render() {
@@ -1271,13 +1294,23 @@
 
 		const before = rendered
 		rendered = entries
-		// 前缀还在 → 只重排差异之后的那一段（换会话/快照重放才可能一片都不剩）。
-		// 前半段节点留着，等于读者的位置也留着；只有 keep 为 0 时才需要整段重排 +
-		// 按"离底部多远"把位置锚回来。
-		if (keep > 0) renderTail(entries, keep)
-		else renderAll(entries)
-		// 顺手把这份对话存到手机上（3 秒最多一次）：从别的窗口回来时靠它"不用重新加载"。
-		saveTranscriptSnapshot()
+		const pinned = state.stick
+		const gapFromBottom = Math.max(0, log.scrollHeight - log.scrollTop)
+		// 变化是在"中间"还是"尾巴"？尾巴（追加/改最后一条）不需要锚定：
+		// 浏览器本来就不会因为视口下方长高而移动 scrollTop。
+		const tailOnly = keep >= Math.min(before.length, entries.length) - 1
+		reconcile(entries)
+		if (pinned) {
+			// 贴着底部看直播：别和刚滚过的人抢（userScrolledRecently 见下）。
+			if (userScrolledRecently() === false) setScrollTop(log.scrollHeight)
+		} else if (tailOnly === false) {
+			// 中间的结构变了：先锚一次，布局落定后再补一次（图片/折叠区会改变高度）。
+			anchorScroll(pinned, gapFromBottom)
+			requestAnimationFrame(() => anchorScroll(pinned, gapFromBottom))
+		}
+		updateToNew()
+		// 顺手把这份对话存到手机上（3 秒最多一次，空闲时做）：从别的窗口回来靠它"不用重新加载"。
+		scheduleTranscriptSave()
 	}
 
 	/** Streaming deltas arrive far faster than a phone needs to repaint. */
@@ -1285,11 +1318,20 @@
 	/** 手指还在屏幕上（或惯性滚动还没停）时先不画，见下面的触摸监听。 */
 	let touching = false
 	let renderHeld = false
+	let lastRenderAt = 0
+
+	/**
+	 * 流式输出每秒能来几十条增量。每条都重画一遍在手机上纯属浪费：最长的掉帧实测
+	 * 能到 100ms 以上，而滚动正好卡在那一帧时手感就是"被顶住/一顿"。
+	 * 所以渲染最快 80ms 一次（约 12fps 的更新率，看文字滚动完全够），
+	 * 但"手指抬起后必须补画"这类由触摸驱动的调用会立刻执行（renderHeld 那条路）。
+	 */
+	const RENDER_MIN_GAP_MS = 80
 
 	function scheduleRender() {
 		if (renderQueued) return
 		renderQueued = true
-		requestAnimationFrame(() => {
+		const run = () => {
 			renderQueued = false
 			// 手指还在屏幕上时重排，等于把用户正在拖动的内容从手底下换掉：
 			// 现象就是"拖一下又弹回原处"。先记下来，等手停下来再补画。
@@ -1303,8 +1345,12 @@
 				setTimeout(scheduleRender, 200)
 				return
 			}
+			lastRenderAt = Date.now()
 			render()
-		})
+		}
+		const gap = RENDER_MIN_GAP_MS - (Date.now() - lastRenderAt)
+		if (gap > 4) setTimeout(run, gap)
+		else requestAnimationFrame(run)
 	}
 
 	function copyText(text) {
@@ -1393,14 +1439,42 @@
 	}, { passive: true })
 	for (const type of ['pointerup', 'pointercancel']) log.addEventListener(type, cancelPress, { passive: true })
 
+	/** 用户自己滚过的最后时刻（程序化滚动不算）：刚滚过就别去动 scrollTop。 */
+	let lastUserScrollAt = 0
+	/** 标记"这次滚动是我们自己设的"，用来把它和用户的手区分开。 */
+	let selfScrolling = false
+
+	/**
+	 * 由我们设置滚动位置。必须打标记：否则自己这一下也会被当成"用户刚滚过"，
+	 * 反而把接下来的跟随逻辑锁死（流式输出时每帧都要贴底）。
+	 */
+	function setScrollTop(value) {
+		selfScrolling = true
+		log.scrollTop = value
+		requestAnimationFrame(() => { selfScrolling = false })
+	}
+
+	/** 刚被用户滚过（400ms 内）→ 任何自动滚动都先让路，别和手指抢。 */
+	function userScrolledRecently() { return Date.now() - lastUserScrollAt < 400 }
+
+	/**
+	 * 「回到最新」按钮：往上翻着看历史时，新内容在下面长出来 —— 给一个**明确的回去入口**，
+	 * 而不是自动把视线拽回去。自动拽回去正是"界面回弹、看不了消息"的来源；用户点了才回。
+	 */
+	function updateToNew() {
+		const button = $('tonew')
+		if (button === null) return
+		if (state.stick === false) show(button)
+		else hide(button)
+	}
+
 	log.addEventListener('scroll', () => {
-		// 拖动/惯性期间不改跟随状态：松手时统一判断（见 keepFrozen）。
-		// 以前这里每来一个 scroll 事件就重算 atBottom()，而"离底部 120px 以内算在底部"
-		// 这个宽容阈值会让"往上滑一点点"被判定成仍在底部 → 下一帧又贴回底部。
-		// 加上流式输出每帧都在重排，手指每滑一小段就被抹掉一次 —— 表现就是
-		// "光标卡在那儿，怎么滑都被拽回去"。
+		// 自己设的滚动不算"用户在滚"，否则会把跟随逻辑锁死。
+		if (selfScrolling) { if (touching) keepFrozen(); return }
+		lastUserScrollAt = Date.now()
 		if (touching) { keepFrozen(); return }
 		state.stick = atBottom()
+		updateToNew()
 	})
 
 	/*
@@ -1427,11 +1501,20 @@
 		clearTimeout(touchIdle)
 		touchIdle = setTimeout(() => {
 			touching = false
-			// 松手落在底部 → 恢复"跟着新消息走"；停在上面 → 保持不动，直到用户自己滑回去。
+			// 松手落在底部 → 恢复"跟着新消息走"；停在上面 → 保持不动，直到用户自己滑回去
+			// （或点「回到最新」）。
 			state.stick = atBottom()
+			updateToNew()
 			if (renderHeld) { renderHeld = false; scheduleRender() }
 		}, 160)
 	}
+	$('tonew').addEventListener('click', () => {
+		// 用户明确要求回到最新：恢复跟随并立刻贴底。
+		state.stick = true
+		lastUserScrollAt = 0
+		setScrollTop(log.scrollHeight)
+		hide($('tonew'))
+	})
 	log.addEventListener('touchstart', holdFrozen, { passive: true })
 	log.addEventListener('touchmove', holdFrozen, { passive: true })
 	log.addEventListener('touchend', keepFrozen, { passive: true })
@@ -2143,6 +2226,21 @@
 	const TX_MAX_BYTES = 300 * 1024
 	const TX_LOCAL_PREFIX = 'dshm.transcript.'
 	let transcriptSavedAt = 0
+	let transcriptTimer = 0
+
+	/**
+	 * 存这份对话要序列化上百条记录，是"重活"：放在空闲时间里做，手指在屏幕上时不做。
+	 * 以前是在 render() 里同步做的 —— 手机上每隔几秒就有一次几十毫秒的主线程停顿，
+	 * 正好卡在滚动中间时，手感就是"滑一下被顶住"。
+	 */
+	function scheduleTranscriptSave() {
+		if (transcriptTimer !== 0) return
+		transcriptTimer = setTimeout(() => {
+			transcriptTimer = 0
+			if (touching === true) { scheduleTranscriptSave(); return }
+			saveTranscriptSnapshot()
+		}, 1200)
+	}
 
 	/** 本地兜底用的键。存不了 IndexedDB（无痕/隐私模式）时至少还有它。 */
 	function transcriptLocalKey(sessionId) { return TX_LOCAL_PREFIX + sessionId }
