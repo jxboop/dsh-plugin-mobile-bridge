@@ -1724,7 +1724,15 @@
 		state.pending = state.pending.filter((entry) => entry.sessionId !== sessionId)
 	}
 
-	/** 宿主把排队内容推过来了：靠 rpcId 认出"这条就是我刚才发的那句"。 */
+	/**
+	 * 宿主把排队内容推过来了。这里要做两件事：
+	 *
+	 * 1. 靠 rpcId（认不出就靠文本）认出"这条就是我刚才在手机上发的那句" —— 补上队列编号，
+	 *    状态从"已发出"变成"排队中"。
+	 * 2. 认出**不是这台手机发的**：电脑上插的话、另一个标签页/另一台手机发的。
+	 *    以前手机对它们完全无感 —— 要等这一轮跑完、真消息进了对话才突然出现，用户于是
+	 *    以为"电脑上的插话没生效"。现在给它们也造一条回声，标清来源，并且一样能改、能撤。
+	 */
 	function noteInboxSpliced(event) {
 		const data = event?.data ?? {}
 		const inserted = Array.isArray(data.inserted) ? data.inserted : []
@@ -1732,15 +1740,45 @@
 			const rpcId = item?.source?.rpcId ?? ''
 			const id = String(item?.id ?? '')
 			if (id === '') continue
-			const mine = state.pending.find((entry) =>
+			const known = state.pending.find((entry) =>
 				entry.sessionId === state.sessionId
 				&& (rpcId !== '' ? entry.requestId === rpcId : entry.text !== '' && textOfMessage(item) === entry.text))
-			if (mine !== undefined) {
-				mine.itemId = id
-				if (mine.state === 'sent') mine.state = 'queued'
+			if (known !== undefined) {
+				known.itemId = id
+				if (known.state === 'sent') known.state = 'queued'
+				continue
 			}
+			// 同一条已经画过了就别再画一遍：重连/快照重放会把同一条 inbox/spliced
+			// 再喂回来（快照是重放的，不是增量的），没有这道闸就会冒出好几条一样的。
+			if (state.pending.some((entry) => entry.itemId === id)) continue
+			pendingSeq += 1
+			state.pending.push({
+				key: 'p' + pendingSeq,
+				sessionId: state.sessionId,
+				requestId: rpcId,
+				itemId: id,
+				text: textOfMessage(item),
+				extra: 0,
+				state: 'queued',
+				interjecting: true,
+				// remote：不是这台手机发的那条（电脑/别处发的）。
+				remote: true,
+				at: Date.now(),
+				error: '',
+			})
 		}
-		if (inserted.length > 0 || (data.removedCount ?? 0) > 0) scheduleRender()
+		const removed = Number(data.removedCount ?? 0)
+		if (removed > 0 && inserted.length === 0) {
+			// 事件只告诉我们"删了几条"，没说删的是哪几条。按最老的先删最接近真实
+			// （撤回一次通常一条），剩下的靠"真消息进了对话"和十分钟兜底清掉。
+			const doomed = new Set(state.pending
+				.filter((entry) => entry.sessionId === state.sessionId && entry.itemId !== '')
+				.sort((left, right) => left.at - right.at)
+				.slice(0, removed)
+				.map((entry) => entry.key))
+			if (doomed.size > 0) state.pending = state.pending.filter((entry) => doomed.has(entry.key) === false)
+		}
+		if (inserted.length > 0 || removed > 0) scheduleRender()
 	}
 
 	function textOfMessage(item) {
@@ -1760,11 +1798,18 @@
 			.trim()
 	}
 
-	async function recallPending(entry) {
+	/**
+	 * 撤回一条排队中的插话。
+	 *
+	 * @param purpose 'recall'（用户点撤回）| 'edit'（用户点修改：先撤回，再把原文放回输入框）
+	 * @returns 是否真的撤掉了。
+	 */
+	async function recallPending(entry, purpose = 'recall') {
+		const editing = purpose === 'edit'
 		if (entry.itemId === '') {
 			entry.error = '还没拿到队列编号，等一两秒再试'
 			scheduleRender()
-			return
+			return false
 		}
 		try {
 			await api('api/recall', {
@@ -1773,19 +1818,57 @@
 				body: JSON.stringify({ sessionId: entry.sessionId, itemId: entry.itemId }),
 			})
 			dropPending((candidate) => candidate.key === entry.key)
-			flash('已撤回', 3000)
+			flash(editing ? '已撤回，原文就在输入框里，改完再发一次' : '已撤回', 4000)
+			return true
 		} catch (error) {
-			entry.error = error.message
 			if (error.status === 409) {
 				// 已经开始处理了：如实说，并把按钮收掉（再点也没用）。
 				entry.state = 'started'
 				entry.itemId = ''
+				// 修改这条路更要说明白：原文放回去了，但这条已经在跑，再发会重复一遍。
+				entry.error = editing ? '这条已经开始处理了，撤不回来；改完再发会多出一条' : error.message
+			} else {
+				entry.error = error.message
 			}
 			scheduleRender()
+			return false
 		}
 	}
 
+	/**
+	 * 「修改」：把这条插话的原文放回输入框，让用户在原文上改 —— 不必重打一遍。
+	 *
+	 * 顺序很重要：**先撤回，再放回输入框**。反过来的话，用户改完一发，原来的那条
+	 * 还在队列里照跑，同一句话发两遍（还多花一轮钱）。撤不回来时也要把文字放回去，
+	 * 但必须明说"再发会多出一条"（recallPending 里已经写了这句话）。
+	 */
+	async function editPending(entry) {
+		const original = entry.text
+		if (original === '') {
+			// 纯附件的那条没有文字可改，只能撤回重发。
+			entry.error = '这条只有附件，没有文字可改；请用撤回后重发'
+			scheduleRender()
+			return
+		}
+		text.value = original
+		growComposer()
+		show(compose)
+		text.focus()
+		// 光标落到末尾：用户接着改，不用先点一下。
+		try { text.setSelectionRange(original.length, original.length) } catch { /* 只读态会抛，忽略 */ }
+		if (entry.extra > 0) flash('原文已放回输入框（附件要重新选一次）', 5000)
+		else flash('原文已放回输入框，改完再发一次', 5000)
+		await recallPending(entry, 'edit')
+	}
+
 	log.addEventListener('click', (event) => {
+		const edit = event.target.closest && event.target.closest('[data-edit]')
+		if (edit) {
+			const key = edit.getAttribute('data-edit')
+			const entry = state.pending.find((candidate) => candidate.key === key)
+			if (entry !== undefined) void editPending(entry)
+			return
+		}
 		const recall = event.target.closest && event.target.closest('[data-recall]')
 		if (recall) {
 			const key = recall.getAttribute('data-recall')
@@ -1818,12 +1901,19 @@
 			// 说清楚"为什么没反应"：排队中的消息要等这一轮跑完才轮到它。
 			// 不写清楚，用户就会以为没发出去，然后一遍遍重发 —— 越重发排得越长。
 			const ahead = mine.length - index - 1
-			const label = entry.state === 'queued'
+			const waiting = entry.state === 'queued'
 				? (ahead > 0 ? `排队中 · 前面还有 ${ahead} 条` : '排队中 · 等这一轮跑完就轮到它')
 				: (entry.state === 'started' ? '已开始处理' : '已发出')
+			// 不是这台手机发的那条必须说清来源：否则用户会盯着它想"我什么时候发过这句"。
+			const label = (entry.remote === true ? '电脑/别处发来的 · ' : '') + waiting
 			const extra = entry.extra > 0 ? '<div class="pmeta">' + entry.extra + ' 个附件</div>' : ''
-			const buttons = entry.state === 'queued' || entry.state === 'sent'
-				? '<button class="recall" data-recall="' + entry.key + '">撤回</button>'
+			// 排队中的插话给两个动作：
+			//   修改 —— 原文放回输入框，在原文上改，不必重打一遍；
+			//   撤回 —— 直接把这条从队列里拿掉。
+			const editable = entry.state === 'queued' || entry.state === 'sent'
+			const buttons = editable
+				? '<button class="recall" data-edit="' + entry.key + '">修改</button>' +
+					'<button class="recall ghost" data-recall="' + entry.key + '">撤回</button>'
 				: '<button class="recall ghost" data-dismiss="' + entry.key + '">知道了</button>'
 			return {
 				key: 'p' + entry.key,
@@ -2442,10 +2532,13 @@
 		}
 	})
 
-	text.addEventListener('input', () => {
+	/** 输入框跟着内容长高（「修改」把原文放回去时也要长到合适的高度）。 */
+	function growComposer() {
 		text.style.height = 'auto'
 		text.style.height = Math.min(text.scrollHeight, 130) + 'px'
-	})
+	}
+
+	text.addEventListener('input', growComposer)
 
 	/* -------------------------------------------------------------- 新建 */
 

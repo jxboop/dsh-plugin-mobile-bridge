@@ -117,6 +117,8 @@ let promptSeq = 0
 const recalls = []
 /** 宿主侧"这台手机看过说明页"的标记（bootstrap 里下发 / POST /api/welcomed 里写回）。 */
 let welcomedOnServer = false
+/** 让接下来一次 /api/recall 以指定状态失败（模拟"已经开始处理，撤不回来"的 409）。 */
+let recallFailStatus = 0
 /** 让接下来 N 次 /api/prompt 在 fetch 层直接失败（模拟隧道抖动 → 页面该自动重试）。 */
 let promptFailTimes = 0
 /** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
@@ -226,6 +228,11 @@ async function stubFetch(input, options = {}) {
 	if (path.startsWith('/api/recall')) {
 		const body = JSON.parse(options.body ?? '{}')
 		recalls.push(body)
+		if (recallFailStatus !== 0) {
+			const status = recallFailStatus
+			recallFailStatus = 0
+			return jsonResponse({ error: '这条已经开始处理了（已经在跑）' }, status)
+		}
 		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/cancel')) return jsonResponse({ accepted: true })
@@ -1118,6 +1125,101 @@ check('换回正常会话后提示条收起',
 	check('真消息进对话后回声自动撤掉（不会显示两遍）',
 		mine('这句会真的发出去').length === 0 && $('log').textContent.includes('这句会真的发出去'),
 		`${mine('这句会真的发出去').length} 条回声`)
+}
+
+/* --- 电脑上的插话也要看得见；插话要能"改一下再发" -------------------------- */
+/*
+ * 现场两件事：
+ *   1. 电脑上插的话，手机上完全看不到 —— 要等这一轮跑完、真消息进了对话才冒出来，
+ *      用户以为"电脑上插的话没生效"；
+ *   2. 手机上插话发出去之后发现要改，只能撤回再重打一遍。
+ * 现在：别人发的排队项也画出来（标清来源），每条排队中的插话都给「修改」——
+ * 原文放回输入框，先撤回再放回去（顺序不能反，否则改完一发就是两条）。
+ */
+{
+	const composer = $('text')
+	const pendingBubbles = () => [...window.document.querySelectorAll('#log .bubble.pending')]
+	const findBubble = (needle) => pendingBubbles().find((node) => node.textContent.includes(needle))
+
+	// 1) 电脑插的一句：手机上从没见过这条，宿主直接推了 inbox/spliced
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'agent/inbox/spliced', seq: 80, time: 80,
+			data: {
+				target: 'next-turn', start: 0,
+				inserted: [{ id: 'queue-desktop', role: 'user', source: { kind: 'user', rpcId: 'rpc-desktop-1' }, content: [{ type: 'text', text: '电脑上插的一句话' }] }],
+			},
+		},
+	})
+	await wait(140)
+	const desktopBubble = findBubble('电脑上插的一句话')
+	check('电脑上的插话手机上也能看到（不再等这一轮跑完才出现）',
+		desktopBubble !== undefined, `${pendingBubbles().length} 条回声`)
+	check('并且标清了来源（不然用户会以为是自己什么时候发过）',
+		(desktopBubble?.textContent ?? '').includes('电脑/别处发来的'),
+		desktopBubble?.textContent?.trim().slice(0, 46))
+	check('电脑发来的那条一样能改、能撤',
+		desktopBubble?.querySelector('[data-edit]') !== null && desktopBubble?.querySelector('[data-recall]') !== null)
+
+	recalls.length = 0
+	composer.value = ''
+	desktopBubble.querySelector('[data-edit]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(180)
+	check('点「修改」：原文被放回输入框（不必再打一遍）',
+		composer.value === '电脑上插的一句话', JSON.stringify(composer.value))
+	check('点「修改」：先把排队项撤回来（否则改完一发就重复一条）',
+		recalls.length === 1 && recalls[0].itemId === 'queue-desktop', JSON.stringify(recalls[0]))
+	check('撤回成功后那条回声消失（改完发出去就是唯一的一条）',
+		findBubble('电脑上插的一句话') === undefined)
+
+	// 2) 撤不回来（已经开始处理）时：文字照样放回去，但必须明说再发会多一条
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'agent/inbox/spliced', seq: 81, time: 81,
+			data: {
+				target: 'next-turn', start: 0,
+				inserted: [{ id: 'queue-late', role: 'user', source: { kind: 'user', rpcId: 'rpc-late-1' }, content: [{ type: 'text', text: '已经开始跑的那句' }] }],
+			},
+		},
+	})
+	await wait(140)
+	const lateBubble = findBubble('已经开始跑的那句')
+	check('（前置）又出现一条可改的回声', lateBubble !== undefined)
+	recallFailStatus = 409
+	composer.value = ''
+	lateBubble.querySelector('[data-edit]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(200)
+	check('撤不回来时原文照样放回输入框', composer.value === '已经开始跑的那句', JSON.stringify(composer.value))
+	check('并且如实说明"再发会多出一条"（不能让人以为撤回成功了）',
+		(findBubble('已经开始跑的那句')?.textContent ?? '').includes('再发会多出一条'),
+		findBubble('已经开始跑的那句')?.textContent?.trim().slice(-40))
+	check('这条不再显示可点的撤回/修改（点了也没用）',
+		findBubble('已经开始跑的那句')?.querySelector('[data-edit]') === null)
+
+	// 3) 同一条 splice 事件被重放（重连/快照重放）不许画出两条一样的
+	const beforeReplay = pendingBubbles().filter((node) => node.textContent.includes('已经开始跑的那句')).length
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'agent/inbox/spliced', seq: 82, time: 82,
+			data: {
+				target: 'next-turn', start: 0,
+				inserted: [{ id: 'queue-late', role: 'user', source: { kind: 'user', rpcId: 'rpc-late-1' }, content: [{ type: 'text', text: '已经开始跑的那句' }] }],
+			},
+		},
+	})
+	await wait(120)
+	check('同一条排队项被重放时不会画出两条（重连后最常见）',
+		pendingBubbles().filter((node) => node.textContent.includes('已经开始跑的那句')).length === beforeReplay,
+		`${beforeReplay} -> ${pendingBubbles().filter((node) => node.textContent.includes('已经开始跑的那句')).length}`)
+
+	// 收尾：把这条回声清掉，别影响后面的用例
+	const dismiss = findBubble('已经开始跑的那句')?.querySelector('[data-dismiss]')
+	if (dismiss !== null && dismiss !== undefined) dismiss.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	composer.value = ''
+	await wait(80)
 }
 
 /* --- 初始对话不能只靠长连接 ---------------------------------------------- */
