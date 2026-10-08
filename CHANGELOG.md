@@ -4,6 +4,21 @@
 
 ---
 
+## 1.3.4 — 2026-10-08
+
+### 文档
+
+- 「生图」依赖的那个工具**正式开源了，独立成仓库**：<https://github.com/jxboop/dsh-plugin-image-gen>
+  手机上「生图」键要能用，一条命令装上即可：
+
+  ```bash
+  dsh plugin --profile web add github:jxboop/dsh-plugin-image-gen
+  ```
+
+- 顺带把**免费生图后端不稳**这件事写清：pollinations / HF Space 会限流（约 15 秒一条）、
+  配额用尽时返回 402、高峰期可能连续失败。想稳定出图就去 <https://api.together.xyz> 免费注册，
+  填 `together.key` 并把 `providers` 设为 `["together"]`。
+
 ## 1.3.3 — 2026-10-08
 
 > 同学反馈的两件事：一件是**我的 bug**（换背景在真机上从来没成功过），一件是**文档缺失**（生图要另装一个插件）。

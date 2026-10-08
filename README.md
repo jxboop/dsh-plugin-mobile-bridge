@@ -508,14 +508,20 @@ node tools/measure-boot.mjs <手机桥网址> <PIN> --cold   # 首装（没有�
 - 装了（会话里能看到 `image_generate` 工具）→ 点「生图」就出图，图落在会话里，可点开、长按存相册；
 - 没装 → agent 只会回一句"没有这个工具 / 没有生图模型"。**这不是手机桥坏了。**
 
-装法（插件源码/仓库在你手边时）：
+装法（一条命令）：
 
 ```bash
-dsh plugin --profile web add <插件的本地绝对路径 或 github:用户/仓库>
+dsh plugin --profile web add github:jxboop/dsh-plugin-image-gen
 ```
+
+仓库：<https://github.com/jxboop/dsh-plugin-image-gen>（自带构建产物，装上即可用）。
 
 装完**重启 DSH**，再刷新手机页面。验证：在电脑上开一个新会话，直接说"用 image_generate 生成一张图"，
 能出图就说明插件装好了。
+
+> 免费生图后端（pollinations / HF Space）**不太稳**：会被限流（约 15 秒一条）、配额用尽时返回 402，
+> 高峰期可能连续失败。真想稳定出图，去 <https://api.together.xyz> 免费注册拿 key，
+> 填进插件配置的 `together.key` 并把 `providers` 设为 `["together"]`。
 
 ## 换手机界面的背景
 
