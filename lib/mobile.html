@@ -795,7 +795,8 @@
 					<label>发给 agent 的那句话</label>
 					<div class="genpreview" id="genPreview">（填了描述才会出现）</div>
 				</div>
-				<div class="hint">发出去后 agent 会调 image_generate 出图，图会出现在当前会话里；出图慢时页面会显示它在跑。</div>
+				<div class="hint">发出去后 agent 会调 <code>image_generate</code> 出图，图会出现在当前会话里；出图慢时页面会显示它在跑。</div>
+				<div class="hint">⚠️ 真正出图的是<strong>电脑上的 <code>image_generate</code> 工具</strong>（一个单独的 DSH 插件）。电脑没装的话，agent 只会回一句"没有这个工具 / 没有生图模型" —— 那是电脑缺插件，不是手机桥坏了，装法见 README。</div>
 			</div>
 			<div class="sheetfoot">
 				<button class="primary" id="genGo">生成</button>
@@ -2740,7 +2741,8 @@
 				const body = await api('api/background', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
-					body: JSON.stringify({ name: ref.name }),
+					// 必须带 `path`（服务端存下来的真实文件名带时间戳前缀，和 `name` 不是一回事）。
+					body: JSON.stringify({ path: ref.path, name: ref.name }),
 				})
 				const next = body?.background ?? null
 				hasBackdrop = next !== null

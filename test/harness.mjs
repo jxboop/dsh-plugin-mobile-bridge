@@ -654,6 +654,38 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('去掉之后 /api/background 就是 404',
 		(await fetch(`${base}/api/background`, authed)).status === 404)
 
+	// ⚠️ 真机流程的回归：手机手上是**上传返回的 path**（磁盘名带时间戳前缀），
+	// 而不是原始文件名。只认 `name` 的写法在真机上必然 404 —— 同学报的"换背景失效"。
+	const uploadedParts = []
+	for (let index = 0; index < 2; index += 1) {
+		const res = await fetch(`${base}/api/upload`, {
+			method: 'POST',
+			headers: { cookie, 'content-type': 'application/json' },
+			body: JSON.stringify({
+				uploadId: 'bg-upload-1', index, total: 2,
+				name: 'cute.gif', mediaType: 'image/gif',
+				data: Buffer.from(index === 0 ? 'GIF89a' : 'xxxxxx').toString('base64'),
+			}),
+		})
+		uploadedParts.push(await res.json())
+	}
+	const savedPart = uploadedParts[uploadedParts.length - 1]
+	const byPath = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ path: savedPart.path, name: 'cute.gif' }),
+	})
+	const byPathBody = await byPath.json()
+	check('按上传返回的 path 换背景能成（真机走的就是这条）',
+		byPath.status === 200 && byPathBody.background?.kind === 'image',
+		`${byPath.status} ${JSON.stringify(byPathBody)}`)
+	const configAfterUpload = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('配置里记的是**磁盘上的文件名**（backgroundInfo 靠它 join 上传目录取文件）',
+		typeof configAfterUpload.backgroundFile === 'string'
+		&& configAfterUpload.backgroundFile.endsWith('cute.gif')
+		&& configAfterUpload.backgroundFile.includes('-'),
+		String(configAfterUpload.backgroundFile))
+
 	// 换回原来的视频背景，别影响后面的检查（走接口，内存和文件一起回到原状）。
 	await fetch(`${base}/api/background`, {
 		method: 'POST',
