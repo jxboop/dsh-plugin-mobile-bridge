@@ -1520,11 +1520,11 @@ check('说明指向了下拉框或读取状态',
 {
 	const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '')
 	const rule = /([^{}]*)\{[^{}]*content-visibility[^{}]*\}/.exec(css)
-	const selector = rule === null ? '' : rule[1]
-	check('消息行不参与 content-visibility（行高被估算 = 滚动位置乱跳）',
-		selector !== '' && !/\.row\b/.test(selector), selector.trim())
-	check('折叠块仍享受 content-visibility（工具输出又长又重，收益在这里）',
-		/\.tool\b/.test(selector) && /\.think\b/.test(selector), selector.trim())
+	// 治本的选择：**一处都不用**。content-visibility 会让没渲染过的块按估算高度参与
+	// scrollHeight，"往上滚进历史时位置被顶回去"就是它造成的；而按 key 复用节点之后，
+	// 它那点性能收益也不成立（真浏览器实测：去掉它流式期间最长掉帧反而从 108ms 降到 61ms）。
+	check('页面里不用 content-visibility（估算高度 = 说谎的 scrollHeight）',
+		rule === null, rule === null ? '（没有这条声明）' : rule[0].slice(0, 60))
 }
 
 {

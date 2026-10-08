@@ -121,13 +121,16 @@
 	#boot .bootbar i { display: block; height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .2s; }
 	#boot .boottext { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
-	/* 长对话的流畅度：这些块一旦滚出屏幕就不参与排版/绘制。
-	   ⚠️ 只给【折叠块】用，绝不能给 .row：消息行正是用户要滚动浏览的东西，而
-	   content-visibility 对没渲染过的行只能用 contain-intrinsic-size 估算高度 ——
-	   scrollHeight 因此是说谎的，滚到那儿行高突然变大，视口内容就被顶回去
-	   （现象正是"拖一下又弹回原处、看不到消息"）。折叠块默认只有 132px 高，
-	   估算误差小得多，收益也主要在这里（工具输出又长又重）。 */
-	.tool, .deliver, .think { content-visibility: auto; contain-intrinsic-size: auto 132px; }
+	/* ⚠️ 这里【故意什么都不加】。
+	 *
+	 * 以前这里是 `.tool, .deliver, .think { content-visibility: auto; contain-intrinsic-size: auto 132px }`：
+	 * 为了让长对话"流畅"，把滚出屏幕的块跳过排版。代价是 **scrollHeight 变成估算值** ——
+	 * 没渲染过的块按 132px 算，真实高度可能几百像素；用户往上滚进历史时行高突然变大，
+	 * 视口内容就被顶回去。"拖一下又弹回原处、看不了消息"里就有它一份。
+	 *
+	 * 那点性能收益现在也不成立了：渲染改成按 key 复用节点之后，只有内容真变了的那一个
+	 * 节点会重排（实测整段重建才 2.5ms，而重建已经不是常态）。所以这里的选择是
+	 * **高度永远真实**：不用估算值换性能 —— 滚动位置对不上，用户是能一眼看出来的。 */
 
 	/* ---- 自定义背景：手机自己挑的一段视频/一张图铺满整屏 ----
 	   视频在最底层（z-index:0），上面盖一层压暗的纱，保证文字看得清；
