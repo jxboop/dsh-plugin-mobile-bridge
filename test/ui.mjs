@@ -108,6 +108,8 @@ let transcriptHold = null
 let olderTranscriptRecords = []
 /** 分片上传收到的片（每片一条），断言"大文件真的被切片了"。 */
 const uploaded = []
+/** 换背景的请求体（POST /api/background）：断言"选中文件后把名字交给了宿主"。 */
+const bgRequests = []
 /** 宿主下发的背景（bootstrap 里带）。设成 null 就模拟"没配背景"。 */
 let backdropInfo = { url: 'api/background', mediaType: 'video/quicktime', kind: 'video', bytes: 4096 }
 /** /api/prompt 回给手机的 requestId（宿主会把它放进 agent/inbox/spliced）。 */
@@ -254,6 +256,19 @@ async function stubFetch(input, options = {}) {
 			mediaType: body.mediaType,
 			path: 'C:\\Users\\Kim\\.dsh\\mobile-uploads\\test-' + body.name,
 		})
+	}
+	if (path.startsWith('/api/background')) {
+		if (options.method === 'POST') {
+			const body = JSON.parse(options.body ?? '{}')
+			bgRequests.push(body)
+			if (body.clear === true) {
+				backdropInfo = null
+				return jsonResponse({ ok: true, background: null })
+			}
+			backdropInfo = { url: 'api/background?v=2048-1', mediaType: 'image/gif', kind: 'image', bytes: 2048 }
+			return jsonResponse({ ok: true, background: backdropInfo })
+		}
+		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/prompt')) {
 		// 提权过期：令牌有效，但这台机器要你重新证明是本人（宿主重启后即是此态）。
@@ -1600,6 +1615,60 @@ check('说明指向了下拉框或读取状态',
 	check('再配回来也照样生效（同样要等它真的播起来）',
 		window.document.body.classList.contains('hasbg') && again !== null,
 		window.document.body.className)
+}
+
+/* --- 换背景：手机自己挑一张（以前要 agent 改配置 + 重载插件） ------------- */
+/*
+ * 现场：想换背景得「把文件发给桥 → 让 agent 把文件名写进 mobile-bridge.json 的
+ * backgroundFile → 重载插件」。那是开发动作，用户自己办不到。现在点「背景」→
+ * 选一张图 / 动图 / 视频 → 传到电脑、写进配置、当场铺上，全程不碰电脑。
+ */
+{
+	backdropInfo = null
+	bgRequests.length = 0
+	// 先让页面从宿主那里拿到"现在没有背景"（点刷新走一遍 boot），再看那张纸怎么说 ——
+	// 页面记的是宿主告诉它的状态，不是测试里的 mock 变量。
+	click($('reload'))
+	await wait(220)
+	click($('bgBtn'))
+	await wait(40)
+	check('点「背景」打开换背景那张纸', window.getComputedStyle($('bgopen')).display !== 'none')
+	check('还没有背景时不显示「去掉背景」',
+		window.getComputedStyle($('bgClear')).display === 'none',
+		window.getComputedStyle($('bgClear')).display)
+
+	// 挑一张动图（GIF）：背景那条路不压缩、原样上传。
+	const gif = new window.File([new Uint8Array([71, 73, 70, 56, 57, 97, 1, 2, 3])], 'cute.gif', { type: 'image/gif' })
+	Object.defineProperty($('fileBg'), 'files', { value: [gif], configurable: true })
+	$('fileBg').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(260)
+
+	check('选中的动图先分片上传到电脑',
+		uploaded.length >= 1 && uploaded[uploaded.length - 1].name === 'cute.gif',
+		JSON.stringify(uploaded[uploaded.length - 1]?.name))
+	check('再把文件名交给宿主写成背景（配置由宿主去写）',
+		bgRequests.length === 1 && bgRequests[0].name === 'cute.gif', JSON.stringify(bgRequests))
+	const bgImg = $('backdrop').querySelector('img')
+	check('宿主回的新背景当场铺上，而且是 <img>（动图靠它动）',
+		bgImg !== null, bgImg === null ? 'no img' : 'ok')
+	bgImg?.dispatchEvent(new window.Event('load'))
+	await wait(60)
+	check('加载完就整屏铺上，不用重载插件',
+		window.document.body.classList.contains('hasbg'), window.document.body.className)
+	check('换完自动收起那张纸', window.getComputedStyle($('bgopen')).display === 'none')
+
+	click($('bgBtn'))
+	await wait(40)
+	check('有背景了就给出「去掉背景」', window.getComputedStyle($('bgClear')).display !== 'none')
+	click($('bgClear'))
+	await wait(160)
+	check('去掉背景会告诉宿主 clear:true',
+		bgRequests.length === 2 && bgRequests[1].clear === true, JSON.stringify(bgRequests))
+	check('去掉后整层撤掉（hasbg 消失、节点清空）',
+		window.document.body.classList.contains('hasbg') === false
+		&& $('backdrop').querySelectorAll('video, img').length === 0,
+		`class=${window.document.body.className} nodes=${$('backdrop').querySelectorAll('video, img').length}`)
+	backdropInfo = { url: 'api/background', mediaType: 'video/quicktime', kind: 'video', bytes: 4096 }
 }
 
 /* --- 加载页 / 原图模式 / 发送自动重试 ------------------------------------ */

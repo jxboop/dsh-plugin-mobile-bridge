@@ -589,8 +589,77 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 
 	const advertised = await (await fetch(`${base}/api/bootstrap`, authed)).json()
 	check('bootstrap 把背景告诉页面（页面才知道要不要铺）',
-		advertised.background?.kind === 'video' && advertised.background?.url === 'api/background',
+		advertised.background?.kind === 'video' && String(advertised.background?.url).startsWith('api/background'),
 		JSON.stringify(advertised.background))
+	// 手机那层本地缓存按 url+bytes 存 IndexedDB：换了背景必须换 key，
+	// 否则"换了却没变"（两张图碰巧字节数一样时尤其明显）。
+	check('背景地址带版本号（换背景后手机不会拿旧缓存）',
+		/\?v=\d+-\d+$/.test(String(advertised.background?.url)), String(advertised.background?.url))
+}
+
+/* --- 换背景：手机上自己挑一张（以前要 agent 改配置 + 重载插件） ---------- */
+{
+	// 上传目录里放两样：一张真图、一个"不是媒体的文件"。
+	const image = Buffer.from('89504e470d0a1a0a0000000d', 'hex')
+	await writeFile(join(scratch, 'mobile-uploads', 'my-bg.png'), image)
+	await writeFile(join(scratch, 'mobile-uploads', 'notes.txt'), 'hello')
+
+	const outside = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ name: '../../../etc/passwd' }),
+	})
+	check('只认上传目录里的文件（想拿别的路径 → 400）', outside.status === 400, String(outside.status))
+
+	const noMedia = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ name: 'notes.txt' }),
+	})
+	check('不是图片/动图/视频的文件当不了背景 → 400 且说清原因',
+		noMedia.status === 400 && String((await noMedia.json()).error).includes('背景只能'),
+		String(noMedia.status))
+
+	const denied = await fetch(`${base}/api/background`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+	check('换背景要登录（无 cookie → 401）', denied.status === 401, String(denied.status))
+
+	const set = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ name: 'my-bg.png' }),
+	})
+	const setBody = await set.json()
+	check('换成图片背景成功，并把新的背景信息回给手机',
+		set.status === 200 && setBody.background?.kind === 'image' && setBody.background?.mediaType === 'image/png',
+		JSON.stringify(setBody.background))
+	check('服务端当场生效（不用重载插件）',
+		setBody.background?.bytes === image.length, `${setBody.background?.bytes} vs ${image.length}`)
+
+	const config = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('写进配置文件的 backgroundFile（重启也还在）', config.backgroundFile === 'my-bg.png', JSON.stringify(config.backgroundFile))
+
+	const nowImage = await fetch(`${base}/api/background`, authed)
+	check('取回来的就是新背景', Buffer.from(await nowImage.arrayBuffer()).equals(image), `${nowImage.status}`)
+
+	const cleared = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ clear: true }),
+	})
+	const clearedBody = await cleared.json()
+	const afterClear = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('能去掉背景：接口回 null，配置里那个键也删掉',
+		cleared.status === 200 && clearedBody.background === null && afterClear.backgroundFile === undefined,
+		`${cleared.status} ${JSON.stringify(afterClear.backgroundFile)}`)
+	check('去掉之后 /api/background 就是 404',
+		(await fetch(`${base}/api/background`, authed)).status === 404)
+
+	// 换回原来的视频背景，别影响后面的检查（走接口，内存和文件一起回到原状）。
+	await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ name: 'bg.mov' }),
+	})
 }
 
 /* --- 装成 App：manifest / 图标 / service worker -------------------------- */

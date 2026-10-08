@@ -396,7 +396,9 @@
 	#stop { background: var(--stop-bg); }
 	/* 工具键那一排：图片 / 文件 / 原图 / 生图 / 权限。共用一套底色和内边距 —— */
 	/* 各写各的，早晚会有一条对不齐。 */
-	#pick, #pickAny, #rawToggle, #genBtn, #permBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
+	#pick, #pickAny, #rawToggle, #genBtn, #bgBtn, #permBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
+	/* 背景键：和「生图」一样是次要动作，压成 muted，别和「图片/文件」抢眼。 */
+	#bgBtn { color: var(--muted); }
 	/* 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用） */
 	#rawToggle { color: var(--muted); }
 	#rawToggle.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
@@ -635,6 +637,7 @@
 					<button id="pickAny" title="上传任意文件到电脑（原样传，agent 拿到路径）">文件</button>
 					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
+					<button id="bgBtn" title="换手机界面的背景（图片 / 动图 / 视频）">背景</button>
 					<button id="permBtn" title="这个会话允许 agent 做到哪一步（改权限要重新输 PIN）">🔐</button>
 				</div>
 				<div id="compose">
@@ -644,6 +647,8 @@
 				</div>
 			</div>
 			<input id="file" type="file" accept="image/*,video/*" multiple hidden>
+			<!-- 「背景」键用的选择器：图 / 动图 / 视频。 -->
+			<input id="fileBg" type="file" accept="image/*,video/*" hidden>
 			<!-- 「文件」键用的选择器：**故意不写 accept** —— 写了 accept，iOS/安卓
 			     只会让你从相册里挑，PDF / 文档 / 压缩包根本选不到。不写才是"所有文件"。 -->
 			<input id="fileAny" type="file" multiple hidden>
@@ -699,6 +704,28 @@
 					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。</p>
 				</div>
 				<button class="welcomego" id="welcomeGo">开始使用</button>
+			</div>
+		</section>
+
+		<!-- 换手机界面的背景：手机自己挑一张图 / 动图（GIF）/ 视频。
+		     以前这一步是「把文件发进会话 → 让 agent 改 mobile-bridge.json 的 backgroundFile
+		     → 重载插件」——那是开发动作，用户自己办不到。 -->
+		<section class="sheet" id="bgopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="bgBack">← 返回</button>
+				<span class="title">手机界面背景</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="welcometip">
+					<p>选一张<strong>图片</strong>、一张<strong>动图（GIF）</strong>或一段<strong>视频</strong>，铺满整个手机界面。</p>
+					<p class="hint">背景是给<strong>这台电脑</strong>配的：连上来的手机都会看到同一张。文件存在电脑上（不占手机空间），第一次打开下一次、之后走手机本地缓存。</p>
+					<p class="hint" id="bgNow">当前：没有背景</p>
+				</div>
+				<div class="actions">
+					<button class="go" id="bgPick">选图片 / 动图 / 视频</button>
+					<button id="bgClear">去掉背景</button>
+				</div>
 			</div>
 		</section>
 
@@ -2605,6 +2632,79 @@
 			.catch(() => mount(info.url))
 	}
 
+	/* ------------------------------------------------------ 换背景（手机自己来） */
+
+	/**
+	 * 以前换背景要「把文件发给桥 → 让 agent 改 `mobile-bridge.json` 的 backgroundFile
+	 * → 重载插件」：那是我干的事，不是用户干的事。现在手机上选一张图 / 动图 / 视频，
+	 * 传到电脑、写进配置、当场铺上，全程不碰电脑。
+	 */
+	let hasBackdrop = false
+	function renderBgSheet() {
+		$('bgNow').textContent = hasBackdrop ? '当前：已设置（背景文件在电脑上）' : '当前：没有背景'
+		if (hasBackdrop) show($('bgClear'))
+		else hide($('bgClear'))
+	}
+
+	$('bgBtn').addEventListener('click', () => { renderBgSheet(); show($('bgopen')) })
+	$('bgBack').addEventListener('click', () => { hide($('bgopen')) })
+	$('bgPick').addEventListener('click', () => $('fileBg').click())
+
+	$('fileBg').addEventListener('change', () => {
+		const input = $('fileBg')
+		const file = (input.files ?? [])[0]
+		input.value = ''
+		if (file === undefined) return
+		// 手机要把整份读进内存再切片，太大就别赌了（电脑那头也收得下，但手机会先撑不住）。
+		if (file.size > MAX_FILE_BYTES) {
+			flash(`背景文件太大（上限 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB）`, 5000)
+			return
+		}
+		flash('正在上传背景…')
+		void (async () => {
+			try {
+				const entry = {
+					name: file.name || 'background',
+					mediaType: file.type === '' ? 'application/octet-stream' : file.type,
+					data: await readBase64(file),
+				}
+				const ref = await uploadInChunks(entry, entry.name, 1, 1)
+				const body = await api('api/background', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ name: ref.name }),
+				})
+				const next = body?.background ?? null
+				hasBackdrop = next !== null
+				applyBackdrop(next)
+				renderBgSheet()
+				hide($('bgopen'))
+				flash(hasBackdrop ? '背景换好了' : '这个格式当不了背景（图片 / 动图 / 视频才行）', 4000)
+			} catch (error) {
+				flash('换背景失败：' + String(error?.message ?? error), 6000)
+			}
+		})()
+	})
+
+	$('bgClear').addEventListener('click', () => {
+		void (async () => {
+			try {
+				await api('api/background', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ clear: true }),
+				})
+				hasBackdrop = false
+				applyBackdrop(null)
+				renderBgSheet()
+				hide($('bgopen'))
+				flash('背景已去掉', 3000)
+			} catch (error) {
+				flash('去掉背景失败：' + String(error?.message ?? error), 6000)
+			}
+		})()
+	})
+
 	/** 把浏览器可能不认的图片（HEIC/AVIF）用画布转成 JPEG；转不了返回 null。 */
 	async function transcodeToJpeg(src) {
 		const image = await new Promise((resolve, reject) => {
@@ -2676,6 +2776,8 @@
 			else hide(banner)
 			bootStep(50, '正在读会话列表')
 			applyBackdrop(body.background)
+			// 记着"这台电脑有没有背景"：换背景那张纸要据此显示「去掉背景」。
+			hasBackdrop = body.background !== null && body.background !== undefined
 			if (body.welcomed === true) welcomedOnServer = true
 			state.sessions = body.sessions || []
 			sessionSelect.innerHTML = state.sessions.map((item) =>
