@@ -119,6 +119,10 @@ const recalls = []
 let welcomedOnServer = false
 /** 让接下来一次 /api/recall 以指定状态失败（模拟"已经开始处理，撤不回来"的 409）。 */
 let recallFailStatus = 0
+/** 卡住 /api/boot 的回包：用来验证"本地那份先铺上、不用等下载"。 */
+let bootHold = null
+/** 记录假的 XHR 报过的 (loaded,total) 组合，验证加载条是按字节走的。 */
+const progressReports = []
 /** 让接下来 N 次 /api/prompt 在 fetch 层直接失败（模拟隧道抖动 → 页面该自动重试）。 */
 let promptFailTimes = 0
 /** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
@@ -184,16 +188,20 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/boot')) {
+		// 卡住回包：验证"本地那份先铺上，不用等下载"（松手由测试控制）。
+		if (bootHold !== null) { const held = bootHold; bootHold = null; await held }
 		// 打开时的一次性请求：会话列表 + 上次那个会话的对话，一起回来。
 		// 真宿主没带 sessionId 时（首装、清了站点数据）transcript 就是 null —— 别在这里
 		// 假装给了对话，否则"跳过重复拉取"这条会被一个不存在的场景喂成假的。
 		const wanted = /sessionId=([^&]+)/.exec(path)
-		return jsonResponse({
-			...bootstrapBody(),
-			transcript: wanted === null
-				? null
-				: { cursor: 9, hasMore: false, records: wanted[1].includes('session-older') ? olderTranscriptRecords : transcriptRecords },
-		})
+		if (wanted === null) return jsonResponse({ ...bootstrapBody(), transcript: null })
+		const records = wanted[1].includes('session-older') ? olderTranscriptRecords : transcriptRecords
+		// 和真宿主一致：带 since=（手机上留着上次那份）时只回"这之后的新记录"并标 partial。
+		const since = /[?&]since=(\d+)/.exec(path)
+		if (since !== null && Number(since[1]) === 9) {
+			return jsonResponse({ ...bootstrapBody(), transcript: { cursor: 9, hasMore: false, records: [], partial: true } })
+		}
+		return jsonResponse({ ...bootstrapBody(), transcript: { cursor: 9, hasMore: false, records } })
 	}
 	if (path.startsWith('/api/bootstrap')) return jsonResponse(bootstrapBody())
 	if (path.startsWith('/api/welcomed')) {
@@ -274,6 +282,11 @@ class FakeEventSource {
 	emit(payload) { this.onmessage?.({ data: JSON.stringify(payload) }) }
 }
 
+// 先把 /api/boot 卡住（必须在页面启动之前挂上，否则第一发就出去了）：
+// 这样才能验证"回包还没到，本地那份已经铺好了"。
+let releaseBoot = () => {}
+bootHold = new Promise((resolve) => { releaseBoot = resolve })
+
 const dom = new JSDOM(html, {
 	url: PAGE_URL,
 	runScripts: 'dangerously',
@@ -282,9 +295,50 @@ const dom = new JSDOM(html, {
 	beforeParse(window) {
 		window.fetch = stubFetch
 		window.EventSource = FakeEventSource
+		// 页面启动时用 XHR 拉 /api/boot（要真实的下载进度：XHR 的 progress 与
+		// content-length 同口径，fetch 的流是解压后的字节、算不准）。jsdom 没有网络，
+		// 这里给一个最小实现：走同一套 stubFetch，并按"整包两次进度"回报。
+		window.XMLHttpRequest = class {
+			constructor() {
+				this.status = 0
+				this.responseText = ''
+				this.onprogress = null
+				this.onload = null
+				this.onerror = null
+				this.ontimeout = null
+			}
+			open(method, path) { this.path = String(path) }
+			setRequestHeader() {}
+			send() {
+				stubFetch(this.path, {}).then(async (response) => {
+					this.status = response.status
+					this.responseText = await response.text()
+					if (typeof this.onprogress === 'function') {
+						const total = Math.max(1, this.responseText.length)
+						progressReports.push([Math.floor(total / 2), total], [total, total])
+						this.onprogress({ lengthComputable: true, loaded: Math.floor(total / 2), total })
+						this.onprogress({ lengthComputable: true, loaded: total, total })
+					}
+					if (typeof this.onload === 'function') this.onload()
+				}).catch(() => { this.status = 0; if (typeof this.onerror === 'function') this.onerror() })
+			}
+		}
 		// 按"老用户"来：手机本地记着上次那个会话。真手机每次进来都是这个状态，
 		// 而首装那趟（没有这个标记）另有一条用例专门查。
 		try { window.localStorage.setItem('dshm.session', SESSION) } catch { /* jsdom 里不该失败，失败就按首装算 */ }
+		// 而且手机上还留着上次那份对话（切到别的 App 再点回来就是这个状态）：
+		// 页面应该**先把这份铺上**，再去后台补新的 —— 不用等整段重新下载。
+		try {
+			window.localStorage.setItem('dshm.transcript.' + SESSION, JSON.stringify({
+				sessionId: SESSION,
+				cursor: 9,
+				at: Date.now(),
+				items: [
+					{ kind: 'user', content: [{ type: 'text', text: '上次留着的那句话' }] },
+					{ kind: 'assistant', content: [{ type: 'text', text: '上次留着的那句回答' }], reasoning: '', cursor: false, reasoningOpen: false },
+				],
+			}))
+		} catch { /* 同上 */ }
 		// jsdom 不会解码图片：给一个假 bitmap，让"转格式"那条路能走到画布那一步
 		// （没有 canvas 包时 getContext 返回 null，于是页面按设计退回"当文件发"）。
 		window.createImageBitmap = async () => ({ width: 4, height: 4, close() {} })
@@ -306,6 +360,37 @@ const { window } = dom
 const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms))
 const $ = (id) => window.document.getElementById(id)
 const textOf = (id) => $(id).textContent.trim()
+
+/* --- 从别的窗口点回来：先铺上本地那份，不等下载 ---------------------------- */
+/*
+ * 现场：切到别的 App 再点回来，页面又被系统回收重开一次，于是又是加载页 + 重下整段
+ * 对话。现在手机上留着一份现场（IndexedDB，写不进去就退到 localStorage），
+ * 回来先把这份铺好，再去后台补新的那几条。
+ *
+ * 同时这也是加载条的用例：进度要**按真实字节走**、而且一直在动（不是卡在一个数上）。
+ */
+{
+	await wait(90)
+	const boot = window.__dshBoot()
+	check('加载页报得出真实进度（不是死的一格）',
+		boot !== undefined && boot.target > 0 && boot.shown > 0, JSON.stringify(boot))
+	check('恢复本地那份之后进度会往前走并说明在同步',
+		boot.target >= 22 && /恢复|同步|连电脑/.test(boot.label), JSON.stringify(boot))
+	check('本地那份已经铺进对话区（还没等到电脑回包）',
+		$('log').textContent.includes('上次留着的那句话'), $('log').textContent.trim().slice(0, 40))
+	check('但界面还没显示出来（能不能看要等鉴权，别让捡到手机的人直接读到）',
+		window.getComputedStyle($('app')).display === 'none', window.getComputedStyle($('app')).display)
+
+	// 放行 /api/boot：带上 since=9 → 宿主只回"没有新记录"的增量，历史必须留着
+	releaseBoot()
+	await wait(220)
+	const after = window.__dshBoot()
+	check('回包到位后进度到 100（并且是按字节报的）',
+		after.target === 100 || progressReports.length > 0, JSON.stringify({ after, reports: progressReports.length }))
+	check('增量回包不会把本地那份历史冲掉',
+		$('log').textContent.includes('上次留着的那句话') && $('log').textContent.includes('上次留着的那句回答'),
+		$('log').textContent.trim().slice(0, 50))
+}
 
 await wait(150)
 

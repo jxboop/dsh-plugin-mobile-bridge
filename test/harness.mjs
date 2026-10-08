@@ -1074,6 +1074,23 @@ async function readInteraction(reader) {
 
 	const bootNoAuth = await fetch(`${base}/api/boot?sessionId=session-test`)
 	check('未登录的 /api/boot 同样被拒（新入口不能开天窗）', bootNoAuth.status === 401, `status ${bootNoAuth.status}`)
+
+	// 手机上留着上次那份对话时，boot 会带 since= 回来：只补新的那几条。
+	// 这是"从别的窗口点回来不用重新加载"的另一半 —— 内容在手机上，请求只补差量。
+	const bootSince = await (await fetch(`${base}/api/boot?sessionId=session-test&since=2`, authed)).json()
+	check('boot 带 since=最新序号 → 对话部分是"没有新记录"的增量',
+		bootSince.transcript?.partial === true && bootSince.transcript.records.length === 0 && bootSince.transcript.cursor === 2,
+		`partial=${bootSince.transcript?.partial} records=${bootSince.transcript?.records?.length}`)
+	check('boot 的增量回包里会话列表照旧齐全（页面还要用它填下拉框）',
+		bootSince.sessions?.length === 2, `${bootSince.sessions?.length} sessions`)
+	const bootSinceOne = await (await fetch(`${base}/api/boot?sessionId=session-test&since=1`, authed)).json()
+	check('boot 带 since=1 → 只回第 2 条（旧的 1 条不重发）',
+		bootSinceOne.transcript?.partial === true && bootSinceOne.transcript.records.length === 1,
+		`${bootSinceOne.transcript?.records?.length} 条`)
+	const bootSinceJunk = await (await fetch(`${base}/api/boot?sessionId=session-test&since=abc`, authed)).json()
+	check('boot 的 since 乱写也不会裁错（当没带）',
+		bootSinceJunk.transcript?.partial === undefined && bootSinceJunk.transcript.records.length === 2,
+		`partial=${bootSinceJunk.transcript?.partial}`)
 }
 
 /* --- 切走再切回来：只补"新的那几条"（since=） ----------------------------- */

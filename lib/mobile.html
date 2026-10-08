@@ -768,6 +768,54 @@
 		return error
 	}
 
+	/**
+	 * 和 api() 同一套错误语义，但**带下载进度**：给加载页报真实百分比用。
+	 *
+	 * 为什么用 XHR 而不是 fetch：fetch 的 ReadableStream 拿到的是**解压后**的字节，
+	 * 而 content-length 是压缩后的大小 —— 两个口径不一样，算出来的百分比会冲到 100%
+	 * 再倒退。XHR 的 progress 事件和 content-length 是同一个口径（都是线上的字节），
+	 * 所以进度是准的。没有进度事件（老浏览器）时退化成普通请求，靠慢爬的动画兜住。
+	 */
+	function apiProgress(path, onProgress) {
+		return new Promise((resolve, reject) => {
+			let request
+			try { request = new XMLHttpRequest() } catch (error) { reject(error); return }
+			request.open('GET', path, true)
+			request.withCredentials = true
+			request.setRequestHeader('accept', 'application/json')
+			if (typeof request.onprogress === 'undefined') {
+				// 不支持进度事件：直接走 api()，别为了进度条把功能搭进去。
+				api(path).then(resolve, reject)
+				return
+			}
+			request.onprogress = (event) => {
+				if (typeof onProgress !== 'function') return
+				if (event.lengthComputable === true && event.total > 0) onProgress(event.loaded, event.total)
+				else onProgress(event.loaded, 0)
+			}
+			request.onerror = () => reject(apiError(0, '网络连接失败'))
+			request.ontimeout = () => reject(apiError(0, '请求超时'))
+			request.onload = () => {
+				if (request.status === 401) { showGate(); reject(apiError(401, 'unauthorized')); return }
+				let body = {}
+				try { body = request.responseText === '' ? {} : JSON.parse(request.responseText) } catch { body = {} }
+				if (request.status === 403 && body.needPin === true) {
+					showGate('登录已过期，请重新输入 PIN')
+					reject(apiError(403, body.error || '需要重新输入 PIN'))
+					return
+				}
+				if (request.status < 200 || request.status >= 300) {
+					reject(apiError(request.status, body.error || ('HTTP ' + request.status)))
+					return
+				}
+				// 回调里已经报过"收到多少字节"，这里补一个 100% 的收尾。
+				if (typeof onProgress === 'function') onProgress(1, 1)
+				resolve(body)
+			}
+			request.send()
+		})
+	}
+
 	function api(path, options) {
 		return fetch(path, Object.assign({ credentials: 'same-origin' }, options)).then(async (response) => {
 			if (response.status === 401) { showGate(); throw apiError(401, 'unauthorized') }
@@ -1220,6 +1268,8 @@
 		// 按"离底部多远"把位置锚回来。
 		if (keep > 0) renderTail(entries, keep)
 		else renderAll(entries)
+		// 顺手把这份对话存到手机上（3 秒最多一次）：从别的窗口回来时靠它"不用重新加载"。
+		saveTranscriptSnapshot()
 	}
 
 	/** Streaming deltas arrive far faster than a phone needs to repaint. */
@@ -1926,25 +1976,87 @@
 		})
 	}
 
-	/** 加载页：把真实步骤换算成百分比，别让用户在空白页前猜。 */
-	let bootSeen = 0
-	let bootDoneAt = 0
-	function bootStep(percent, text) {
+	/**
+	 * 加载页：一根**一直在动**的进度条。
+	 *
+	 * 以前是"走到哪一步跳一格"（12% → 30% → 50% …），隧道慢的时候那格数字能几分钟不动，
+	 * 用户看到的就是"卡死了"，只能反复刷新重来。现在三层：
+	 *   1. 真实进度：下载对话时按**字节数**报（XHR 的 progress 事件，压缩前后都准），
+	 *      所以大文件是实打实地往上走；
+	 *   2. 缓动：屏幕上的数字平滑追目标值，不会跳；
+	 *   3. 慢爬：还没好、目标值也没动时，自己一点一点往上爬（封顶在目标 +10、不超过 95），
+	 *      因为"什么都没发生"最像死机 —— 进度条必须一直在动。
+	 */
+	let bootTarget = 0
+	let bootShown = 0
+	let bootLabel = ''
+	let bootNote = ''
+	let bootRaf = 0
+	let bootLastAt = 0
+
+	function bootPaint() {
 		const fill = $('bootFill')
 		const label = $('bootText')
 		if (fill === null || label === null) return
-		const value = Math.max(bootSeen, Math.min(100, Math.round(percent)))
-		bootSeen = value
+		const value = Math.max(0, Math.min(100, Math.round(bootShown)))
 		fill.style.width = value + '%'
-		if (typeof text === 'string' && text !== '') label.textContent = text + ' · ' + value + '%'
+		const parts = [bootLabel]
+		if (bootNote !== '') parts.push(bootNote)
+		label.textContent = parts.filter((part) => part !== '').join(' · ') + ' · ' + value + '%'
 	}
+
+	function bootTick(now) {
+		const elapsed = bootLastAt === 0 ? 16 : Math.min(200, now - bootLastAt)
+		bootLastAt = now
+		// 缓动追目标 + 慢爬（每秒约 1.2%），封顶：不比目标高太多，也永远不到 97。
+		const chase = (bootTarget - bootShown) * 0.16
+		const creep = bootTarget < 100 && bootShown < Math.min(bootTarget + 10, 96) ? (elapsed / 1000) * 1.2 : 0
+		bootShown = Math.min(100, Math.max(bootShown, bootShown + chase + creep))
+		bootPaint()
+		if (bootShown < bootTarget || bootShown < Math.min(bootTarget + 10, 96)) {
+			bootRaf = requestAnimationFrame(bootTick)
+		} else {
+			bootRaf = 0
+			bootLastAt = 0
+		}
+	}
+
+	/** 报一个"真实进度"目标（步骤或字节算出来的），并把文案换成这一步的说明。 */
+	function bootStep(percent, text, note) {
+		if (typeof percent === 'number' && Number.isFinite(percent)) bootTarget = Math.max(bootTarget, Math.min(100, percent))
+		if (typeof text === 'string' && text !== '') bootLabel = text
+		if (typeof note === 'string') bootNote = note
+		bootPaint()
+		if (bootRaf === 0 && bootShown < bootTarget) {
+			bootLastAt = 0
+			bootRaf = requestAnimationFrame(bootTick)
+		}
+	}
+
+	/** 下载进度：received/total 都是**压缩后**的字节（XHR progress 与 content-length 同一口径）。 */
+	function bootBytes(received, total) {
+		if (!(total > 0)) { bootStep(undefined, undefined, received > 0 ? Math.round(received / 1024) + ' KB' : ''); return }
+		const ratio = Math.max(0, Math.min(1, received / total))
+		bootStep(ratio * 100, undefined, Math.round(received / 1024) + ' / ' + Math.round(total / 1024) + ' KB')
+	}
+
+	let bootDoneAt = 0
+	/**
+	 * 诊断/测试用的读数：加载条的真实目标值、动画显示值、当前这步在干什么。
+	 * 手机上"卡着不动"这种投诉，靠肉眼看动画是没法复现的 —— 有这个就能直接断言。
+	 */
+	window.__dshBoot = () => ({ shown: Math.round(bootShown * 10) / 10, target: bootTarget, label: bootLabel, note: bootNote })
 	function bootDone() {
 		const boot = $('boot')
 		if (boot === null) return
-		bootStep(100, '好了')
 		bootDoneAt = Date.now()
-		setTimeout(() => { boot.classList.add('done') }, 220)
-		setTimeout(() => { if (boot.parentNode) boot.parentNode.removeChild(boot) }, 700)
+		bootTarget = 100
+		bootLabel = '好了'
+		bootNote = ''
+		// 收尾也要看得见"到 100"这一下，而不是直接消失。
+		if (bootRaf === 0) { bootLastAt = 0; bootRaf = requestAnimationFrame(bootTick) }
+		setTimeout(() => { boot.classList.add('done') }, 260)
+		setTimeout(() => { if (boot.parentNode) boot.parentNode.removeChild(boot) }, 760)
 	}
 
 	/* --------------------------------------------------------- 自定义背景 */
@@ -1959,27 +2071,130 @@
 	 */
 	const BG_DB = 'dshm-media'
 	const BG_STORE = 'blobs'
+	/** 会话对话快照：换会话要有缓存，**从别的窗口回来（PWA 被系统回收后再打开）也要有**。 */
+	const TX_STORE = 'transcripts'
+	const BG_DB_VERSION = 2
 
 	function openBgDb() {
 		return new Promise((resolve, reject) => {
 			if (typeof indexedDB === 'undefined' || indexedDB === null) { reject(new Error('no idb')); return }
-			const request = indexedDB.open(BG_DB, 1)
-			request.onupgradeneeded = () => { request.result.createObjectStore(BG_STORE) }
+			const request = indexedDB.open(BG_DB, BG_DB_VERSION)
+			request.onupgradeneeded = () => {
+				const db = request.result
+				// 老库（version 1）只有 blobs：升级时按需补建，别把已有背景弄丢。
+				if (db.objectStoreNames.contains(BG_STORE) === false) db.createObjectStore(BG_STORE)
+				if (db.objectStoreNames.contains(TX_STORE) === false) db.createObjectStore(TX_STORE)
+			}
 			request.onsuccess = () => resolve(request.result)
 			request.onerror = () => reject(request.error ?? new Error('idb open failed'))
 		})
 	}
 
-	function idbRun(mode, work) {
+	function idbRun(mode, work, storeName = BG_STORE) {
 		return openBgDb().then((db) => new Promise((resolve, reject) => {
-			const tx = db.transaction(BG_STORE, mode)
-			const store = tx.objectStore(BG_STORE)
+			const tx = db.transaction(storeName, mode)
+			const store = tx.objectStore(storeName)
 			let value
 			try { value = work(store) } catch (error) { reject(error); return }
 			tx.oncomplete = () => { db.close(); resolve(value?.result) }
 			tx.onerror = () => { db.close(); reject(tx.error ?? new Error('idb tx failed')) }
 		}))
 	}
+
+	/* ---- 把"已经加载好的对话"留在手机上 ---------------------------------- */
+
+	/**
+	 * 存一份当前会话的现场（items + 走到哪个序号）。
+	 *
+	 * 为什么要落到 IndexedDB（而不是只在内存里）：手机（尤其 iOS 的 PWA）切到别的
+	 * App 之后很可能被系统回收，回来是**整个页面重新加载** —— 内存里的缓存全没了，
+	 * 于是又走一遍"加载页 + 重下整段对话"。存到本地之后，回来先把这份铺上，
+	 * 再去后台补新的那几条（通常一条都没有），用户看到的就是"点进来就在那儿"。
+	 *
+	 * 只留最近 200 条、只留当前会话：手机空间和隐私都要顾。
+	 */
+	const TX_MAX_ITEMS = 200
+	/** localStorage 兜底时的大小上限：太大就少存几条，别把 5 MB 配额撑爆。 */
+	const TX_MAX_BYTES = 300 * 1024
+	const TX_LOCAL_PREFIX = 'dshm.transcript.'
+	let transcriptSavedAt = 0
+
+	/** 本地兜底用的键。存不了 IndexedDB（无痕/隐私模式）时至少还有它。 */
+	function transcriptLocalKey(sessionId) { return TX_LOCAL_PREFIX + sessionId }
+
+	function saveTranscriptLocal(payload) {
+		try {
+			let items = payload.items
+			let text = ''
+			// 从最旧的开始丢，直到能塞进上限。
+			for (let count = items.length; count > 0; count -= 10) {
+				text = JSON.stringify({ sessionId: payload.sessionId, cursor: payload.cursor, at: payload.at, items: items.slice(-count) })
+				if (text.length <= TX_MAX_BYTES) break
+			}
+			if (text === '') return
+			writeLocal(transcriptLocalKey(payload.sessionId), text)
+		} catch { /* 写不进去就算了 */ }
+	}
+
+	function loadTranscriptLocal(sessionId) {
+		try {
+			const raw = readLocal(transcriptLocalKey(sessionId))
+			if (raw === '') return null
+			const parsed = JSON.parse(raw)
+			if (Array.isArray(parsed?.items) === false || parsed.items.length === 0) return null
+			return parsed
+		} catch { return null }
+	}
+
+	function saveTranscriptSnapshot(force = false) {
+		if (state.sessionId === null || state.items.length === 0) return
+		const now = Date.now()
+		if (force !== true && now - transcriptSavedAt < 3000) return
+		transcriptSavedAt = now
+		const payload = {
+			sessionId: state.sessionId,
+			cursor: state.cursor,
+			items: state.items.slice(-TX_MAX_ITEMS),
+			at: now,
+		}
+		// 两条腿都试：IndexedDB 装得下更多，localStorage 在无痕模式下也常常还在。
+		if (typeof indexedDB !== 'undefined' && indexedDB !== null) {
+			idbRun('readwrite', (store) => store.put(payload, state.sessionId), TX_STORE).catch(() => saveTranscriptLocal(payload))
+		} else {
+			saveTranscriptLocal(payload)
+		}
+	}
+
+	/** 读回某个会话的现场（没有/读不了都返回 null）。 */
+	async function loadTranscriptSnapshot(sessionId) {
+		if (sessionId === '') return null
+		let found = null
+		if (typeof indexedDB !== 'undefined' && indexedDB !== null) {
+			try {
+				found = await idbRun('readonly', (store) => store.get(sessionId), TX_STORE)
+			} catch { found = null }
+		}
+		if (found === undefined || found === null) found = loadTranscriptLocal(sessionId)
+		if (found === null || found === undefined) return null
+		if (Array.isArray(found.items) === false || found.items.length === 0) return null
+		// 放太久（超过一天）就别当真：那时候早就该重新读一遍了。
+		if (typeof found.at === 'number' && Date.now() - found.at > 24 * 3600 * 1000) return null
+		return found
+	}
+
+	/** 退出登录 / 撤权时把本地这份对话抹掉（别留在手机上）。 */
+	function clearTranscriptSnapshots() {
+		if (typeof indexedDB !== 'undefined' && indexedDB !== null) {
+			idbRun('readwrite', (store) => store.clear(), TX_STORE).catch(() => {})
+		}
+		try {
+			for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+				const key = window.localStorage.key(index)
+				if (typeof key === 'string' && key.startsWith(TX_LOCAL_PREFIX)) window.localStorage.removeItem(key)
+			}
+		} catch { /* 清不掉就算了 */ }
+	}
+
 
 	/** 拿背景的可用地址：本地有就用本地，没有就下一次、存下来。 */
 	async function backdropSource(info) {
@@ -2715,7 +2930,12 @@
 		// 二次确认：点一下就把这台手机的登录权撤掉 —— 而且**所有**开着的页面一起掉线
 		// （日志里见过 6 秒内 6 次 logout，然后满屏 401，用户以为"发不出消息"）。
 		if (window.confirm('要退出登录吗？退出后手机上需要重新输入 PIN。') !== true) return
-		api('api/logout', { method: 'POST' }).catch(() => {}).finally(() => showGate())
+		api('api/logout', { method: 'POST' }).catch(() => {}).finally(() => {
+			// 退出登录就把手机上那份对话也抹掉：能不解 PIN 看到上次内容，等于没退出。
+			clearTranscriptSnapshots()
+			state.cache.clear()
+			showGate()
+		})
 	})
 
 	// 哨兵：连接还在、但已经不再来数据（电脑睡眠最典型）时，onerror 不会响，
@@ -2752,7 +2972,13 @@
 				else void video.play()
 			} catch { /* 播放被拦就算了，背景而已 */ }
 		}
-		if (hidden === false && state.sessionId !== null) pullTranscript()
+		if (hidden) {
+			// 切走前把这份对话**立刻**落到手机上：iOS 很可能直接回收这个页面，
+			// 回来就是整个重新加载 —— 存下来才不会又走一遍"加载页 + 重下整段"。
+			saveTranscriptSnapshot(true)
+			return
+		}
+		if (state.sessionId !== null) pullTranscript()
 	})
 
 	// 装成 App（PWA）：有 service worker 就能"从主屏幕点开不用等网络"。
@@ -3021,20 +3247,52 @@
 
 	/* --------------------------------------------------------------- boot */
 
-	// 打开时**一次请求**把"会话列表 + 上次那个会话的对话"都拿回来：
-	// 隧道慢的时候（一个来回好几秒），省掉一个来回就是省掉好几秒。
+	// 打开时**一次请求**把"会话列表 + 上次那个会话的对话"都拿回来。
+	//
+	// 而且先看看手机上有没有留着上次那份对话（切到别的 App 再回来、PWA 被系统回收
+	// 之后重开，都是整个页面重新加载）：有就先在内存里铺好，等这次请求一回来立刻显示。
+	// 存的那份带着"读到第几号事件"，所以这次请求只补新的那几条（通常一条都没有），
+	// 用户看到的就是"点进来就在那儿"，而不是又转一次圈、再等一下整段下载。
+	//
+	// ⚠️ 缓存只往 DOM 里铺，**不提前显示**：能不能看要等 /api/boot 的 200（那就是
+	// 鉴权）。否则捡到手机的人不输 PIN 就能读到上一次的对话。
 	const remembered = readLocal('dshm.session')
-	bootStep(12, '正在连电脑')
-	api('api/boot' + (remembered === '' ? '' : '?sessionId=' + encodeURIComponent(remembered)))
-		.then((body) => {
+	// 读本地那份缓存是异步的，所以这段包在异步块里；其余代码照旧同步执行。
+	void (async () => {
+		let restored = null
+		if (remembered !== '') {
+			bootStep(6, '正在启动')
+			restored = await loadTranscriptSnapshot(remembered)
+		}
+		if (restored !== null) {
+			state.sessionId = restored.sessionId
+			state.items = restored.items
+			state.tools = new Map()
+			state.live = null
+			state.reasoning = null
+			state.cursor = typeof restored.cursor === 'number' ? restored.cursor : 0
+			rendered = []
+			render()
+			bootStep(22, '已恢复上次的对话', '正在同步新消息')
+		}
+		const since = restored !== null && restored.sessionId === remembered && state.cursor > 0 ? '&since=' + state.cursor : ''
+		bootStep(30, '正在连电脑')
+		return apiProgress('api/boot' + (remembered === '' ? '' : '?sessionId=' + encodeURIComponent(remembered) + since), bootBytes)
+			.then((body) => {
 			if (body !== null && body !== undefined && body.welcomed === true) welcomedOnServer = true
 			// 对话先铺上，再让 loadSessions 去挑会话（它可能换成另一个）。
 			if (body?.transcript !== undefined && body.transcript !== null) {
-				applySnapshot({
-					records: Array.isArray(body.transcript.records) ? body.transcript.records : [],
-					cursor: body.transcript.cursor ?? 0,
-					hasMore: body.transcript.hasMore === true,
-				})
+				// 带 since 的回包只含"新记录"（宿主标的 partial）：**只能追加**，
+				// 不能清空重建 —— 手机上恢复的那份历史就在里面。
+				if (body.transcript.partial === true) {
+					applyPartialSnapshot({ records: body.transcript.records, cursor: body.transcript.cursor })
+				} else {
+					applySnapshot({
+						records: Array.isArray(body.transcript.records) ? body.transcript.records : [],
+						cursor: body.transcript.cursor ?? 0,
+						hasMore: body.transcript.hasMore === true,
+					})
+				}
 				// 刚开机那次已经在 /api/boot 里拿到同一份对话了 —— 接着 connect() 要开长
 				// 连接，它默认会顺手再拉一次（防 SSE 把大包缓冲住）；这次已经是最新的，
 				// 再拉就是白白多一个来回，慢网络上那正是"进去慢"的来源。
@@ -3044,13 +3302,14 @@
 				state.lastPullSession = remembered
 				state.lastFrameAt = Date.now()
 			}
-			bootStep(30, '已连上电脑')
+			bootStep(70, '已连上电脑')
 			hide(gate); show(app); switchTab('task')
 			maybeWelcome()
 			return loadSessions(body)
 		})
-		.then(() => { bootDone() })
-		.catch(() => { bootDone() /* 没登录成功就交给 PIN 门，别让加载页挡着 */ })
+			.then(() => { bootDone() })
+			.catch(() => { bootDone() /* 没登录成功就交给 PIN 门，别让加载页挡着 */ })
+	})()
 })()
 </script>
 </body>
