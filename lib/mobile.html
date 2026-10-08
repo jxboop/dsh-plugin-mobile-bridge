@@ -121,9 +121,13 @@
 	#boot .bootbar i { display: block; height: 100%; width: 0%; border-radius: 99px; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .2s; }
 	#boot .boottext { margin-top: 10px; font-size: 12px; color: var(--muted); }
 
-	/* 长对话的流畅度：这些行一旦滚出屏幕就不参与排版/绘制。
-	   没有 content-visibility 的老浏览器会忽略这行，行为不变。 */
-	.row, .tool, .deliver, .think { content-visibility: auto; contain-intrinsic-size: auto 76px; }
+	/* 长对话的流畅度：这些块一旦滚出屏幕就不参与排版/绘制。
+	   ⚠️ 只给【折叠块】用，绝不能给 .row：消息行正是用户要滚动浏览的东西，而
+	   content-visibility 对没渲染过的行只能用 contain-intrinsic-size 估算高度 ——
+	   scrollHeight 因此是说谎的，滚到那儿行高突然变大，视口内容就被顶回去
+	   （现象正是"拖一下又弹回原处、看不到消息"）。折叠块默认只有 132px 高，
+	   估算误差小得多，收益也主要在这里（工具输出又长又重）。 */
+	.tool, .deliver, .think { content-visibility: auto; contain-intrinsic-size: auto 132px; }
 
 	/* ---- 自定义背景：手机自己挑的一段视频/一张图铺满整屏 ----
 	   视频在最底层（z-index:0），上面盖一层压暗的纱，保证文字看得清；
@@ -1019,30 +1023,58 @@
 			'</details>'
 	}
 
-	function render() {
-		const sessionId = state.sessionId
-		const parts = []
+	/**
+	 * 已经铺在屏幕上的那一组内容（{ key, html }）。增量渲染的账本。
+	 *
+	 * 为什么要 key：手机上"界面定在一个地方、拖一下又自动弹回去、看不到消息"的根因
+	 * 就是每帧 `log.innerHTML = …` 整段重排 —— 每次重排都会重置滚动位置，还会把
+	 * content-visibility 记住的行高、已经加载好的图片一起丢掉。有了 key 就能只动真正
+	 * 变化的那一条，其余节点原样留着。
+	 */
+	let rendered = []
+
+	const nodeTemplate = document.createElement('template')
+
+	/** 一条内容 = 恰好一个顶层元素（render 靠这个 1:1 关系按下标复用节点）。 */
+	function nodeOf(html) {
+		nodeTemplate.innerHTML = html
+		return nodeTemplate.content.firstElementChild
+	}
+
+	/** 会话是空的 / 打不开时得给个说法，否则用户只会以为页面坏了。 */
+	function emptyHint(sessionId) {
+		const blocked = state.unsupported.get(sessionId)
+		if (blocked !== undefined) return '这个会话在手机上打不开（它是 agent 自己派生的子会话）。用上面的下拉框换一个会话。'
+		if (state.sessionBlank === true) return '这个会话还是空的 —— 用上面的下拉框切到别的会话。'
+		return '正在读取会话内容…（一直这样点右上角「刷新」）'
+	}
+
+	/** 把当前状态铺成一组 { key, html }：key 稳定（条目序号 + 类型）。 */
+	function buildEntries(sessionId) {
+		const entries = []
 		for (let index = 0; index < state.items.length; index += 1) {
 			const item = state.items[index]
 			if (item.kind === 'user') {
-				parts.push('<div class="row user"><div class="bubble">' + blocksToHtml(item.content, sessionId) + '</div></div>')
+				entries.push({ key: 'u' + index, html: '<div class="row user"><div class="bubble">' + blocksToHtml(item.content, sessionId) + '</div></div>' })
 			} else if (item.kind === 'assistant') {
-				parts.push(thinkHtml(item, index))
+				const think = thinkHtml(item, index)
+				if (think !== '') entries.push({ key: 't' + index, html: think })
 				const inner = blocksToHtml(item.content, sessionId) + (item.cursor ? '<span class="cursor"></span>' : '')
-				if (inner.trim() !== '') parts.push('<div class="row"><div class="bubble">' + inner + '</div></div>')
+				if (inner.trim() !== '') entries.push({ key: 'a' + index, html: '<div class="row"><div class="bubble">' + inner + '</div></div>' })
 			} else if (item.kind === 'tool') {
 				const body = item.result === null ? (item.done ? '（无输出）' : '运行中…') : item.result
-				parts.push(
-					'<div class="tool' + (item.open ? ' open' : '') + '" data-i="' + index + '">' +
-					'<div class="name">🔧 ' + escapeHtml(item.name) + '</div>' +
-					'<div class="body' + (item.error ? ' error' : '') + '">' + escapeHtml(body) + '</div>' +
-					// 素材缩略图必须放在折叠区【外面】：.body 默认只有 132px 高、
-					// 超出裁掉，图放里面就等于没放（用户还是什么都看不到）。
-					mediaPathHtml(body) +
-					'</div>'
-				)
+				entries.push({
+					key: 'c' + index,
+					html: '<div class="tool' + (item.open ? ' open' : '') + '" data-i="' + index + '">' +
+						'<div class="name">🔧 ' + escapeHtml(item.name) + '</div>' +
+						'<div class="body' + (item.error ? ' error' : '') + '">' + escapeHtml(body) + '</div>' +
+						// 素材缩略图必须放在折叠区【外面】：.body 默认只有 132px 高、
+						// 超出裁掉，图放里面就等于没放（用户还是什么都看不到）。
+						mediaPathHtml(body) +
+						'</div>',
+				})
 			} else if (item.kind === 'note') {
-				parts.push('<div class="note">' + escapeHtml(item.text) + '</div>')
+				entries.push({ key: 'n' + index, html: '<div class="note">' + escapeHtml(item.text) + '</div>' })
 			} else if (item.kind === 'deliver') {
 				// agent 交付的素材：图片/视频直接给缩略图（能点开、能长按存相册），
 				// 其它文件给一行"描述 + 文件名"，至少让手机上知道电脑上有什么。
@@ -1056,40 +1088,95 @@
 					const name = path.split(/[\\/]/).pop() ?? path
 					return '<div class="drow">📄 ' + escapeHtml(description === '' ? name : description + ' · ' + name) + '</div>'
 				}).join('')
-				parts.push('<div class="deliver"><div class="dtitle">📦 素材 / 交付物</div>' + rows + '</div>')
+				entries.push({ key: 'd' + index, html: '<div class="deliver"><div class="dtitle">📦 素材 / 交付物</div>' + rows + '</div>' })
 			}
 		}
-		// innerHTML resets the scroll offset, so put it back where the reader was.
+		return entries
+	}
+
+	/**
+	 * 只动尾部：新消息、正在流式输出的那一条、本地回声。
+	 *
+	 * 用户往上翻着看历史时，尾部是在视口【下面】长高的，浏览器不会动 scrollTop ——
+	 * 读者的位置天然保住。以前这里整段重排，于是每一条流式增量都把位置抹掉一次，
+	 * 表现就是"拖一下又弹回原处"。
+	 */
+	function renderTail(entries, keep) {
+		while (log.childNodes.length > keep) log.removeChild(log.lastChild)
+		for (let index = keep; index < entries.length; index += 1) {
+			const node = nodeOf(entries[index].html)
+			if (node !== null) log.appendChild(node)
+		}
+		// 贴着底部看直播时继续跟着走；往上翻的时候绝不抢滚动条。
+		if (state.stick) log.scrollTop = log.scrollHeight
+	}
+
+	/**
+	 * 结构变了（换会话、快照重放、前面的条目被改）才整段重排 —— 但要把读者的位置
+	 * 锚回去，而且不能写回同一个 scrollTop：重排后 scrollHeight 变了，同一个
+	 * scrollTop 对应的内容已经不是原来那段了。按【离底部多远】锚才稳。
+	 */
+	function renderAll(entries) {
+		const pinned = state.stick
+		const gapFromBottom = Math.max(0, log.scrollHeight - log.scrollTop)
+		while (log.childNodes.length > 0) log.removeChild(log.lastChild)
+		for (const entry of entries) {
+			const node = nodeOf(entry.html)
+			if (node !== null) log.appendChild(node)
+		}
+		const restore = () => {
+			if (touching) return
+			log.scrollTop = pinned ? log.scrollHeight : Math.max(0, log.scrollHeight - gapFromBottom)
+		}
+		restore()
+		// 布局落定后高度还会变一次（图片、折叠区、字体）：再锚一帧就好。
+		// 只补这一帧 —— 一直抢滚动条就又变成"拖不动"了。
+		requestAnimationFrame(restore)
+	}
+
+	function render() {
+		const sessionId = state.sessionId
+		const entries = buildEntries(sessionId)
 		// 一片全白必须给个说法：会话为空时以前什么都不显示，用户只会以为页面坏了 ——
 		// 而手机记着上次选的会话，若它恰好是空的，就成了"每次打开都空白"。
-		if (parts.length === 0) {
-			const blocked = state.unsupported.get(sessionId)
-			const hint = blocked !== undefined
-				? '这个会话在手机上打不开（它是 agent 自己派生的子会话）。用上面的下拉框换一个会话。'
-				: (state.sessionBlank === true
-					? '这个会话还是空的 —— 用上面的下拉框切到别的会话。'
-					: '正在读取会话内容…（一直这样点右上角「刷新」）')
-			parts.push('<div class="note">' + escapeHtml(hint) + '</div>')
-		}
-		const pinned = state.stick
-		const previousTop = log.scrollTop
+		if (entries.length === 0) entries.push({ key: 'empty', html: '<div class="note">' + escapeHtml(emptyHint(sessionId)) + '</div>' })
 		// 本地回声排在最后：用户刚发的那句永远在眼前，而不是"发出去就消失了"。
-		log.innerHTML = parts.join('') + pendingHtml()
-		log.scrollTop = pinned ? log.scrollHeight : previousTop
+		entries.push(...pendingEntries())
+
+		let keep = 0
+		while (keep < entries.length && keep < rendered.length &&
+			entries[keep].key === rendered[keep].key && entries[keep].html === rendered[keep].html) keep += 1
+		if (keep === entries.length && keep === rendered.length) return // 一个字节都没变，别动 DOM
+
+		const before = rendered
+		rendered = entries
+		// 前缀还在 → 只重排差异之后的那一段（换会话/快照重放才可能一片都不剩）。
+		// 前半段节点留着，等于读者的位置也留着；只有 keep 为 0 时才需要整段重排 +
+		// 按"离底部多远"把位置锚回来。
+		if (keep > 0) renderTail(entries, keep)
+		else renderAll(entries)
 	}
 
 	/** Streaming deltas arrive far faster than a phone needs to repaint. */
 	let renderQueued = false
+	/** 手指还在屏幕上（或惯性滚动还没停）时先不画，见下面的触摸监听。 */
+	let touching = false
+	let renderHeld = false
+
 	function scheduleRender() {
 		if (renderQueued) return
 		renderQueued = true
 		requestAnimationFrame(() => {
 			renderQueued = false
-			// Rebuilding innerHTML throws away an in-progress text selection — and
+			// 手指还在屏幕上时重排，等于把用户正在拖动的内容从手底下换掉：
+			// 现象就是"拖一下又弹回原处"。先记下来，等手停下来再补画。
+			if (touching) { renderHeld = true; return }
+			// Rebuilding the list throws away an in-progress text selection — and
 			// selecting text is exactly how a reader copies something on a phone.
 			// Hold the frame until the selection is released.
 			const selection = window.getSelection?.()
 			if (selection && selection.isCollapsed === false && selection.toString().trim() !== '') {
+				renderHeld = true
 				setTimeout(scheduleRender, 200)
 				return
 			}
@@ -1183,7 +1270,37 @@
 	}, { passive: true })
 	for (const type of ['pointerup', 'pointercancel']) log.addEventListener(type, cancelPress, { passive: true })
 
-	log.addEventListener('scroll', () => { state.stick = atBottom() })
+	log.addEventListener('scroll', () => {
+		state.stick = atBottom()
+		// 还在冻结中就说明这是惯性滚动（iOS 松手后还会滑一段）：把冻结续上，
+		// 否则会在滑动中途重排，位置同样被抢走。
+		if (touching) keepFrozen()
+	})
+
+	/*
+	 * 拖动期间冻结渲染。
+	 *
+	 * 现场：手机上"界面定在一个地方，拖一下又自动弹回去，看不了消息"。因为流式输出
+	 * 每帧都会重排对话区，而手指底下的滚动位置每次都被重排重置 —— 拖多少都被抹掉。
+	 * 所以：手指按下 → 冻结；松手后等滚动事件停下来（约 160ms 没有新的 scroll）
+	 * → 补画一次。
+	 */
+	let touchIdle = 0
+	function holdFrozen() { touching = true; clearTimeout(touchIdle) }
+	function keepFrozen() {
+		clearTimeout(touchIdle)
+		touchIdle = setTimeout(() => {
+			touching = false
+			if (renderHeld) { renderHeld = false; scheduleRender() }
+		}, 160)
+	}
+	log.addEventListener('touchstart', holdFrozen, { passive: true })
+	log.addEventListener('touchmove', holdFrozen, { passive: true })
+	log.addEventListener('touchend', keepFrozen, { passive: true })
+	log.addEventListener('touchcancel', keepFrozen, { passive: true })
+	log.addEventListener('pointerdown', holdFrozen)
+	window.addEventListener('pointerup', () => { if (touching) keepFrozen() }, { passive: true })
+	window.addEventListener('pointercancel', () => { if (touching) keepFrozen() }, { passive: true })
 
 	/* --------------------------------------------------------- event fold */
 
@@ -1573,13 +1690,19 @@
 	})
 
 	/** 回声那一小块：虚线边，和真消息区分开；带状态与撤回按钮。 */
-	function pendingHtml() {
+	/**
+	 * 本地回声（排队中 / 已发出的那几句），每条一个 key。
+	 *
+	 * 以前这里返回一整段拼好的 HTML，整个对话区一起重排 —— 导致"刚发出去的那条"
+	 * 每帧都被重建（滚动位置一起被重置）。现在它和别的条目一样参与增量对比：
+	 * entry.key 本来就唯一（撤回按钮也用它），直接拿来当 key。
+	 */
+	function pendingEntries() {
 		// 兜底：十分钟还没等到真消息的回声就别再挂着了（重连、消息被别处撤掉等），
 		// 免得屏幕上永远吊着一条"排队中"。
 		const now = Date.now()
 		state.pending = state.pending.filter((entry) => now - entry.at < 10 * 60 * 1000)
 		const mine = state.pending.filter((entry) => entry.sessionId === state.sessionId)
-		if (mine.length === 0) return ''
 		return mine.map((entry, index) => {
 			// 说清楚"为什么没反应"：排队中的消息要等这一轮跑完才轮到它。
 			// 不写清楚，用户就会以为没发出去，然后一遍遍重发 —— 越重发排得越长。
@@ -1591,12 +1714,15 @@
 			const buttons = entry.state === 'queued' || entry.state === 'sent'
 				? '<button class="recall" data-recall="' + entry.key + '">撤回</button>'
 				: '<button class="recall ghost" data-dismiss="' + entry.key + '">知道了</button>'
-			return '<div class="row user"><div class="bubble pending">' +
-				escapeHtml(entry.text || '（附件）') + extra +
-				'<div class="prow"><span class="pstate">' + label + '</span>' + buttons + '</div>' +
-				(entry.error === '' ? '' : '<div class="perr">' + escapeHtml(entry.error) + '</div>') +
-				'</div></div>'
-		}).join('')
+			return {
+				key: 'p' + entry.key,
+				html: '<div class="row user"><div class="bubble pending">' +
+					escapeHtml(entry.text || '（附件）') + extra +
+					'<div class="prow"><span class="pstate">' + label + '</span>' + buttons + '</div>' +
+					(entry.error === '' ? '' : '<div class="perr">' + escapeHtml(entry.error) + '</div>') +
+					'</div></div>',
+			}
+		})
 	}
 
 	/** 加载页：把真实步骤换算成百分比，别让用户在空白页前猜。 */

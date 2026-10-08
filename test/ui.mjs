@@ -1315,6 +1315,119 @@ check('说明指向了下拉框或读取状态',
 	promptFailTimes = 0
 }
 
+/* --- 手机上"拖一下又弹回原处、看不到消息" ---------------------------------- */
+/*
+ * 现场：界面像被钉在一处，拖动后自己弹回去，历史消息根本翻不动。
+ * 根因两条，都是渲染策略造成的（跟网络、桥、隧道无关）：
+ *   1. 每帧 `log.innerHTML = …` 整段重排 → 滚动位置每次都被重置，手指拖多少抹多少；
+ *   2. content-visibility 对还没渲染过的行只能用 contain-intrinsic-size 估算高度，
+ *      scrollHeight 因此是说谎的：滚到那儿行高突然变大，视口内容被顶回去。
+ * 现在：增量渲染（只动真正变化的那一条）+ 拖动期间冻结渲染 + 按"离底部多远"锚定。
+ */
+{
+	const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '')
+	const rule = /([^{}]*)\{[^{}]*content-visibility[^{}]*\}/.exec(css)
+	const selector = rule === null ? '' : rule[1]
+	check('消息行不参与 content-visibility（行高被估算 = 滚动位置乱跳）',
+		selector !== '' && !/\.row\b/.test(selector), selector.trim())
+	check('折叠块仍享受 content-visibility（工具输出又长又重，收益在这里）',
+		/\.tool\b/.test(selector) && /\.think\b/.test(selector), selector.trim())
+}
+
+{
+	const log = $('log')
+	// jsdom 不做排版，把"高度"喂进去才能测滚动锚定：高度按子节点数算，好预测。
+	const heightOf = () => 200 * log.children.length
+	Object.defineProperty(log, 'scrollHeight', { configurable: true, get: heightOf })
+	Object.defineProperty(log, 'clientHeight', { configurable: true, get: () => 400 })
+	// 派发一次 scroll，让页面按真实语义更新 state.stick（jsdom 里改 scrollTop 不会自己触发）。
+	const noteScrolled = () => log.dispatchEvent(new window.Event('scroll'))
+
+	// 1) 往上翻着看历史时来了新消息：老节点必须原样留着，滚动位置不能被抢。
+	//    先摆一个"已经有内容"的会话：一片空白时第一条消息属于结构变化（keep=0），
+	//    本来就会走整段重排，测不出增量。
+	source.emit({
+		t: 'snapshot',
+		cursor: 900,
+		hasMore: false,
+		records: [
+			{ type: 'event', event: { type: 'user/message', seq: 901, time: 901, data: { id: 's1', role: 'user', content: [{ type: 'text', text: '增量渲染的底子一' }] } } },
+			{ type: 'event', event: { type: 'assistant/message', seq: 902, time: 902, data: { turn: 91, step: 1, message: { id: 's2', role: 'assistant', content: [{ type: 'text', text: '增量渲染的底子二' }] } } } },
+			{ type: 'event', event: { type: 'tool/call', seq: 903, time: 903, data: { turn: 91, step: 2, callId: 'sc1', name: 'read', arguments: '{"file_path":"a.txt"}' } } },
+		],
+	})
+	await wait(140)
+	const nodesBefore = [...log.children]
+	check('对话区里已经有内容可测', nodesBefore.length > 0, String(nodesBefore.length))
+	log.scrollTop = 300
+	noteScrolled()
+	source.emit({
+		t: 'event',
+		event: { type: 'user/message', seq: 190, time: 190, data: { id: 'm190', role: 'user', content: [{ type: 'text', text: '追加一条，看你跳不跳' }] } },
+	})
+	await wait(90)
+	const nodesAfter = [...log.children]
+	// 断言的是"节点有没有被销毁"：整段重排（旧实现）会把每一行都重建，
+	// 新实现只可能动尾部，之前的节点必须原样还在 DOM 里。
+	// 本地回声（虚线气泡）是例外：真消息进来时它本来就该被替换掉，不算被销毁。
+	const stable = (nodes) => nodes.filter((node) => node.querySelector('.bubble.pending') === null)
+	check('追加新消息时，原来的行一个都没被销毁（增量渲染，不是整段重排）',
+		stable(nodesBefore).every((node) => nodesAfter.includes(node)),
+		`${nodesBefore.length} -> ${nodesAfter.length}`)
+	check('新消息确实画出来了', log.textContent.includes('追加一条，看你跳不跳'))
+	check('往上翻着看历史时追加消息，不抢滚动位置', log.scrollTop === 300, String(log.scrollTop))
+
+	// 2) 流式输出只改最后一条：前缀节点必须原地不动（否则每帧都在重置滚动）。
+	const prefix = [...log.children]
+	source.emit({
+		t: 'event',
+		event: { type: 'assistant/message', seq: 191, time: 191, data: { turn: 19, step: 1, message: { id: 'm191', role: 'assistant', content: [{ type: 'text', text: '正在输出' }] } } },
+	})
+	await wait(60)
+	const prefixNow = [...log.children]
+	source.emit({
+		t: 'event',
+		event: { type: 'assistant/message', seq: 192, time: 192, data: { turn: 19, step: 1, message: { id: 'm191', role: 'assistant', content: [{ type: 'text', text: '正在输出，第二段' }] } } },
+	})
+	await wait(90)
+	const afterStream = [...log.children]
+	check('流式增量只动尾巴，前面的节点原地不动',
+		stable(prefix).every((node) => afterStream.includes(node)) && stable(prefixNow).every((node) => afterStream.includes(node)),
+		`${prefix.length} 个前缀节点`)
+
+	// 3) 结构变了（快照重放）才整段重排 —— 但要按"离底部多远"锚回来：
+	//    写回同一个 scrollTop 是错的，重排后 scrollHeight 变了，那段内容就不在眼前了。
+	const countBefore = log.children.length
+	log.scrollTop = 300
+	noteScrolled()
+	const gapFromBottom = heightOf() - 300
+	const records = []
+	for (let seq = 1; seq <= Math.max(countBefore + 4, 8); seq += 1) {
+		records.push({ type: 'event', event: { type: 'user/message', seq, time: seq, data: { id: 'r' + seq, role: 'user', content: [{ type: 'text', text: '快照重放第 ' + seq + ' 条' }] } } })
+	}
+	source.emit({ t: 'snapshot', cursor: 999, hasMore: false, records })
+	await wait(140)
+	const expected = Math.max(0, heightOf() - gapFromBottom)
+	check('结构重排后按"离底部多远"锚回（而不是写回旧的 scrollTop）',
+		log.scrollTop === expected && expected !== 300,
+		`scrollTop=${log.scrollTop}（期望 ${expected}，旧写法会停在 300）`)
+
+	// 4) 手指按住时冻结渲染：拖动期间绝不能被重排抢走位置，松手后必须补画。
+	const frozenAt = log.children.length
+	log.dispatchEvent(new window.Event('touchstart'))
+	source.emit({
+		t: 'event',
+		event: { type: 'user/message', seq: 1900, time: 1900, data: { id: 'm1900', role: 'user', content: [{ type: 'text', text: '拖动期间到的消息' }] } },
+	})
+	await wait(160)
+	check('手指按住时先不重排（拖多少都不会被抹掉）', log.children.length === frozenAt, `${frozenAt} -> ${log.children.length}`)
+	log.dispatchEvent(new window.Event('touchend'))
+	await wait(340)
+	check('松手后补画一次，消息不会丢',
+		log.children.length > frozenAt && log.textContent.includes('拖动期间到的消息'),
+		`${frozenAt} -> ${log.children.length}`)
+}
+
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build
    changed. Asserted last, because a real reload would reset the DOM. */

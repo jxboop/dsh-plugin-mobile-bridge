@@ -167,8 +167,9 @@ const measured = await send('Runtime.evaluate', {
 })
 console.log(`layout: ${measured.result?.value}`)
 
-// What the page actually pays on every streaming frame: it rebuilds the whole
-// transcript with innerHTML, so measure that exact operation.
+// 页面现在的渲染是增量的（只动变化的那一条），这里量的仍然是"整段 innerHTML 重建"
+// 要花多少 —— 留作参考：增量渲染省掉的就是这个开销，也正因为不再每帧重排，
+// 滚动位置才不会被重置。
 const cost = await send('Runtime.evaluate', {
 	returnByValue: true,
 	expression: `(() => {
@@ -181,10 +182,54 @@ const cost = await send('Runtime.evaluate', {
 		const t0 = performance.now()
 		for (let i = 0; i < 5; i += 1) log.innerHTML = saved
 		const perFrame = (performance.now() - t0) / 5
-		return JSON.stringify({ rows, nodes, htmlKB, imgs, innerHTMLRebuildMs: Math.round(perFrame * 10) / 10 })
+		return JSON.stringify({ rows, nodes, htmlKB, imgs, fullRebuildMs: Math.round(perFrame * 10) / 10 })
 	})()`,
 })
 console.log(`dom: ${cost.result?.value}`)
+
+/*
+ * 滚动体检：手机上报的是"界面定在一处、拖了又弹回原处、看不到消息"，这一项直接量
+ * 三件事 —— 能不能滚到顶/底、消息行有没有被 content-visibility 拿去估算高度
+ * （估算 = scrollHeight 说谎 = 位置乱跳）、以及一次真实重取之后读者的位置还在不在。
+ */
+const scrollProbe = await send('Runtime.evaluate', {
+	returnByValue: true,
+	awaitPromise: true,
+	expression: `(async () => {
+		const log = document.getElementById('log')
+		const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+		const rowOf = (el) => (el && el.closest ? el.closest('#log > *') : null)
+		const topText = () => {
+			const rect = log.getBoundingClientRect()
+			const row = rowOf(document.elementFromPoint(rect.left + rect.width / 2, rect.top + 24))
+			return row ? (row.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 30) : ''
+		}
+		log.scrollTop = 0
+		await wait(80)
+		const top = Math.round(log.scrollTop)
+		log.scrollTop = log.scrollHeight
+		await wait(80)
+		const bottomGap = Math.round(log.scrollHeight - log.scrollTop - log.clientHeight)
+		// 停在中间，然后走一遍真实路径（可见性变化 → 重取对话 → 重绘），看位置有没有被抢。
+		log.scrollTop = Math.max(0, Math.round(log.scrollHeight * 0.35))
+		await wait(120)
+		const before = { top: Math.round(log.scrollTop), text: topText() }
+		Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+		document.dispatchEvent(new Event('visibilitychange'))
+		await wait(1200)
+		const after = { top: Math.round(log.scrollTop), text: topText() }
+		const row = document.querySelector('#log .row')
+		const tool = document.querySelector('#log .tool')
+		return JSON.stringify({
+			top, bottomGap,
+			rowContentVisibility: row ? getComputedStyle(row).contentVisibility : null,
+			toolContentVisibility: tool ? getComputedStyle(tool).contentVisibility : null,
+			before, after,
+			held: before.text !== '' && after.text === before.text && Math.abs(after.top - before.top) < 40,
+		})
+	})()`,
+})
+console.log(`scroll: ${scrollProbe.result?.value}`)
 
 // Which style each speaker actually got, read from computed styles rather than
 // from the markup's intent.
