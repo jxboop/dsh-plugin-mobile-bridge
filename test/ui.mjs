@@ -1493,6 +1493,17 @@ check('说明指向了下拉框或读取状态',
 		&& requests.some((entry) => entry.path.startsWith('/api/welcomed')),
 		`server=${welcomedOnServer}`)
 
+	// 「说明」键：给人**重看**的入口。首访只讲一次仍然成立，但"当时没看清"或"要教同学"
+	// 时得有个地方点 —— 否则这张纸一旦收起就再也找不到了。
+	click($('help'))
+	await wait(40)
+	check('点「说明」能把说明页再摊开',
+		window.getComputedStyle($('welcome')).display !== 'none',
+		`display=${window.getComputedStyle($('welcome')).display}`)
+	click($('welcomeGo'))
+	await wait(40)
+	check('再点「开始使用」照旧收起', window.getComputedStyle($('welcome')).display === 'none')
+
 	// 第二次连上不该再弹。localStorage 被清掉（无痕模式）这种极端情况，也要靠内存里的
 	// 标记兜住 —— 否则同一台手机上每次重连都弹一遍，比没有说明页还烦。
 	window.localStorage.removeItem('dshm.welcomed')

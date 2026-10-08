@@ -609,6 +609,7 @@
 	<header>
 		<span id="dot"></span>
 		<span class="grow" id="heading">DSH 手机端</span>
+		<button class="iconbtn" id="help" title="怎么用（第一次连上时会自动讲一遍，这里随时能再看）">说明</button>
 		<button class="iconbtn" id="reload">刷新</button>
 		<button class="iconbtn" id="logout">退出</button>
 	</header>
@@ -3769,6 +3770,11 @@
 		markWelcomed()
 		hide(welcome)
 	})
+
+	// 「说明」键：随时再看一遍那次讲的东西。
+	// 它是**给人重看的入口**，所以不动"已看过"的标记 —— 首访只讲一次这件事仍然成立，
+	// 但"我当时没看清 / 要教同学怎么用"时得有个地方点。
+	$('help').addEventListener('click', () => { show(welcome) })
 
 	/* --------------------------------------------------------------- boot */
 

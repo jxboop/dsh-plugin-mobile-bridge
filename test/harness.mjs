@@ -351,11 +351,31 @@ const bootstrap = await (await fetch(`${base}/api/bootstrap`, authed)).json()
  * 所以宿主也记一份，并且跟令牌文件一起落盘。
  */
 {
-	check('没看过之前 bootstrap 说 welcomed=false', bootstrap.welcomed === false, String(bootstrap.welcomed))
-	const seen = await fetch(`${base}/api/welcomed`, { method: 'POST', headers: { cookie } })
+	// 「看过说明页」按**设备**记（cookie），不按来源 IP：隧道（Funnel/cloudflared）后面
+	// 所有手机在宿主眼里是同一个 IP，按 IP 记的后果就是 —— 一台点过「开始使用」之后，
+	// **别人换一台手机进来也再也不弹说明页**（现场就是这么发生的）。
+	const cookieOf = (response, name) => (response.headers.getSetCookie?.() ?? [])
+		.map((entry) => entry.split(';')[0])
+		.find((entry) => entry.startsWith(`${name}=`)) ?? ''
+	const bootDevice = await fetch(`${base}/api/bootstrap`, authed)
+	const firstBoot = await bootDevice.json()
+	const deviceCookie = cookieOf(bootDevice, 'dshm_device')
+	check('第一次进来会发一个设备标识 cookie（说明页按设备记，不按 IP）',
+		deviceCookie.startsWith('dshm_device='), `cookie=${deviceCookie.slice(0, 22)}`)
+	const seenOnDevice = { headers: { cookie: `${cookie}; ${deviceCookie}` } }
+
+	check('没看过之前 bootstrap 说 welcomed=false', firstBoot.welcomed === false, String(firstBoot.welcomed))
+	const seen = await fetch(`${base}/api/welcomed`, { method: 'POST', headers: seenOnDevice.headers })
 	check('点「开始使用」会写回宿主', seen.status === 200, String(seen.status))
-	const after = await (await fetch(`${base}/api/bootstrap`, authed)).json()
-	check('之后 bootstrap 说 welcomed=true（页面据此不再弹）', after.welcomed === true, String(after.welcomed))
+	const after = await (await fetch(`${base}/api/bootstrap`, seenOnDevice)).json()
+	check('之后（带着同一个设备标识）bootstrap 说 welcomed=true（页面据此不再弹）',
+		after.welcomed === true, String(after.welcomed))
+
+	// 关键回归：**另一台手机**不该被上一台的"已看过"代表掉。
+	const otherDevice = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('换一台设备（没有这个 cookie）仍然 welcomed=false —— 新手机不会被别人的"已看过"吃掉',
+		otherDevice.welcomed === false, String(otherDevice.welcomed))
+
 	const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.tokens.json'), 'utf8'))
 	check('这份标记跟着令牌文件落盘（重载/重启也不丢）',
 		Object.keys(stored.welcomed ?? {}).length > 0, JSON.stringify(stored.welcomed))
