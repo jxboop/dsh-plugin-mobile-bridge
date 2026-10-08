@@ -2281,8 +2281,11 @@
 	 *   1. 真实进度：下载对话时按**字节数**报（XHR 的 progress 事件，压缩前后都准），
 	 *      所以大文件是实打实地往上走；
 	 *   2. 缓动：屏幕上的数字平滑追目标值，不会跳；
-	 *   3. 慢爬：还没好、目标值也没动时，自己一点一点往上爬（封顶在目标 +10、不超过 95），
-	 *      因为"什么都没发生"最像死机 —— 进度条必须一直在动。
+	 *   3. 慢爬：还没好、目标值也没动时，自己一直往上爬 —— **速率衰减但不归零**。
+	 *
+	 * ⚠️ 第 3 层踩过坑：老写法"爬到 `目标 + 10` 就停"在真机上会**真的冻住**（本机跑得快
+	 * 看不出来，手机上走隧道一个来回好几秒 → "正在连电脑"卡在 40% 不动，直到回包才跳）。
+	 * 唯一的硬顶只有 96：**100 只能由 bootDone() 给**，不能让进度条替加载撒谎。
 	 */
 	let bootTarget = 0
 	let bootShown = 0
@@ -2290,6 +2293,11 @@
 	let bootNote = ''
 	let bootRaf = 0
 	let bootLastAt = 0
+	/** 当前这个目标值已经等了多久（毫秒）：慢爬靠它减速，"已等 N 秒"也靠它。 */
+	let bootStuckMs = 0
+	let bootStuckTarget = -1
+	/** 动画帧计数：诊断"数字不动"时用来区分"循环停了"和"爬得太慢"。 */
+	let bootTicks = 0
 
 	function bootPaint() {
 		const fill = $('bootFill')
@@ -2299,18 +2307,43 @@
 		fill.style.width = value + '%'
 		const parts = [bootLabel]
 		if (bootNote !== '') parts.push(bootNote)
+		// 等超过 4 秒就把秒数摆出来。数字和秒数一直在走，是"还活着"的唯一证据 ——
+		// 用户最怕的不是慢，是"它是不是死了"。
+		if (bootTarget < 100 && bootStuckMs > 4000) parts.push('已等 ' + Math.round(bootStuckMs / 1000) + ' 秒')
 		label.textContent = parts.filter((part) => part !== '').join(' · ') + ' · ' + value + '%'
 	}
 
 	function bootTick(now) {
+		bootTicks += 1
 		const elapsed = bootLastAt === 0 ? 16 : Math.min(200, now - bootLastAt)
 		bootLastAt = now
-		// 缓动追目标 + 慢爬（每秒约 1.2%），封顶：不比目标高太多，也永远不到 97。
-		const chase = (bootTarget - bootShown) * 0.16
-		const creep = bootTarget < 100 && bootShown < Math.min(bootTarget + 10, 96) ? (elapsed / 1000) * 1.2 : 0
-		bootShown = Math.min(100, Math.max(bootShown, bootShown + chase + creep))
+		if (bootTarget !== bootStuckTarget) { bootStuckTarget = bootTarget; bootStuckMs = 0 }
+		else bootStuckMs += elapsed
+		/**
+		 * 缓动只许**往上追**，不许往回拉。
+		 *
+		 * 这是"百分比不会变"的真凶：慢爬把显示值顶过目标一点点（30 → 30.1）之后，
+		 * `(target - shown) * 0.16` 变成一个负数，每帧 ≈ -0.016，正好抵消慢爬
+		 * 每帧 ≈ +0.019 —— 两者在「目标 + 0.1」处形成**死平衡**，数字就冻在那儿，
+		 * 而动画循环还在跑（实测 ticks 从 7 涨到 213，shown 只从 30.1 到 30.2）。
+		 * 进度条的数字本来就不该倒退：只往上追，等待期间交给慢爬。
+		 */
+		const chase = Math.max(0, (bootTarget - bootShown) * 0.16)
+		/**
+		 * 慢爬：速率随时间**衰减，但不归零**。
+		 *
+		 * 老写法是"每秒 +1.6%，爬到 `目标 + 10` 就停" —— 本机几十毫秒就跑完，
+		 * 看不出来；但手机上走隧道一个来回好几秒，"正在连电脑"那一步会爬到 40%
+		 * 就**真的冻住**，直到回包才跳一下。现场投诉就是"进度条有问题、百分比不会变"。
+		 * 等待本身不该看起来像死机：数字一直动、只是越等越慢，并且**永远不到 100**
+		 * （100 只由 bootDone() 给，不能让进度条替加载撒谎）。
+		 */
+		const ceiling = bootTarget >= 100 ? 100 : 96
+		const creep = bootTarget >= 100 ? 0 : (elapsed / 1000) * (1.6 / (1 + bootStuckMs / 8000))
+		bootShown = Math.min(ceiling, Math.max(bootShown, bootShown + chase + creep))
 		bootPaint()
-		if (bootShown < bootTarget || bootShown < Math.min(bootTarget + 10, 96)) {
+		// 目标还没到 100 就一直跑：哪怕数字已经贴到 96，"已等 N 秒"也要继续走。
+		if (bootTarget < 100 || bootShown < 100) {
 			bootRaf = requestAnimationFrame(bootTick)
 		} else {
 			bootRaf = 0
@@ -2341,8 +2374,18 @@
 	/**
 	 * 诊断/测试用的读数：加载条的真实目标值、动画显示值、当前这步在干什么。
 	 * 手机上"卡着不动"这种投诉，靠肉眼看动画是没法复现的 —— 有这个就能直接断言。
+	 *
+	 * `ticks` 是动画帧计数：数字不动时，它能一眼分开两种死法 ——
+	 * **循环停了**（ticks 不涨）还是**循环在跑但爬得太慢**（ticks 一直涨）。
 	 */
-	window.__dshBoot = () => ({ shown: Math.round(bootShown * 10) / 10, target: bootTarget, label: bootLabel, note: bootNote })
+	window.__dshBoot = () => ({
+		shown: Math.round(bootShown * 10) / 10,
+		target: bootTarget,
+		label: bootLabel,
+		note: bootNote,
+		ticks: bootTicks,
+		stuckMs: Math.round(bootStuckMs),
+	})
 	function bootDone() {
 		const boot = $('boot')
 		if (boot === null) return

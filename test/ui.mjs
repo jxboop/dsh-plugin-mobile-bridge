@@ -431,6 +431,24 @@ const textOf = (id) => $(id).textContent.trim()
 	check('但界面还没显示出来（能不能看要等鉴权，别让捡到手机的人直接读到）',
 		window.getComputedStyle($('app')).display === 'none', window.getComputedStyle($('app')).display)
 
+	// 「百分比不会变」的回归测试。
+	//
+	// 现场：手机上加载页的百分比冻在一个数上（走隧道时"正在连电脑"那一步能停十几秒）。
+	// 根因是慢爬有硬顶 —— "爬到 目标+10 就停"，本机几十毫秒跑完，只有真机/慢网才看得见。
+	// 所以这里**故意把回包扣住**，看数字自己在不在动。
+	const bootA = window.__dshBoot()
+	await wait(3000)
+	const bootB = window.__dshBoot()
+	check('等电脑回包期间进度还在走（不是冻在一个数上）',
+		bootB.shown - bootA.shown >= 0.3 && bootB.ticks > bootA.ticks,
+		`${bootA.shown} -> ${bootB.shown} (ticks ${bootA.ticks} -> ${bootB.ticks})`)
+	await wait(3000)
+	const bootC = window.__dshBoot()
+	check('等久了会把"已等 N 秒"摆出来（用户最怕的是"它是不是死了"）',
+		$('bootText').textContent.includes('已等'), $('bootText').textContent)
+	check('等再久也不会自己报 100（100 只能由加载完成给，进度条不许替加载撒谎）',
+		bootC.shown <= 96 && bootC.target < 100, JSON.stringify(bootC))
+
 	// 放行 /api/boot：带上 since=9 → 宿主只回"没有新记录"的增量，历史必须留着
 	releaseBoot()
 	await wait(220)

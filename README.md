@@ -353,6 +353,7 @@ npm install
 | `test/reopen-bench.mjs` | 真浏览器量"从别的窗口点回来"：把网络延迟拉到 2 秒再重载，报"对话出现"与"界面显示"两个时刻 | Windows + Edge |
 | `test/scroll-live.mjs` | 真浏览器复现"回弹"：开一个临时会话让它真的流式输出一千多行，一边往上滚一边采样 15 秒（回弹次数 / scrollHeight 变动 / 最长掉帧） | Windows + Edge |
 | `test/phone-diag.mjs` | 真浏览器诊断：抓页面异常、控制台、网络状态码 | Windows + Edge |
+| `test/boot-probe.mjs` | 加载页进度条探针：网络节流下每 250ms 采样一次，回答"百分比会不会冻住"（这类 bug 本机复现不了，只有慢网络才看得见） | Windows + Edge |
 
 ```bash
 npm test          # security 51 + crashprobe 17 + harness 81 + addresses 16 = 165 项，无需浏览器
