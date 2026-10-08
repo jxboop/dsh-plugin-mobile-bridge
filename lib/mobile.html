@@ -280,6 +280,22 @@
 	}
 	.bubble.pending .recall.ghost { opacity: .8; font-weight: 400; }
 	.bubble.pending .perr { font-size: 11px; color: var(--tool-err); margin-top: 5px; }
+	/* 「复制」按钮：贴在气泡外侧底部。
+	   为什么要有它：长按虽然也能复制，但那是**藏的**（没人会去猜）——得有一个
+	   一眼看得见的入口。它必须留在 .bubble **外面**：长按复制取的是 .bubble 的
+	   innerText，按钮塞进去就会被一起复制出一句"复制"。 */
+	.copyb {
+		flex: 0 0 auto; align-self: flex-start; margin: 2px 0 0 6px;
+		border: 1px solid rgba(255,255,255,.26); background: rgba(255,255,255,.10); color: var(--text);
+		border-radius: 10px; padding: 6px 11px; font-size: 12px; line-height: 1.15; font-weight: 600;
+		-webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+	}
+	/* 自己发的那条靠右：按钮用 order 挪到气泡左边，别把它顶出屏幕。 */
+	.row.user .copyb { order: -1; margin: 2px 6px 0 0; }
+	.copyb:active { background: rgba(255,255,255,.24); }
+	@media (prefers-color-scheme: light) {
+		.copyb { border-color: rgba(0,0,0,.16); background: rgba(255,255,255,.55); }
+	}
 	/* agent 在电脑上产出的素材：路径 → 真图/视频，点开可看大图、长按可存相册。 */
 	.shotwrap { margin-top: 8px; }
 	.shotwrap img.shot, .shotwrap video.shot {
@@ -378,9 +394,9 @@
 	#compose.two #send, #compose.two #stop { padding: 12px 11px; }
 	#send { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
 	#stop { background: var(--stop-bg); }
-	/* 工具键那一排：图片 / 原图 / 生图 / 权限。共用一套底色和内边距 —— */
+	/* 工具键那一排：图片 / 文件 / 原图 / 生图 / 权限。共用一套底色和内边距 —— */
 	/* 各写各的，早晚会有一条对不齐。 */
-	#pick, #rawToggle, #genBtn, #permBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
+	#pick, #pickAny, #rawToggle, #genBtn, #permBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
 	/* 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用） */
 	#rawToggle { color: var(--muted); }
 	#rawToggle.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
@@ -615,6 +631,7 @@
 				     掉行、把输入框挤成一条缝。分成两行后输入框拿回整行宽度。 -->
 				<div id="tools">
 					<button id="pick">图片</button>
+					<button id="pickAny" title="上传任意文件到电脑（原样传，agent 拿到路径）">文件</button>
 					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
 					<button id="permBtn" title="这个会话允许 agent 做到哪一步（改权限要重新输 PIN）">🔐</button>
@@ -626,6 +643,9 @@
 				</div>
 			</div>
 			<input id="file" type="file" accept="image/*,video/*" multiple hidden>
+			<!-- 「文件」键用的选择器：**故意不写 accept** —— 写了 accept，iOS/安卓
+			     只会让你从相册里挑，PDF / 文档 / 压缩包根本选不到。不写才是"所有文件"。 -->
+			<input id="fileAny" type="file" multiple hidden>
 		</section>
 
 		<section class="sheet" id="view-new" data-display="flex" style="display:none">
@@ -775,7 +795,7 @@
 
 	const $ = (id) => document.getElementById(id)
 	const gate = $('gate'), app = $('app'), log = $('log'), sessionSelect = $('session')
-	const dot = $('dot'), text = $('text'), thumbs = $('thumbs'), fileInput = $('file')
+	const dot = $('dot'), text = $('text'), thumbs = $('thumbs'), fileInput = $('file'), fileAnyInput = $('fileAny')
 	const sendBtn = $('send'), stopBtn = $('stop'), banner = $('banner'), heading = $('heading')
 	const compose = $('compose')
 
@@ -1259,18 +1279,23 @@
 		return '正在读取会话内容…（一直这样点右上角「刷新」）'
 	}
 
+	/** 气泡外侧的「复制」按钮（长按也能复制，但那个入口没人看得见）。 */
+	function copyButton(index) {
+		return '<button class="copyb" type="button" data-copy="' + index + '" aria-label="复制这条消息">复制</button>'
+	}
+
 	/** 把当前状态铺成一组 { key, html }：key 稳定（条目序号 + 类型）。 */
 	function buildEntries(sessionId) {
 		const entries = []
 		for (let index = 0; index < state.items.length; index += 1) {
 			const item = state.items[index]
 			if (item.kind === 'user') {
-				entries.push({ key: 'u' + index, html: '<div class="row user"><div class="bubble">' + blocksToHtml(item.content, sessionId) + '</div></div>' })
+				entries.push({ key: 'u' + index, html: '<div class="row user"><div class="bubble">' + blocksToHtml(item.content, sessionId) + '</div>' + copyButton(index) + '</div>' })
 			} else if (item.kind === 'assistant') {
 				const think = thinkHtml(item, index)
 				if (think !== '') entries.push({ key: 't' + index, html: think })
 				const inner = blocksToHtml(item.content, sessionId) + (item.cursor ? '<span class="cursor"></span>' : '')
-				if (inner.trim() !== '') entries.push({ key: 'a' + index, html: '<div class="row"><div class="bubble">' + inner + '</div></div>' })
+				if (inner.trim() !== '') entries.push({ key: 'a' + index, html: '<div class="row"><div class="bubble">' + inner + '</div>' + copyButton(index) + '</div>' })
 			} else if (item.kind === 'tool') {
 				const body = item.result === null ? (item.done ? '（无输出）' : '运行中…') : item.result
 				entries.push({
@@ -1514,6 +1539,16 @@
 	}
 
 	log.addEventListener('click', (event) => {
+		// 「复制」按钮：看得见的复制入口（长按那条也在，但它藏得深）。
+		// 必须排在图片/工具分支前面 —— 按钮就贴在气泡外侧，别被后面的分支吃掉。
+		const copyBtn = event.target.closest && event.target.closest('button[data-copy]')
+		if (copyBtn) {
+			const item = state.items[Number(copyBtn.dataset.copy)]
+			const text = item === undefined ? '' : (item.kind === 'assistant' ? textOfMessage(item) : itemText(item))
+			if (text === '') { toast('这条没有可复制的文字'); return }
+			toast(copyText(text) ? `已复制 ${text.length} 字` : '复制失败：请长按选中文字再复制')
+			return
+		}
 		// 点图片/视频 → 全屏看，然后长按存相册。先判这个，再判下面的工具栏展开。
 		const shot = event.target.closest && event.target.closest('img.shot, video.shot')
 		if (shot) {
@@ -2817,6 +2852,12 @@
 	const MAX_IMAGE_BYTES = 8 * 1024 * 1024
 	/** 视频/其它文件上限（原文件字节）。 */
 	const MAX_FILE_BYTES = 28 * 1024 * 1024
+	/**
+	 * 一次最多几个文件。宿主那边 `fileRefs` 是 `slice(0, MAX_FILES_PER_PROMPT)`（=3）：
+	 * 多发不会报错，只会**静默丢掉**后面的 —— 那正是用户最怕的"我明明发了啊"。
+	 * 所以手机上先把闸拉住，并说清楚为什么。
+	 */
+	const MAX_FILES_PER_MESSAGE = 3
 
 	function readBase64(blob) {
 		return new Promise((resolve, reject) => {
@@ -2930,17 +2971,71 @@
 		return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
 	}
 
-	/** 挑进来的东西：该缩的缩、该当文件的当文件，一个都不许静默丢掉。 */
-	async function addAttachment(file) {
+	/**
+	 * 同步占一个文件槽位；满了返回 null 并说清原因。
+	 *
+	 * 必须**在读盘之前同步占位**：读盘是异步的，几条同时进来时
+	 * "先查长度 → await 读盘 → 再 push" 会让它们一起通过，而宿主那边
+	 * `fileRefs` 只收 3 个 —— 多出来的会被**静默丢掉**，正是用户最怕的
+	 * "我明明发了啊"。占位之后哪怕读盘失败也有痕迹，能撤回。
+	 */
+	function reserveFileSlot(name, mediaType) {
+		if (state.files.length >= MAX_FILES_PER_MESSAGE) {
+			flash(`一次最多 ${MAX_FILES_PER_MESSAGE} 个文件（宿主的上限），这个没加：${name}`, 5000)
+			return null
+		}
+		const slot = {
+			name: name || 'file',
+			mediaType: mediaType === '' ? 'application/octet-stream' : mediaType,
+			data: '',
+		}
+		state.files.push(slot)
+		return slot
+	}
+
+	/** 读盘失败：把占位撤掉，别在输入框上留一张永远发不出去的卡片。 */
+	function dropFileSlot(slot) {
+		state.files = state.files.filter((item) => item !== slot)
+		renderThumbs()
+	}
+
+	/**
+	 * 挑进来的东西：该缩的缩、该当文件的当文件，一个都不许静默丢掉。
+	 *
+	 * @param asFile 「文件」键挑的：**一律原样当文件**传到电脑，agent 拿到路径。
+	 *   （照片从这条路走就是原图：不压缩、不转格式。）
+	 */
+	async function addAttachment(file, asFile = false) {
 		const type = String(file.type || '')
+		// 「文件」键：原样上传（不压缩、不转格式），电脑那边存盘、把路径交给 agent。
+		if (asFile === true) {
+			if (file.size > MAX_FILE_BYTES) {
+				flash(`${file.name || '文件'} 太大（上限 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB）`)
+				return
+			}
+			const slot = reserveFileSlot(file.name, type)
+			if (slot === null) return
+			try {
+				slot.data = await readBase64(file)
+			} catch (error) {
+				dropFileSlot(slot)
+				throw error
+			}
+			renderThumbs()
+			flash(`已加入 ${file.name || '文件'}：原样传到电脑，agent 会拿到它的路径`, 3500)
+			return
+		}
 		// 原图模式：一个字节都不动，直接走分片上传当文件发（电脑那边存原样）。
 		// 用来发背景这种要画质的图 —— 压缩过的图当全屏背景会糊。
 		if (state.raw === true) {
-			state.files.push({
-				name: file.name || 'file',
-				mediaType: type === '' ? 'application/octet-stream' : type,
-				data: await readBase64(file),
-			})
+			const slot = reserveFileSlot(file.name, type)
+			if (slot === null) return
+			try {
+				slot.data = await readBase64(file)
+			} catch (error) {
+				dropFileSlot(slot)
+				throw error
+			}
 			renderThumbs()
 			flash('原图模式：这张不压缩，直接传原文件', 3000)
 			return
@@ -2996,6 +3091,27 @@
 		for (const file of picked) {
 			addAttachment(file).catch((error) => flash('读取失败：' + error.message))
 		}
+	})
+
+	// 「文件」键：同一个上传管线，只是**不限制类型**（PDF / 文档 / 压缩包 / 代码…）。
+	// 它挑中的一切都当文件传，拿到的是电脑上的路径 —— 模型"看"不了这些格式，
+	// 但 agent 能用工具去处理（读、解压、转码、跑脚本）。
+	$('pickAny').addEventListener('click', () => fileAnyInput.click())
+	fileAnyInput.addEventListener('change', () => {
+		const picked = Array.from(fileAnyInput.files || [])
+		fileAnyInput.value = ''
+		// **一个一个来**，别并发：并发读盘会让"第 4 个被拦下"的提示被后面那条
+		// "已加入…"顶掉（用户就再也看不到拦下的原因），而且一次把几个大文件
+		// 同时读进内存对手机不友好。
+		void (async () => {
+			for (const file of picked) {
+				try {
+					await addAttachment(file, true)
+				} catch (error) {
+					flash('读取失败：' + error.message)
+				}
+			}
+		})()
 	})
 
 	/** 输入框跟着内容长高（「修改」把原文放回去时也要长到合适的高度）。 */

@@ -740,6 +740,66 @@ check('the preview is cleared after sending', $('thumbs').querySelectorAll('img'
 	check('卡片上的 × 能把它拿掉', $('thumbs').querySelectorAll('.chip').length === 0)
 }
 
+/* --- 「文件」键：任意文件（PDF / 文档 / 压缩包）原样传到电脑 ----------------- */
+/*
+ * 现场：手机上只能挑照片和视频（选择器写着 accept="image/*,video/*"），
+ * 想发一个 PDF 或压缩包**根本没有入口**。后端那条路其实早就通了
+ * （分片上传 → 电脑存盘 → 路径写进任务），缺的只是一个不限制类型的选择器。
+ */
+{
+	const fire = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	let opened = 0
+	const anyInput = $('fileAny')
+	const realClick = anyInput.click.bind(anyInput)
+	anyInput.click = () => { opened += 1 }
+	fire($('pickAny'))
+	check('点「文件」开的是不限制类型的选择器（不写 accept 才选得到 PDF/文档）',
+		opened === 1 && (anyInput.getAttribute('accept') ?? '') === '',
+		`opened=${opened} accept=${anyInput.getAttribute('accept')}`)
+	anyInput.click = realClick
+
+	const pickAny = (list) => {
+		Object.defineProperty(anyInput, 'files', { value: list, configurable: true })
+		anyInput.dispatchEvent(new window.Event('change', { bubbles: true }))
+	}
+
+	pickAny([new window.File([new Uint8Array([37, 80, 68, 70])], 'report.pdf', { type: 'application/pdf' })])
+	await wait(180)
+	check('PDF 变成一张待发卡片（既不丢弃，也不当成图片预览）',
+		$('thumbs').querySelectorAll('.chip').length === 1
+		&& $('thumbs').textContent.includes('report.pdf')
+		&& $('thumbs').querySelectorAll('img').length === 0,
+		`chips=${$('thumbs').querySelectorAll('.chip').length} imgs=${$('thumbs').querySelectorAll('img').length}`)
+
+	uploaded.length = 0
+	const promptsBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	fire($('send'))
+	await wait(260)
+	const fileBody = JSON.parse(requests.filter((entry) => entry.path.startsWith('/api/prompt')).pop().options.body)
+	check('文件先分片上传，任务里只放路径（requests 里没有大包）',
+		requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === promptsBefore + 1
+		&& uploaded.length === 1 && uploaded[0].name === 'report.pdf'
+		&& fileBody.fileRefs?.length === 1 && fileBody.fileRefs[0].path.includes('mobile-uploads')
+		&& (fileBody.images ?? []).length === 0,
+		JSON.stringify({ 片: uploaded.length, refs: fileBody.fileRefs, images: fileBody.images?.length }))
+	check('文件发完也清空', $('thumbs').querySelectorAll('.chip').length === 0)
+
+	// 宿主一次只收 3 个（fileRefs = slice(0,3)）：第 4 个必须在手机上就被拦下并说明白 ——
+	// 让它默默消失，就是用户最怕的"我明明发了"。
+	pickAny([1, 2, 3, 4].map((n) => new window.File([new Uint8Array([110 + n])], `f${n}.txt`, { type: 'text/plain' })))
+	await wait(360)
+	check('一次最多 3 个文件：第 4 个被拦下，而且说清原因（不是静默丢掉）',
+		$('thumbs').querySelectorAll('.chip').length === 3
+		&& $('banner').textContent.includes('最多 3 个'),
+		`chips=${$('thumbs').querySelectorAll('.chip').length} banner=${$('banner').textContent.slice(0, 50)}`)
+
+	for (let i = 0; i < 3; i += 1) {
+		$('thumbs').querySelector('button')?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(40)
+	}
+	check('清空后没有残留附件', $('thumbs').querySelectorAll('.chip').length === 0)
+}
+
 /* --- cancel -------------------------------------------------------------- */
 
 $('stop').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
@@ -919,6 +979,44 @@ liveBubble().dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true,
 liveBubble().dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true }))
 await wait(700)
 check('a quick tap does not trigger a copy', copied.length === 0)
+
+/* --- 看得见的「复制」按钮 ------------------------------------------------- */
+/*
+ * 长按能复制，但那是**藏在手势里的**（没人会去猜）。所以每条气泡外侧再放一个
+ * 可见的「复制」。它必须留在 .bubble **外面**：长按复制取的是 .bubble 的
+ * innerText，按钮塞进气泡就会被一起复制出一句"复制"。
+ */
+source.emit({
+	t: 'event',
+	event: { type: 'user/message', seq: 11, time: 9, data: { id: 'u11', role: 'user', content: [{ type: 'text', text: 'USER_COPY_ME' }] } },
+})
+await wait(160)
+
+const buttonIn = (needle) => Array.from($('log').querySelectorAll('button[data-copy]'))
+	.find((node) => (node.closest('.row')?.textContent ?? '').includes(needle))
+
+const userCopy = buttonIn('USER_COPY_ME')
+const answerCopy = buttonIn(ANSWER)
+check('每条对话（自己和 agent 的）外侧都有一个看得见的「复制」',
+	userCopy !== undefined && answerCopy !== undefined && userCopy.textContent === '复制',
+	`user=${userCopy !== undefined} assistant=${answerCopy !== undefined}`)
+check('「复制」按钮在气泡外面（长按取值不会把"复制"两个字带上）',
+	userCopy.closest('.bubble') === null && answerCopy.closest('.bubble') === null)
+
+copied.length = 0
+click(userCopy)
+await wait(40)
+check('点「复制」复制的是这条消息的正文',
+	copied.length === 1 && copied[0].includes('USER_COPY_ME'), `${copied.length} call(s): ${JSON.stringify(copied[0] ?? '')}`)
+check('复制后有提示（不然用户不知道成没成）',
+	$('toast').classList.contains('on') && $('toast').textContent.includes('已复制'), $('toast').textContent)
+
+copied.length = 0
+click(answerCopy)
+await wait(40)
+check('agent 气泡复制到的是回答正文（不含思考过程）',
+	copied.length === 1 && copied[0].includes(ANSWER) && !copied[0].includes(REASONING),
+	`${copied.length} call(s): ${JSON.stringify(copied[0] ?? '')}`)
 
 /* --- 提权过期：服务器要 PIN，页面必须真的把输入框给出来 ------------------- */
 /*
