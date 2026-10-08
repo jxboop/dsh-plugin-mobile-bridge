@@ -248,6 +248,14 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
+	// 路径素材的真实像素尺寸：故意给一个"非 4:3"的比例，才能区分"补上了真尺寸"和"一直用占位"。
+	if (path.startsWith('/api/size')) {
+		const wanted = /path=([^&]+)/.exec(path)
+		const target = wanted === null ? '' : decodeURIComponent(wanted[1])
+		return jsonResponse(target.toLowerCase().endsWith('.png')
+			? { mediaType: 'image/png', width: 24, height: 12 }
+			: { mediaType: 'image/jpeg', width: 40, height: 30 })
+	}
 	if (path.startsWith('/api/upload')) {
 		const body = JSON.parse(options.body ?? '{}')
 		uploaded.push(body)
@@ -565,6 +573,10 @@ check('tool call renders with its result merged',
 	check('附件不再走 base64 的 /api/attachment',
 		requests.filter((entry) => entry.path.startsWith('/api/attachment')).length === 0,
 		`${requests.filter((entry) => entry.path.startsWith('/api/attachment')).length} attachment fetches`)
+	// 附件自带尺寸 → 必须写成宽高属性：图到货前就占好位置，否则会把下面的内容顶走（"错位"）。
+	check('附件图用自带的宽高预留位置（不留原图尺寸就是错位的根源）',
+		img !== null && img.getAttribute('width') === '4' && img.getAttribute('height') === '4',
+		img === null ? 'no img' : `width=${img.getAttribute('width')} height=${img.getAttribute('height')}`)
 }
 check('history image element is present', window.document.querySelectorAll('#log img').length === 1)
 
@@ -608,6 +620,11 @@ check('history image element is present', window.document.querySelectorAll('#log
 		$('log').textContent.includes('[图片]') === false, 'still rendered the placeholder')
 	check('图片旁边给了"点开/长按存相册"的提示',
 		$('log').textContent.includes('长按图片'))
+	const generated = [...window.document.querySelectorAll('#log img')]
+		.find((node) => String(node.getAttribute('src')).includes('attachmentId=att-gen'))
+	check('工具结果的图也用附件尺寸预留位置（手机滚动不再被顶走）',
+		generated !== undefined && generated.getAttribute('width') === '1024' && generated.getAttribute('height') === '1024',
+		generated === undefined ? 'no img' : `width=${generated.getAttribute('width')} height=${generated.getAttribute('height')}`)
 }
 
 /* --- agent 在电脑上产出的素材：路径要变成能看、能存的图 ------------------- */
@@ -640,6 +657,24 @@ check('history image element is present', window.document.querySelectorAll('#log
 	check('图片下面告诉用户怎么存进相册',
 		window.document.querySelector('#log .shothint') !== null
 		&& window.document.querySelector('#log').textContent.includes('存储到照片'))
+
+	/*
+	 * ⚠️ 回归（用户报"图片容易错位"）：
+	 * 手机端 11 张图**全都没有预留尺寸**，于是每张图下载完都会把它下面的内容整段顶下去 ——
+	 * 看的人正在读的那一段就被推走了。附件（会话里的图）自带 width/height，直接写成属性；
+	 * 只有路径的素材（电脑上产出的）先占一个保守比例，再向 `/api/size` 问一次真实尺寸。
+	 */
+	const placeholder = String(shots[0].getAttribute('style') ?? '')
+	check('路径图先按占位比例占住位置（图到货不再顶走内容）',
+		placeholder.includes('aspect-ratio'), placeholder)
+	await wait(140)
+	check('随后补上真实尺寸（宽高属性 + 比例都对）',
+		shots[0].getAttribute('width') === '24' && shots[0].getAttribute('height') === '12'
+		&& String(shots[0].style.aspectRatio).replace(/\s/g, '') === '24/12',
+		`w=${shots[0].getAttribute('width')} h=${shots[0].getAttribute('height')} ratio=${shots[0].style.aspectRatio}`)
+	check('同一个文件不重复问尺寸（缓存住）',
+		requests.filter((entry) => entry.path.startsWith('/api/size')).length === 1,
+		String(requests.filter((entry) => entry.path.startsWith('/api/size')).length))
 
 	// 点图 → 全屏看图（真 URL，长按就是"存储到照片"）
 	shots[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))

@@ -1253,9 +1253,29 @@
 	 * 理由很实在：iOS 上 `data:` 图片长按只有"拷贝"，**没有"存储到照片"** —— 而用户
 	 * 的诉求正是把电脑给的素材存进手机相册。真 URL 才长按可存，也省掉 33% 膨胀。
 	 */
-	function imageTag(sessionId, attachmentId) {
+	/**
+	 * 图片必须**预留位置**。
+	 *
+	 * 为什么：手机网络下图片是一张张到的，没有预留高度时，每张图下载完都会把它下面的内容
+	 * 整段顶下去 —— 用户看到的就是"看着看着就串位了（错位）"。附件（会话里的图）自带
+	 * width/height，直接写成属性：浏览器会据此先占好位置，而且 max-width/max-height 的
+	 * 约束也会保持比例。电脑上的文件只有路径，先占一个保守比例，随后由 reservePathSizes()
+	 * 问一次内桥（服务端只读文件头）补成真实比例。
+	 */
+	function reserveAttrs(width, height) {
+		const w = Math.round(Number(width))
+		const h = Math.round(Number(height))
+		if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+			return ' width="' + w + '" height="' + h + '"'
+		}
+		return ' style="aspect-ratio:' + PLACEHOLDER_RATIO + '"'
+	}
+
+	function imageTag(sessionId, attachment) {
+		const attachmentId = typeof attachment === 'string' ? attachment : String(attachment?.attachmentId ?? '')
 		const src = 'api/media?sessionId=' + encodeURIComponent(sessionId) + '&attachmentId=' + encodeURIComponent(attachmentId)
-		return '<img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="图片">'
+		const size = typeof attachment === 'string' ? '' : reserveAttrs(attachment?.width, attachment?.height)
+		return '<img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="图片"' + size + '>'
 	}
 
 	/**
@@ -1270,10 +1290,11 @@
 			if (attachment === null || typeof attachment !== 'object') return ''
 			const src = 'api/media?sessionId=' + encodeURIComponent(sessionId) + '&attachmentId=' + encodeURIComponent(attachment.attachmentId)
 			if (String(attachment.mediaType ?? '').startsWith('video/')) {
-				return '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata"></video>' +
+				// 视频同样要占位：metadata 到达后高度会变，不预留就会把下面的内容顶走。
+				return '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata" style="aspect-ratio:16 / 9"></video>' +
 					'<div class="shothint">长按视频可存到相册</div></div>'
 			}
-			return '<div class="shotwrap"><img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="图片">' +
+			return '<div class="shotwrap">' + imageTag(sessionId, attachment) +
 				'<div class="shothint">点开看大图 · 长按图片 → 存储到照片</div></div>'
 		}).join('')
 	}
@@ -1281,6 +1302,39 @@
 	/** 文字里出现的图片/视频路径，变成能看、能存的东西。 */
 	const MEDIA_EXT = /\.(png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)$/i
 	const PATH_RE = /[A-Za-z]:\\[^\s"'<>|?*]+?\.(?:png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)/gi
+	/**
+	 * 路径图的**占位比例**：真实尺寸要问一次内桥（`api/size`，服务端只读文件头）。
+	 * 在答复之前先按这个比例占住位置 —— 不然图到货的瞬间会把下面的内容顶下去（错位）。
+	 */
+	const PLACEHOLDER_RATIO = '4 / 3'
+	/** 问过的路径记在这里（含"问不到"的结果），同一个文件不重复问。 */
+	const pathSizes = new Map()
+
+	/**
+	 * 电脑上的素材只有路径、没有尺寸 —— 向内桥问一次真实像素尺寸，把 `<img>` 的比例补上。
+	 * 图是 `loading="lazy"` 的，通常等用户滑到它之前比例就已经补好了。
+	 */
+	function reservePathSizes() {
+		for (const img of log.querySelectorAll('img[data-path]')) {
+			const path = img.getAttribute('data-path') ?? ''
+			if (path === '' || img.dataset.sized === '1') continue
+			img.dataset.sized = '1'
+			const apply = (size) => {
+				const w = Math.round(Number(size?.width))
+				const h = Math.round(Number(size?.height))
+				if (Number.isFinite(w) === false || Number.isFinite(h) === false || w <= 0 || h <= 0) return
+				img.setAttribute('width', String(w))
+				img.setAttribute('height', String(h))
+				img.style.aspectRatio = w + ' / ' + h
+			}
+			const known = pathSizes.get(path)
+			if (known !== undefined) { apply(known); continue }
+			fetch('api/size?path=' + encodeURIComponent(path))
+				.then((response) => (response.ok ? response.json() : null))
+				.then((size) => { pathSizes.set(path, size); apply(size) })
+				.catch(() => { pathSizes.set(path, null) })
+		}
+	}
 
 	/** agent 在电脑上产出的素材：路径 → 缩略图 / 视频条 + "点开可长按保存"。 */
 	function mediaPathHtml(text) {
@@ -1294,10 +1348,11 @@
 			const src = 'api/file?path=' + encodeURIComponent(raw)
 			const name = raw.split(/[\\/]/).pop() ?? raw
 			if (/\.(mp4|mov|webm|m4v)$/i.test(raw)) {
-				html += '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata"></video>' +
+				html += '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata" style="aspect-ratio:16 / 9"></video>' +
 					'<div class="shothint">长按视频可存到相册</div></div>'
 			} else {
-				html += '<div class="shotwrap"><img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="' + escapeHtml(name) + '">' +
+				html += '<div class="shotwrap"><img class="shot" loading="lazy" src="' + src + '" data-full="' + src +
+					'" data-path="' + escapeHtml(raw) + '" alt="' + escapeHtml(name) + '" style="aspect-ratio:' + PLACEHOLDER_RATIO + '">' +
 					'<div class="shothint">点开看大图 · 长按图片 → 存储到照片</div></div>'
 			}
 		}
@@ -1310,7 +1365,7 @@
 			if (!block || typeof block !== 'object') continue
 			if (block.type === 'text') html += escapeHtml(block.text) + mediaPathHtml(block.text)
 			else if (block.type === 'reasoning') html += '<div class="think-body">' + escapeHtml(block.text) + '</div>'
-			else if (block.type === 'image' && block.attachment) html += imageTag(sessionId, block.attachment.attachmentId)
+			else if (block.type === 'image' && block.attachment) html += imageTag(sessionId, block.attachment)
 			else if (block.type === 'file' && block.attachment) html += '<div class="note">附件：' + escapeHtml(block.attachment.name || '文件') + '</div>'
 			else if (block.type === 'tool-call') html += '<div class="note">调用 ' + escapeHtml(block.name) + '</div>'
 			else if (block.type === 'tool-result') html += blocksToHtml(block.content, sessionId)
@@ -1536,6 +1591,9 @@
 		// 浏览器本来就不会因为视口下方长高而移动 scrollTop。
 		const tailOnly = keep >= Math.min(before.length, entries.length) - 1
 		reconcile(entries)
+		// 必须**在 reconcile 之后**扫：这时新图才在 DOM 里。电脑上产出的素材只有路径，
+		// 要向服务端问一次真实尺寸，好把位置预留准 —— 见 reservePathSizes。
+		reservePathSizes()
 		if (pinned) {
 			// 贴着底部看直播：别和刚滚过的人抢（userScrolledRecently 见下）。
 			if (userScrolledRecently() === false) setScrollTop(log.scrollHeight)

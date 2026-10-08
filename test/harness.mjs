@@ -788,6 +788,72 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('只发图片/视频，配置文件不给（415）', notMedia.status === 415, String(notMedia.status))
 }
 
+/* --- /api/size：页面对着它预留位置，不然图到货时会把内容顶走（"错位"）---- */
+/*
+ * 现场：手机端 11 张图**全都没有预留尺寸**。于是每张图下载完都会把它下面的内容整段顶下去，
+ * 用户看到的就是"看着看着就串位（错位）"。会话附件自带 width/height，而电脑上产出的素材
+ * 在对话里只有一行路径 —— 尺寸只有服务端知道，所以要一个只读文件头的接口。
+ */
+{
+	// 造三张"真"图：PNG(24×12) / GIF(9×7) / JPEG(40×30，SOF0 段)。
+	const png = (() => {
+		const buf = Buffer.alloc(24)
+		Buffer.from('89504e470d0a1a0a', 'hex').copy(buf, 0)
+		buf.writeUInt32BE(13, 8)
+		buf.write('IHDR', 12, 'latin1')
+		buf.writeUInt32BE(24, 16)
+		buf.writeUInt32BE(12, 20)
+		return buf
+	})()
+	const gif = (() => {
+		const buf = Buffer.alloc(16)
+		buf.write('GIF89a', 0, 'latin1')
+		buf.writeUInt16LE(9, 6)
+		buf.writeUInt16LE(7, 8)
+		return buf
+	})()
+	const jpeg = (() => {
+		// SOI + SOF0(len=17, 精度8, 高30, 宽40, 3 分量) + EOI
+		const buf = Buffer.alloc(2 + 2 + 2 + 15 + 2)
+		buf.writeUInt16BE(0xFFD8, 0)
+		buf.writeUInt16BE(0xFFC0, 2)
+		buf.writeUInt16BE(17, 4)
+		buf[6] = 8
+		buf.writeUInt16BE(30, 7)
+		buf.writeUInt16BE(40, 9)
+		buf[11] = 3
+		buf.writeUInt16BE(0xFFD9, buf.length - 2)
+		return buf
+	})()
+	await writeFile(join(scratch, 'mobile-uploads', 'size.png'), png)
+	await writeFile(join(scratch, 'mobile-uploads', 'size.gif'), gif)
+	await writeFile(join(scratch, 'mobile-uploads', 'size.jpg'), jpeg)
+
+	const readSize = async (name) => {
+		const res = await fetch(`${base}/api/size?path=${encodeURIComponent(join(scratch, 'mobile-uploads', name))}`, authed)
+		return { status: res.status, body: await res.json().catch(() => ({})) }
+	}
+	const pngSize = await readSize('size.png')
+	const gifSize = await readSize('size.gif')
+	const jpgSize = await readSize('size.jpg')
+	check('PNG 尺寸读得出来', pngSize.status === 200 && pngSize.body.width === 24 && pngSize.body.height === 12, JSON.stringify(pngSize.body))
+	check('GIF 尺寸读得出来', gifSize.status === 200 && gifSize.body.width === 9 && gifSize.body.height === 7, JSON.stringify(gifSize.body))
+	check('JPEG 尺寸读得出来（扫 SOF 段）', jpgSize.status === 200 && jpgSize.body.width === 40 && jpgSize.body.height === 30, JSON.stringify(jpgSize.body))
+	check('顺带回报 mediaType（页面对视频另有占位）', pngSize.body.mediaType === 'image/png', String(pngSize.body.mediaType))
+	check('/api/size 缺 path 给 400', (await fetch(`${base}/api/size`, authed)).status === 400)
+	check('/api/size 只认允许目录（403）',
+		(await fetch(`${base}/api/size?path=${encodeURIComponent('C:\\Windows\\secret.png')}`, authed)).status === 403)
+	check('/api/size 不是媒体就 415',
+		(await fetch(`${base}/api/size?path=${encodeURIComponent(join(scratch, 'mobile-bridge.json'))}`, authed)).status === 415)
+	check('/api/size 也要鉴权',
+		(await fetch(`${base}/api/size?path=${encodeURIComponent(join(scratch, 'mobile-uploads', 'size.png'))}`)).status === 401)
+	// 认不出尺寸时给 unknown，让页面退到占位比例（而不是报错、也不是把图藏起来）。
+	const tiny = await fetch(`${base}/api/size?path=${encodeURIComponent(join(scratch, 'mobile-uploads', 'my-bg.png'))}`, authed)
+	const tinyBody = await tiny.json().catch(() => ({}))
+	check('认不出尺寸的图回 unknown（页面用占位比例，不报错）',
+		tiny.status === 200 && tinyBody.unknown === true, JSON.stringify(tinyBody))
+}
+
 const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
 const reader = stream.body.getReader()
 const decoder = new TextDecoder()
