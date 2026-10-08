@@ -163,9 +163,27 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 
 ## 外网访问（可选）
 
-局域网之外也能连。两条路，**先用方案 A**。
+局域网之外也能连。三条路，**按这个顺序试**：手机也装 Tailscale（最稳）→ Tailscale Funnel（手机不用装东西）→ Cloudflare 快速隧道（临时）。
 
-### 方案 A：Tailscale Funnel（推荐 —— 地址永不变、开机自恢复、手机不用装东西）
+### 方案 A：手机也装 Tailscale（**最稳**，推荐先试）
+
+电脑和手机都装 [Tailscale](https://tailscale.com/download)、用**同一个账号**登录，然后手机浏览器打开：
+
+```
+http://<电脑的 tailnet IP>:3081/<pathSecret>/
+```
+
+电脑的 tailnet IP 怎么拿：托盘图标点开就能看到（形如 `100.122.188.30`），或者命令行 `tailscale ip -4`。
+`<pathSecret>` 是网址密钥段 —— DSH 窗口的日志里、或桌面 DSH 左下角徽标上都有完整网址。
+
+**为什么它最稳**：流量走 tailnet（设备间端到端加密），**完全不经过 Funnel 的公网入口**。
+2026-10-08 实测过一次：Funnel 的公网入口有两个 IP，其中一个偶发回不到机器
+（外部 6 个国家的节点复测，一半报 `Broken pipe`）—— 手机就会间歇性"网络不通"，
+而同一时刻 tailnet 直连是好的。
+
+代价：手机要多装一个 App（**iPhone 需要非中国区 Apple ID**），并且 Tailscale 要在后台常驻。
+
+### 方案 B：Tailscale Funnel（地址永不变、开机自恢复、手机不用装东西）
 
 **为什么推荐**：Cloudflare 免费隧道的域名**每次重启都变**，旧的永久失效；Funnel 给的是一条 `https://<机器名>.<tailnet>.ts.net/` 的**固定公网地址** —— Tailscale 服务随开机自启、配置存在 daemon 状态里，**重启电脑后什么都不用做，网址照旧**。而且它是标准 HTTPS，**手机上不用装任何客户端**（这点对 iPhone 尤其重要：Tailscale 的 iOS app 没有上架中国区 App Store）。
 
@@ -189,11 +207,14 @@ tailscale funnel --bg 3081
 
 不用时关掉：`tailscale funnel --https=443 off`
 
-> ⚠️ **选了方案 A 就别再跑 `tools/tunnel-start.ps1`** —— 它会把配置里的 `publicUrl` 改回那个每次都变的 cloudflared 域名。两者选一个。
+> ⚠️ **选了一条路就别同时跑 `tools/tunnel-start.ps1`** —— 它会把配置里的 `publicUrl` 改回那个每次都变的 cloudflared 域名。
 >
-> **安全上如实说**：Funnel 和免费隧道一样是**公网地址**，保护来自随机密钥段 + PIN 这两层；区别只是域名固定、不会更容易被猜到。要"只有自己的设备能进"，就在手机上也装 Tailscale（设备之间端到端加密、不经公网），代价是 iPhone 需要非中国区 Apple ID。
+> **安全上如实说**：Funnel 和免费隧道一样是**公网地址**，保护来自随机密钥段 + PIN 这两层；区别只是域名固定、不会更容易被猜到。要"只有自己的设备能进"，就用**方案 A**（设备之间端到端加密、不经公网入口）。
+>
+> **Funnel 不稳时怎么办**：今天实测到的症状是"手机说网络不通"，但电脑这边一切正常（`tools/tunnel-status.ps1` 也是 OK）。
+> 先 `tailscale down` 再 `tailscale up`（不需要管理员）常常能救回来；实在不行重启电脑，或直接用方案 A。
 
-### 方案 B：Cloudflare 免费快速隧道（临时用）
+### 方案 C：Cloudflare 免费快速隧道（临时用）
 
 `tools/` 下有一套脚本：**不需要公网 IP、不需要改路由器、不需要注册账号**。代价是**域名每次重启都变**，旧的永久失效 —— 只适合临时开一下。
 
