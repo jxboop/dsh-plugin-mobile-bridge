@@ -1384,6 +1384,18 @@ const crashes = []
 const onCrash = (error) => crashes.push(error)
 process.on('uncaughtException', onCrash)
 
+/*
+ * 说明页的**内容版本**：说明改版后，老手机要能再看一遍新的。
+ * 既不能"永远不再弹"（一刀切按设备记"看过"），也不能"每次打开都弹"。
+ * 落盘存的是版本号（不是时间戳），加载时把 v1 时代的时间戳认成第 1 版。
+ */
+const welcomeDevice = 'dshm_device=harness-welcome-version'
+await fetch(`${base}/api/welcomed`, { method: 'POST', headers: { cookie: `${cookie}; ${welcomeDevice}` } })
+const welcomeBeforeRestart = JSON.parse(await readFile(tokensFile, 'utf8'))
+check('说明页的"看过"落盘的是版本号（不是时间戳）',
+	welcomeBeforeRestart.welcomed?.['harness-welcome-version'] === 2,
+	JSON.stringify(welcomeBeforeRestart.welcomed))
+
 const openStream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
 const openReader = openStream.body.getReader()
 await openReader.read()
@@ -1396,6 +1408,13 @@ check('stopping with a stream open does not crash the process',
 process.removeListener('uncaughtException', onCrash)
 await openReader.cancel().catch(() => {})
 
+// 装成 v1 时代的老数据（那时存的是毫秒时间戳）—— 迁移必须在"还没起来"的空档做，
+// 否则 dispose/加载过程会把内存里那份版本号又写回去，测不到迁移。
+await writeFile(tokensFile, JSON.stringify({
+	...JSON.parse(await readFile(tokensFile, 'utf8')),
+	welcomed: { 'harness-welcome-version': 1792078785000 },
+}, null, '\t'))
+
 apply(ctx)
 
 if (!await waitForPort(PORT)) {
@@ -1405,6 +1424,11 @@ if (!await waitForPort(PORT)) {
 	const afterRestart = await fetch(`${base}/api/bootstrap`, authed)
 	check('a phone stays logged in across a server restart',
 		afterRestart.status === 200, `HTTP ${afterRestart.status}`)
+
+	// 老数据（时间戳）算第 1 版 → 说明已升到第 2 版 → 这台手机应当再看一遍。
+	const legacyWelcome = await (await fetch(`${base}/api/bootstrap`, { headers: { cookie: `${cookie}; ${welcomeDevice}` } })).json()
+	check('v1 时代的时间戳被认成"第 1 版"：说明改版后老手机能再看一遍新内容',
+		legacyWelcome.welcomed === false, String(legacyWelcome.welcomed))
 
 	// 恢复的会话故意【不提权】：读得到，但一动手必须重新证明是本人。服务器用
 	// 403 + needPin 表达这件事 —— 不是 401，因为令牌本身完全有效。手机页面正是

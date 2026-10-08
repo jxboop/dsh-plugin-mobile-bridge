@@ -1525,12 +1525,19 @@ check('说明指向了下拉框或读取状态',
 		&& $('welcome').textContent.includes('插话'),
 		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 60))
 	check('说明页提醒了添加到主屏幕', $('welcome').textContent.includes('添加到主屏幕'))
+	// 说明页的第二段：输入框上面那排按键到底各干什么。新增按键（文件/背景）而不补说明，
+	// 用户就只能靠猜 —— 这恰好是"功能有了但没人会用"的典型死法。
+	check('说明页把输入框上面那排按键逐个讲了',
+		['图片', '文件', '原图', '生图', '背景'].every((key) => $('welcome').textContent.includes(key)),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 120))
+	check('说明页点明了"生图靠电脑上的插件"（免得误判成手机桥坏了）',
+		$('welcome').textContent.includes('生图插件') && $('welcome').textContent.includes('没有生图模型'))
 
 	click($('welcomeGo'))
 	await wait(60)
-	check('点「开始使用」就收起，并记住不再弹第二次',
+	check('点「开始使用」就收起，并记住"看过的是这一版"',
 		window.getComputedStyle($('welcome')).display === 'none'
-		&& window.localStorage.getItem('dshm.welcomed') === '1',
+		&& window.localStorage.getItem('dshm.welcomed') === '2',
 		`display=${$('welcome').style.display} flag=${window.localStorage.getItem('dshm.welcomed')}`)
 	// 光记在手机本地不够：换地址（Funnel ↔ 局域网是不同 origin）、无痕浏览、清站点数据
 	// 都会把本地标记弄丢 —— 那正是"每次退出重进都弹一遍"的原因。所以要告诉宿主一份。

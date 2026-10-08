@@ -700,8 +700,17 @@
 						<li><strong>回答提问 / 批准操作</strong> —— 它需要你拍板时会弹出卡片，直接点。</li>
 						<li><strong>插话</strong> —— 它正在跑的时候，右边按钮是「插话」：现在就能说，你这条会排在这一轮之后接着处理，不用干等。</li>
 					</ul>
-					<p>连不上时页面顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了。</p>
-					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。</p>
+					<p>输入框上面那排按键，从左到右：</p>
+					<ul>
+						<li><strong>图片</strong> —— 拍照或从相册选图发给它（一次最多 3 个）。</li>
+						<li><strong>文件</strong> —— 从手机里挑<strong>任意文件</strong>（文档、压缩包、代码…）传到电脑上；它拿到的是文件路径，能自己打开读内容。</li>
+						<li><strong>原图</strong> —— 点亮后按原始画质发，不压缩（大图会慢一些，费流量）。</li>
+						<li><strong>生图</strong> —— 用一句话让它画一张图。出图靠<strong>电脑上的生图插件</strong>：电脑没装、或者没配好 key，它只会回「没有生图模型」。提示词写<strong>英文</strong>、越具体越准（主体 / 风格 / 光线 / 镜头）。</li>
+						<li><strong>背景</strong> —— 给这个手机界面换一张图 / 动图（GIF）/ 视频当壁纸。背景是配在<strong>电脑</strong>上的，连上来的手机看到的都一样。</li>
+						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。</li>
+					</ul>
+					<p>连不上时页面顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了 —— 照着上面写的做就行。</p>
+					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。这一页想再看，点右上角「说明」。</p>
 				</div>
 				<button class="welcomego" id="welcomeGo">开始使用</button>
 			</div>
@@ -797,6 +806,7 @@
 				</div>
 				<div class="hint">发出去后 agent 会调 <code>image_generate</code> 出图，图会出现在当前会话里；出图慢时页面会显示它在跑。</div>
 				<div class="hint">⚠️ 真正出图的是<strong>电脑上的 <code>image_generate</code> 工具</strong>（一个单独的 DSH 插件）。电脑没装的话，agent 只会回一句"没有这个工具 / 没有生图模型" —— 那是电脑缺插件，不是手机桥坏了，装法见 README。</div>
+				<div class="hint">⚠️ 国内免费又稳的是<strong>智谱 CogView</strong>：去 bigmodel.cn 注册拿 key，填进电脑上的 <code>~/.dsh/image-gen.json</code>（<code>"zhipu": {"key": "…"}</code>），再把 <code>providers</code> 设成 <code>["zhipu"]</code>。<strong>key 要点「复制」拿整串</strong>（形如 <code>xxxxxxxx…xxxx.xxxxxxxxxxxxxxxx</code>，中间有一个点，约 49 位）；只复制了点号前面那段，出图时会报「格式不对」。</div>
 			</div>
 			<div class="sheetfoot">
 				<button class="primary" id="genGo">生成</button>
@@ -3921,6 +3931,9 @@
 	/* --------------------------------------------------------- 首次说明页 */
 
 	const welcome = $('welcome')
+	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
+	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
+	const WELCOME_VERSION = '2'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -3930,16 +3943,16 @@
 
 	function markWelcomed() {
 		welcomed = true
-		writeLocal('dshm.welcomed', '1')
+		writeLocal('dshm.welcomed', WELCOME_VERSION)
 		if (welcomedOnServer === true) return
 		welcomedOnServer = true
 		api('api/welcomed', { method: 'POST' }).catch(() => { welcomedOnServer = false })
 	}
 
-	/** 第一次连上时讲一遍怎么用；之后本地或服务端任一处记着就不再打扰。 */
+	/** 第一次连上时讲一遍怎么用；之后本地或服务端任一处记着**这一版**就不再打扰。 */
 	function maybeWelcome() {
 		if (welcomed || welcomedOnServer) return
-		if (readLocal('dshm.welcomed') === '1') return
+		if (readLocal('dshm.welcomed') === WELCOME_VERSION) return
 		show(welcome)
 	}
 
