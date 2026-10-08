@@ -729,6 +729,26 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		sw.status === 200 && String(sw.headers.get('content-type')).includes('javascript')
 		&& swBody.includes('addEventListener') && swBody.includes("/api/"),
 		`${sw.status} ${sw.headers.get('content-type')}`)
+	/*
+	 * ⚠️ 回归（2026-10-08 用户报"手机上什么都没有"的真根因）：
+	 * 页面导航那个分支曾经写成 `return hit ?? network` —— 有缓存就直接把**上一版页面**
+	 * 递给浏览器，也就是**实际是 cache-first**，与注释里写的"绝不能吃旧缓存"正好相反。
+	 * 后果不是"慢一点"，而是**改了手机页面，用户在手机上刷新也永远看不到**：
+	 * 1.3.7 修好"工具结果里的图不显示"之后，用户刷新仍是老样子，就是被它挡住的。
+	 */
+	{
+		const navStart = swBody.indexOf("request.mode === 'navigate'")
+		const navBranch = navStart < 0 ? '' : swBody.slice(navStart, navStart + 900)
+		check('页面导航是网络优先：先 fetch，缓存只兜断网',
+			navBranch.includes('fetch(request)') && navBranch.includes("caches.match('./')")
+			&& navBranch.includes('catch')
+			&& navBranch.indexOf('fetch(request)') < navBranch.indexOf("caches.match('./')"),
+			navBranch.replace(/\s+/g, ' ').slice(0, 100))
+		check('不再把缓存直接递给浏览器（那就是 cache-first 的老 bug）',
+			swBody.includes('return hit ?? network') === false)
+		check('缓存名带版本号（换代时 activate 会清掉旧壳）',
+			swBody.includes('dshm-shell-v') && swBody.includes('caches.delete'))
+	}
 	check('页面里的 manifest / apple-touch-icon 用的是相对地址（带密钥段才不会 404）',
 		pageHtml.includes('href="manifest.webmanifest"') && pageHtml.includes('href="icon-180.png"'),
 		'')
