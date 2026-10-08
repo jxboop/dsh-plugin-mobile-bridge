@@ -220,6 +220,39 @@ const services = {
 	credentials: {
 		resolve: async (ref) => (ref === 'DEEPSEEK_API_KEY' ? { value: 'sk-test-0123456789', source: 'test' } : undefined),
 	},
+	/**
+	 * 权限预设的替身。真实实现来自 dsh-permission-presets：它把预设名翻译成
+	 * 沙箱模式 + 审批策略，并且**按会话**记（写进会话日志，桌面端也看得到）。
+	 * 这里只留桥用得到的那几个成员，外加一个 current 变量方便断言切换真的发生了。
+	 */
+	permissionPresets: {
+		presets: {
+			'read-only': { sandbox: 'read-only', approval: 'ask' },
+			'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+			'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' },
+		},
+		currentPreset: 'workspace-write',
+		writes: [],
+		get names() { return Object.keys(this.presets) },
+		resolve(name) {
+			const spec = this.presets[name]
+			if (spec === undefined) throw new Error(`permission: unknown preset "${name}"`)
+			return spec
+		},
+		current(session) { return this.currentPreset },
+		set(session, name) {
+			this.resolve(name)
+			this.writes.push({ sessionId: session.id, preset: name })
+			this.currentPreset = name
+		},
+	},
+	/** 桥按 sessionId 拿会话对象；只有真正存在的会话给对象，其它一律当作"找不到"。 */
+	sessions: {
+		get(id) {
+			const known = ['session-test', 'session-blank', 'session-streamy', 'session-huge', 'session-fresh']
+			return known.includes(String(id)) ? { id: String(id) } : undefined
+		},
+	},
 }
 
 const disposers = []
@@ -743,6 +776,42 @@ check('a hand-typed path is forwarded as cwd',
 	STATE.created[1]?.cwd === 'D:\\tmp\\scratch' && STATE.created[1]?.workspaceId === undefined,
 	JSON.stringify(STATE.created[1]))
 
+/* --- 权限（手机上的 🔐）-------------------------------------------------- */
+/*
+ * 这个会话现在允许 agent 做到哪一步：手机上要能看、能改。三条底线：
+ *   1. 读要有登录态（不能白看）；
+ *   2. **放开要重新验 PIN** —— 光有 cookie 不足以让"捡到解锁手机的人"把整台机器放开；
+ *   3. 收紧到只读例外，往安全方向走不该被门拦住。
+ */
+{
+	const noAuth = await fetch(`${base}/api/permission?sessionId=session-test`)
+	check('权限读取也要登录（无 cookie → 401）', noAuth.status === 401, String(noAuth.status))
+
+	const snapshot = await (await fetch(`${base}/api/permission?sessionId=session-test`, authed)).json()
+	check('权限快照给出当前档位', snapshot.current === 'workspace-write', JSON.stringify(snapshot.current))
+	check('三档都给出来，并且是人话标签',
+		snapshot.options?.length === 3
+		&& snapshot.options.map((entry) => entry.label).join('/') === '只读/可写工作区/完全放开',
+		JSON.stringify(snapshot.options?.map((entry) => entry.label)))
+	check('每档都带上"能干什么"的说明（手机上不摆英文预设名）',
+		snapshot.options.every((entry) => typeof entry.detail === 'string' && entry.detail.length > 8),
+		snapshot.options?.[0]?.detail)
+
+	const ghost = await fetch(`${base}/api/permission?sessionId=session-nope`, authed)
+	check('找不到的会话回 404（而不是 500）', ghost.status === 404, String(ghost.status))
+
+	const missing = await fetch(`${base}/api/permission`, authed)
+	check('没带 sessionId 回 400', missing.status === 400, String(missing.status))
+
+	// 缺 sessionId 的写请求照样不许落地（400，而不是"改了个空会话"）。
+	const blank = await fetch(`${base}/api/permission`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'read-only' }),
+	})
+	check('写权限缺 sessionId 回 400', blank.status === 400, String(blank.status))
+}
+
 /* --- balance ------------------------------------------------------------- */
 
 const balance = await (await fetch(`${base}/api/balance`, authed)).json()
@@ -1229,6 +1298,70 @@ if (!await waitForPort(PORT)) {
 	check('a restored session is readable but not elevated (403 + needPin, not 401)',
 		restartWrite.status === 403 && restartWriteBody.needPin === true,
 		`HTTP ${restartWrite.status} ${JSON.stringify(restartWriteBody)}`)
+
+	/*
+	 * 权限的"要不要重新验 PIN"这件事，只有在这个现场才测得准：重启后恢复的令牌
+	 * **读得到、写不了**（正是手机在桥上最常见的状态）。三条底线：
+	 */
+	const restored = { headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' } }
+	const beforeWrites = services.permissionPresets.writes.length
+
+	// ① 放开 = 必须重新验 PIN。
+	const refused = await fetch(`${base}/api/permission`, {
+		method: 'POST',
+		...restored,
+		body: JSON.stringify({ sessionId: 'session-test', preset: 'danger-full-access' }),
+	})
+	const refusedBody = await refused.json().catch(() => ({}))
+	check('提权过期时放开权限被拒：403 + needPin（页面据此弹 PIN 门）',
+		refused.status === 403 && refusedBody.needPin === true,
+		`HTTP ${refused.status} ${JSON.stringify(refusedBody)}`)
+	check('被拒的那次真的没写进任何会话', services.permissionPresets.writes.length === beforeWrites,
+		`${beforeWrites} -> ${services.permissionPresets.writes.length}`)
+
+	// ② 收紧到只读 = 不用再验一次 PIN（不能拦着用户赶紧把机器锁上）。
+	const tighten = await fetch(`${base}/api/permission`, {
+		method: 'POST',
+		...restored,
+		body: JSON.stringify({ sessionId: 'session-test', preset: 'read-only' }),
+	})
+	const tightened = await tighten.json().catch(() => ({}))
+	check('不验 PIN 也能收紧到只读（往安全方向走不设门）',
+		tighten.status === 200 && tightened.current === 'read-only',
+		`HTTP ${tighten.status} ${JSON.stringify(tightened.current)}`)
+	check('只读写进了会话（桌面端看得到同一档）',
+		services.permissionPresets.writes.at(-1)?.preset === 'read-only',
+		JSON.stringify(services.permissionPresets.writes.at(-1)))
+
+	// ③ 重新验 PIN 之后（登录会**换发令牌**，旧 cookie 当场作废）放开才生效。
+	const relogin = await fetch(`${base}/api/login`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ pin: config.pin }),
+	})
+	const freshCookie = (relogin.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ')
+	const widen = await fetch(`${base}/api/permission`, {
+		method: 'POST',
+		headers: { cookie: freshCookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', preset: 'danger-full-access' }),
+	})
+	const widened = await widen.json().catch(() => ({}))
+	check('重新验过 PIN 之后放开成功（当前档位 + 标签一起回来）',
+		widen.status === 200 && widened.current === 'danger-full-access' && widened.label === '完全放开',
+		`HTTP ${widen.status} ${widened.current}/${widened.label}`)
+
+	const bogus = await fetch(`${base}/api/permission`, {
+		method: 'POST',
+		headers: { cookie: freshCookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', preset: 'make-me-root' }),
+	})
+	check('不存在的档位回 400，而且不许顺手动坏当前档位',
+		bogus.status === 400 && services.permissionPresets.writes.at(-1)?.preset === 'danger-full-access',
+		`HTTP ${bogus.status} -> ${services.permissionPresets.writes.at(-1)?.preset}`)
+
+	// 换发过令牌：收尾的注销用例要用新的那张。
+	cookie = freshCookie
+	authed.headers.cookie = freshCookie
 }
 
 const logout = await fetch(`${base}/api/logout`, { method: 'POST', headers: { cookie } })

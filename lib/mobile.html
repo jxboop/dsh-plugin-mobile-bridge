@@ -362,23 +362,74 @@
 		position: absolute; top: -6px; right: -6px; width: 21px; height: 21px; border-radius: 50%;
 		border: 0; background: var(--err); color: #fff; font-size: 13px; line-height: 1; padding: 0;
 	}
+	/* 输入框那一带是【两行】：上面一行工具键，下面一行"输入框 + 发送/停止"。 */
+	/* 390px 上实测：五个键挤一行要 220px + 输入框 120px + 间距 > 370px，硬塞必掉行； */
+	/* 分成两行，输入框拿回整行宽度，窄屏（320px）也不会散架。 */
+	#composer { display: flex; flex-direction: column; gap: 8px; }
+	#tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 	#compose { display: flex; gap: 8px; align-items: flex-end; }
 	#text {
-		flex: 1; min-width: 0; background: var(--panel-2); border: 1px solid var(--field-line);
+		flex: 1 1 auto; min-width: 0; background: var(--panel-2); border: 1px solid var(--field-line);
 		border-radius: 14px; padding: 11px 13px; resize: none; max-height: 130px; min-height: 44px;
 		box-shadow: var(--glass-edge);
 	}
-	#send, #stop { border: 0; border-radius: 14px; padding: 12px 16px; font-weight: 600; flex: none; box-shadow: var(--glass-edge); }
+	#send, #stop { border: 0; border-radius: 14px; padding: 12px 16px; font-weight: 600; flex: 0 0 auto; box-shadow: var(--glass-edge); }
 	/* 运行中「插话」和「停止」要同时站着，窄屏上把它们收窄，别把输入框挤没。 */
 	#compose.two #send, #compose.two #stop { padding: 12px 11px; }
 	#send { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); }
 	#stop { background: var(--stop-bg); }
-	#pick { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 13px; flex: none; box-shadow: var(--glass-edge); }
+	/* 工具键那一排：图片 / 原图 / 生图 / 权限。共用一套底色和内边距 —— */
+	/* 各写各的，早晚会有一条对不齐。 */
+	#pick, #rawToggle, #genBtn, #permBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
 	/* 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用） */
-	#rawToggle { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 14px; padding: 11px 9px; flex: none; font-size: 12px; color: var(--muted); box-shadow: var(--glass-edge); }
+	#rawToggle { color: var(--muted); }
 	#rawToggle.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
-	/* 一排四个键（图片/原图/插话/停止）时把左右内边距收紧，别把输入框挤成两行。 */
-	#compose.two #pick, #compose.two #rawToggle, #compose.two #send, #compose.two #stop { padding-left: 9px; padding-right: 9px; }
+	/* 生图键：和「图片」「原图」并排，点开生图面板（英文提示词 → 交给会话里的 image_generate）。 */
+	#genBtn { color: var(--muted); }
+	/* 权限键：右上角那颗点就是这个会话现在放到多开（只读=红 / 放开=橙）。 */
+	/* 颜色本身就是警示 —— 不用点进去才知道自己现在是不是"什么都允许"。 */
+	/* 档位记在 #composer 上（角标点在按键上）：换会话时只更新一个属性，不用重建节点。 */
+	#permBtn { position: relative; padding-left: 11px; padding-right: 11px; }
+	#permBtn::after {
+		content: ''; position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%;
+		background: var(--ok); border: 1.5px solid var(--panel);
+	}
+	#composer[data-perm="read-only"] #permBtn::after { background: var(--err); }
+	#composer[data-perm="danger-full-access"] #permBtn::after { background: #ff6b3d; }
+
+	/* ------------------------------------------------------------- 生图 */
+	/* 尺寸是一排可选键（不写下拉：iOS 上 select 会弹整屏滚轮），选中态和「原图」一致。 */
+	.genwrap { display: flex; flex-wrap: wrap; gap: 8px; }
+	.genopt {
+		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 13px;
+		padding: 10px 13px; font-size: 13px; color: var(--muted); box-shadow: var(--glass-edge);
+	}
+	.genopt.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+	/* 「将要发给 agent 的那句话」原样摆出来：用户点下去之前就知道会发生什么。 */
+	.genpreview {
+		font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px;
+		padding: 10px 12px; color: var(--muted); max-height: 150px; overflow: auto;
+	}
+
+	/* ------------------------------------------------------------- 权限 */
+	/* 每一档是一张可点的卡：名字 + 人话说明 + 选中的打勾。手机上不给细粒度开关 —— */
+	/* 只给三档，改错一次也不至于把整台机器交出去。 */
+	.permopt {
+		display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
+		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 13px;
+		padding: 12px 13px; margin-bottom: 8px; box-shadow: var(--glass-edge);
+	}
+	.permopt.on { border-color: var(--accent); }
+	.permopt .mark {
+		flex: none; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--code-line); margin-top: 1px;
+	}
+	.permopt.on .mark { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 3px var(--panel-2); }
+	.permopt .t { font-size: 14px; font-weight: 600; display: block; }
+	.permopt .d { font-size: 12px; color: var(--muted); display: block; margin-top: 3px; line-height: 1.55; }
+	.permopt[data-perm="read-only"] .t::before { content: '👀 '; }
+	.permopt[data-perm="workspace-write"] .t::before { content: '📁 '; }
+	.permopt[data-perm="danger-full-access"] .t::before { content: '⚠️ '; }
 
 	/* ------------------------------------------------------------- sheet */
 	/* Full-screen panel rather than a third tab: the tab bar is covered while
@@ -559,9 +610,16 @@
 			<button id="tonew" style="display:none">↓ 回到最新</button>
 			<div id="composer">
 				<div id="thumbs"></div>
-				<div id="compose">
+				<!-- 工具键单独一行：一排五个键（图片/原图/生图/权限/发送）在 390px 上
+				     实测放不下（键 220px + 输入框 120px + 间距 > 370px），硬塞就会
+				     掉行、把输入框挤成一条缝。分成两行后输入框拿回整行宽度。 -->
+				<div id="tools">
 					<button id="pick">图片</button>
 					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
+					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
+					<button id="permBtn" title="这个会话允许 agent 做到哪一步（改权限要重新输 PIN）">🔐</button>
+				</div>
+				<div id="compose">
 					<textarea id="text" rows="1" placeholder="给 agent 下达任务…"></textarea>
 					<button id="send" data-display="inline-block">发送</button>
 					<button id="stop" data-display="inline-block" style="display:none">停止</button>
@@ -635,6 +693,69 @@
 		</section>
 	</main>
 
+	<!-- 权限：只摆三档（只读 / 可写工作区 / 完全放开），选完点「应用」。
+	     改权限会落到会话日志里（桌面端也看得到），而且要重新验一次 PIN —— 
+	     手机丢了、或者手机被人拿着的时候，权限不会被顺手放开。 -->
+	<section class="sheet" id="permopen" data-display="flex" style="display:none">
+		<div class="sheetbar">
+			<button class="iconbtn" id="permBack">← 返回</button>
+			<span class="title">权限</span>
+			<span class="spacer"></span>
+		</div>
+		<div class="scroll pad">
+			<div class="field">
+				<label>这个会话现在允许 agent 做到哪一步</label>
+				<div class="hint" id="permNow">读取中…</div>
+				<div id="permOptions"></div>
+			</div>
+			<div class="hint">权限是<strong>按会话</strong>存的：这里改了，只影响当前这个会话（桌面端下一次打开它时看到的是同一档）。桌面端在跑的那一轮不受影响，从下一轮开始生效。</div>
+		</div>
+		<div class="sheetfoot">
+			<button class="primary" id="permApply">应用</button>
+			<div class="hint" id="permHint">改权限要重新输一次 PIN。</div>
+		</div>
+	</section>
+
+	<!-- 生图：一句话（英文提示词）→ 变成发给 agent 的 image_generate 指令。
+	     刻意不直连生图后端：图要落进当前会话，才能像别的素材一样在对话里看、
+	     点开、长按存相册，也才有记录可查。 -->
+	<section class="sheet" id="genopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="genBack">← 返回</button>
+				<span class="title">生成图片</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="field">
+					<label>描述（英文最准）</label>
+					<textarea class="plain" id="genPrompt" placeholder="a red apple on a white table, soft daylight, photo" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+					<div class="hint">生图工具只做 URL 编码、不改写提示词 —— 越具体越准（主体 / 风格 / 光线 / 镜头）。</div>
+				</div>
+				<div class="field">
+					<label>尺寸</label>
+					<div class="genwrap">
+						<button class="genopt on" data-gw="1024" data-gh="1024">1024×1024 方图</button>
+						<button class="genopt" data-gw="1024" data-gh="1536">1024×1536 竖屏</button>
+						<button class="genopt" data-gw="1536" data-gh="1024">1536×1024 横屏</button>
+					</div>
+				</div>
+				<div class="field">
+					<label>种子（可留空）</label>
+					<input class="plain" id="genSeed" inputmode="numeric" placeholder="同一个种子 = 同一张图，便于重出" autocapitalize="off" autocorrect="off" spellcheck="false">
+				</div>
+				<div class="field">
+					<label>发给 agent 的那句话</label>
+					<div class="genpreview" id="genPreview">（填了描述才会出现）</div>
+				</div>
+				<div class="hint">发出去后 agent 会调 image_generate 出图，图会出现在当前会话里；出图慢时页面会显示它在跑。</div>
+			</div>
+			<div class="sheetfoot">
+				<button class="primary" id="genGo">生成</button>
+				<div class="hint" id="genFirst">第一次会先把这句话放进输入框，你看一眼再点发送。</div>
+			</div>
+		</section>
+	</main>
+
 	<!-- 提问/审批卡片放在 main【外面】：它属于所有页签。
 	     放在 #view-task 里面时，用户切到「余额」就完全看不到提问 —— 而 agent
 	     正在那儿等着，只能干等到超时回到桌面。 -->
@@ -660,6 +781,8 @@
 
 	const views = { task: $('view-task'), bill: $('view-bill') }
 	const sheet = $('view-new')
+	const genSheet = $('genopen')
+	const permSheet = $('permopen')
 	const tabButtons = Array.from(document.querySelectorAll('#tabs button'))
 	const HEADINGS = { task: '会话', bill: '账户余额' }
 
@@ -2625,7 +2748,9 @@
 			return attempt(1)
 		}).then((result) => {
 			text.value = ''
-			text.style.height = 'auto'
+			growComposer()
+			// 预填的那句话已经发出去了：下次再开生图面板就说清"这次会直接发"。
+			if (gen.sent === true) $('genFirst').textContent = '描述写好点「生成」就发出去（会话空着会先把话放进输入框让你过目）。'
 			state.images = []
 			state.files = []
 			renderThumbs()
@@ -2881,6 +3006,155 @@
 
 	text.addEventListener('input', growComposer)
 
+	/* -------------------------------------------------------------- 生图 */
+	/* 设计取舍：手机桥不直连生图后端。图必须落进**当前会话**才看得见、存得下、
+	   查得到（对话里的缩略图 + 长按存相册都是按会话走的），所以这一键做的事是
+	   「把一句英文描述翻译成一条给 agent 的 image_generate 指令，再走普通发送」。 */
+
+	/** 面板上的尺寸/种子：发送那一刻冻结，免得用户在 agent 跑的时候改面板。 */
+	const gen = { width: 1024, height: 1024, seed: '', sent: false }
+
+	/** 面板里那三行 → 真正发给 agent 的一句话。 */
+	function genText() {
+		const prompt = $('genPrompt').value.trim()
+		if (prompt === '') return ''
+		const seed = $('genSeed').value.trim()
+		const lines = [
+			'请用 image_generate 生成一张图片。',
+			'提示词（英文，请原样使用）：' + prompt,
+			'尺寸：' + gen.width + 'x' + gen.height,
+		]
+		if (/^\d+$/.test(seed)) lines.push('种子：' + seed + '（固定种子，便于复现）')
+		lines.push('生成后把图片直接显示在对话里。')
+		return lines.join('\n')
+	}
+
+	function genPreview() {
+		const body = genText()
+		$('genPreview').textContent = body === '' ? '（填了描述才会出现）' : body
+	}
+
+	function genClose() { hide(genSheet) }
+
+	/** 生成键：第一次先把话放进输入框让用户过目；之后就照发。 */
+	function genGo() {
+		const body = genText()
+		if (body === '') { flash('先写一句描述：主体、风格、光线，英文最准。', 5000); return }
+		if (!state.sessionId) { flash('先去「新建」开一个会话，或选一个已有会话。'); return }
+		gen.sent = true
+		genClose()
+		if (text.value.trim() === '') {
+			text.value = body
+			growComposer()
+			flash('已放进输入框：看一眼再点「发送」。', 6000)
+			return
+		}
+		send()
+	}
+
+	$('genBtn').addEventListener('click', () => { show(genSheet); genPreview(); $('genPrompt').focus() })
+	$('genBack').addEventListener('click', () => {
+		if ($('genPrompt').value.trim() !== '' && !window.confirm('放弃这张图的描述？')) return
+		genClose()
+	})
+	$('genPrompt').addEventListener('input', genPreview)
+	$('genSeed').addEventListener('input', genPreview)
+	for (const option of document.querySelectorAll('#genopen .genopt')) {
+		option.addEventListener('click', () => {
+			gen.width = Number(option.dataset.gw)
+			gen.height = Number(option.dataset.gh)
+			for (const other of document.querySelectorAll('#genopen .genopt')) {
+				other.classList.toggle('on', other === option)
+			}
+			genPreview()
+		})
+	}
+	$('genGo').addEventListener('click', genGo)
+
+	/* -------------------------------------------------------------- 权限 */
+	/* 三档权限本身在宿主那边（permissionPresets 服务），这里只做两件事：
+	   把档位摆成人话给用户挑；切换时走 POST /api/permission —— 那条路要提权，
+	   所以改权限**一定会**先弹一次 PIN 门（api() 见到 403 needPin 会自己打开）。 */
+
+	/** 面板打开时的现场：现在哪档 / 可选项 / 用户点了哪档。 */
+	const perm = { current: '', options: [], picked: '' }
+
+	function renderPerm() {
+		const box = $('permOptions')
+		box.innerHTML = ''
+		for (const option of perm.options) {
+			// 服务端给的是纯数据，这里用 DOM API 建节点：预设名将来若有中文也不怕。
+			const card = document.createElement('button')
+			card.className = 'permopt' + (option.value === perm.picked ? ' on' : '')
+			card.dataset.perm = option.value
+			const mark = document.createElement('span')
+			mark.className = 'mark'
+			const txt = document.createElement('span')
+			txt.className = 'txt'
+			const title = document.createElement('span')
+			title.className = 't'
+			title.textContent = option.label
+			const desc = document.createElement('span')
+			desc.className = 'd'
+			desc.textContent = option.detail
+			txt.append(title, desc)
+			card.append(mark, txt)
+			card.addEventListener('click', () => { perm.picked = option.value; renderPerm() })
+			box.append(card)
+		}
+		const now = perm.options.find((option) => option.value === perm.current)
+		$('permNow').textContent = now === undefined ? '当前：' + perm.current : '当前：' + now.label
+		const changed = perm.picked !== '' && perm.picked !== perm.current
+		$('permApply').textContent = changed ? '改成「' + (perm.picked === 'read-only' ? '只读' : perm.picked === 'danger-full-access' ? '完全放开' : '可写工作区') + '」' : '应用'
+		$('permApply').disabled = !changed
+	}
+
+	/** 权限角标：不点进去也知道自己现在放到多开（颜色写在 #composer 上，见样式表）。 */
+	function markPerm(value) {
+		perm.current = value
+		const holder = $('composer')
+		if (value === '') delete holder.dataset.perm
+		else holder.dataset.perm = value
+	}
+
+	function openPerm() {
+		show(permSheet)
+		$('permHint').textContent = '改权限要重新输一次 PIN。'
+		if (!state.sessionId) { $('permNow').textContent = '先选一个会话'; $('permOptions').innerHTML = ''; return }
+		$('permNow').textContent = '读取中…'
+		api('api/permission?sessionId=' + encodeURIComponent(state.sessionId)).then((body) => {
+			perm.options = Array.isArray(body.options) ? body.options : []
+			markPerm(String(body.current ?? ''))
+			perm.picked = perm.current
+			renderPerm()
+		}).catch((error) => { $('permNow').textContent = '读不到权限：' + error.message })
+	}
+
+	$('permBtn').addEventListener('click', openPerm)
+	$('permBack').addEventListener('click', () => { hide(permSheet) })
+	$('permApply').addEventListener('click', () => {
+		if (!state.sessionId || perm.picked === '' || perm.picked === perm.current) return
+		const button = $('permApply')
+		button.disabled = true
+		api('api/permission', {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ sessionId: state.sessionId, preset: perm.picked }),
+		}).then((body) => {
+			markPerm(String(body.current ?? perm.picked))
+			perm.picked = perm.current
+			renderPerm()
+			hide(permSheet)
+			flash('权限已改成「' + (body.label ?? perm.current) + '」，从下一轮开始生效', 5000)
+		}).catch((error) => {
+			// needPin 时 api() 已经弹了 PIN 门；这里只需留住面板和选择，用户验完再点一次。
+			$('permHint').textContent = error.needsPin === true
+				? '请先在上面输入 PIN，然后回来再点一次「应用」。'
+				: '改不了：' + error.message
+			button.disabled = false
+		})
+	})
+
 	/* -------------------------------------------------------------- 新建 */
 
 	function loadWorkspaces() {
@@ -3115,6 +3389,14 @@
 		})
 	}
 
+	/** 后台悄悄问一句"这个会话现在哪档权限"，只为把锁上那颗点染对颜色。 */
+	function refreshPermBadge() {
+		if (!state.sessionId) return
+		api('api/permission?sessionId=' + encodeURIComponent(state.sessionId))
+			.then((body) => markPerm(String(body.current ?? '')))
+			.catch(() => { /* 角标而已，读不到就当没这回事，不要弹东西吓人 */ })
+	}
+
 	sessionSelect.addEventListener('change', () => {
 		// 先把当前这份存下来：切回来时它能让屏幕立刻有内容。
 		rememberSession(state.sessionId)
@@ -3132,6 +3414,7 @@
 		render()
 		if (warm) bootStep(58, '已经从本地恢复')
 		connect()
+		refreshPermBadge()
 	})
 
 	$('pick').addEventListener('click', () => fileInput.click())

@@ -128,6 +128,18 @@ let promptFailTimes = 0
 /** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
 const promptIds = []
 
+/**
+ * 权限接口的替身。真宿主里权限预设是**按会话**存的（写进会话日志，桌面端看得到），
+ * 手机只读一份快照、写一次切换。`elevated` 模拟"令牌还有效、但这台机器要你重新
+ * 证明是本人"——就是宿主重启后恢复的手机令牌那个状态。
+ */
+const permState = {
+	preset: 'danger-full-access',
+	elevated: true,
+	writes: [],
+}
+const permRequests = []
+
 function jsonResponse(body, status = 200) {
 	return Promise.resolve({
 		ok: status >= 200 && status < 300,
@@ -183,6 +195,29 @@ async function stubFetch(input, options = {}) {
 		})
 	}
 	if (path.startsWith('/api/login')) return jsonResponse({ ok: true })
+	if (path.startsWith('/api/permission')) {
+		if (options.method === 'POST') {
+			const body = JSON.parse(options.body ?? '{}')
+			permRequests.push(body)
+			// 宿主对"放开"这类改动要求提权；收紧到只读是例外（往安全方向走）。
+			if (permState.elevated !== true && body.preset !== 'read-only') {
+				return jsonResponse({ error: '改权限需要重新输入 PIN', needPin: true }, 403)
+			}
+			permState.preset = body.preset
+			permState.writes.push(body)
+		}
+		const labels = { 'read-only': '只读', 'workspace-write': '可写工作区', 'danger-full-access': '完全放开' }
+		const details = {
+			'read-only': '能看、能读文件，不能改任何东西。看资料、查代码用这档。',
+			'workspace-write': '能在项目文件夹里建文件、改文件、跑命令；动到文件夹外面时要问你一次。',
+			'danger-full-access': '整台机器都能改、命令不再逐条问你。只在你盯着它干活时用。',
+		}
+		return jsonResponse({
+			current: permState.preset,
+			label: labels[permState.preset],
+			options: Object.keys(labels).map((value) => ({ value, label: labels[value], detail: details[value] })),
+		})
+	}
 	if (path.startsWith('/api/answer')) {
 		if (answerExpired) return jsonResponse({ error: '这条提问已经失效（可能超时，或已在别处回答）' }, 409)
 		return jsonResponse({ ok: true })
@@ -1793,6 +1828,152 @@ check('说明指向了下拉框或读取状态',
 	check('点它就贴回底部并收起按钮',
 		log.scrollTop === bottom() && window.getComputedStyle($('tonew')).display === 'none',
 		`scrollTop=${log.scrollTop} 底部=${bottom()} display=${window.getComputedStyle($('tonew')).display}`)
+}
+
+/* --- 生图面板 与 权限面板（输入框旁边那两个新键）--------------------------- */
+/*
+ * 两个键都必须在输入框那一排里（用户不用去别的页签找），都必须是全屏面板
+ * （和「新建」一样的形态），而且**发出去之前用户能看见将要发生什么**：
+ * 生图给的是"将要发给 agent 的那句话"原文，权限给的是每档能干什么。
+ */
+{
+	const nextFrame = async () => {
+		for (let index = 0; index < 3; index += 1) {
+			await new Promise((resolve) => window.requestAnimationFrame(resolve))
+		}
+	}
+	const compose = $('compose')
+	const tools = $('tools')
+	const genPanel = $('genopen')
+	const permPanel = $('permopen')
+	const textarea = $('text')
+
+	check('生图键在输入区上方那一排工具键里', tools.contains($('genBtn')))
+	check('权限键也在那一排里', tools.contains($('permBtn')))
+	check('工具键排和输入框排在同一个输入区里（没被挪到别的地方）',
+		$('composer').contains(tools) && $('composer').contains(compose))
+	check('两个面板都先收着', window.getComputedStyle(genPanel).display === 'none' && window.getComputedStyle(permPanel).display === 'none')
+
+	$('genBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	check('点「生图」弹出面板（盖在当前内容上，不换页签）',
+		window.getComputedStyle(genPanel).display !== 'none' && window.getComputedStyle($('view-task')).display !== 'none')
+	check('生图面板自己写着标题', $('genopen').textContent.includes('生成图片'))
+
+	// 一次点完：描述 + 竖屏 + 固定种子 → 预览里就该出现这句话。
+	textarea.value = ''
+	textarea.style.height = ''
+	const promptBox = $('genPrompt')
+	promptBox.value = 'a red apple on a white table, soft daylight, photo'
+	promptBox.dispatchEvent(new window.Event('input', { bubbles: true }))
+	$('genopen').querySelectorAll('.genopt')[1].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('genSeed').value = '12345'
+	$('genSeed').dispatchEvent(new window.Event('input', { bubbles: true }))
+	const preview = $('genPreview').textContent
+	check('预览里就是将要发给 agent 的那句话（原样、不猜）',
+		preview.includes('image_generate') && preview.includes('a red apple on a white table, soft daylight, photo'),
+		preview.slice(0, 60))
+	check('选的尺寸进了预览', preview.includes('1024x1536'), preview.slice(0, 80))
+	check('填了种子就带上种子（便于重出同一张）', preview.includes('种子：12345'), preview.slice(0, 100))
+
+	// 第一次直接把话放进输入框让用户过目，而不是当场发出去（一按就花钱，不能偷偷发）。
+	const promptsBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	$('genGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('第一次点「生成」：话放进输入框，等用户自己按发送',
+		textarea.value.includes('image_generate') && textarea.value.includes('a red apple'),
+		JSON.stringify(textarea.value.slice(0, 40)))
+	check('这一刻还没有发出任何任务（不偷偷花钱）',
+		requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === promptsBefore)
+	check('生图面板顺势收起（下一步是发送）', window.getComputedStyle(genPanel).display === 'none')
+	check('输入框跟着长高（那句话有好几行，不能被切成一条缝）',
+		textarea.style.height !== '' && textarea.style.height !== 'auto', textarea.style.height)
+
+	// 第二次再点「生成」：照发（用户已经过目过一次）。
+	$('genBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('genGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('第二次点「生成」：直接发出去',
+		requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === promptsBefore + 1,
+		`${promptsBefore} -> ${requests.filter((entry) => entry.path.startsWith('/api/prompt')).length}`)
+
+	// 返回要确认，不能一点就把写好的描述弄没。
+	$('genBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('genPrompt').value = 'a cat'
+	window.confirm = () => { confirmAnswer = false; return confirmAnswer }
+	$('genBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	check('描述没写完就点返回：先问一句，面板留着（草稿不丢）',
+		window.getComputedStyle(genPanel).display !== 'none', window.getComputedStyle(genPanel).display)
+	window.confirm = () => { confirmAnswer = true; return confirmAnswer }
+	$('genBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	check('确认放弃后才真的收起', window.getComputedStyle(genPanel).display === 'none')
+
+	// 权限面板：三档、人话、当前档打勾、改权限要重新输 PIN。
+	$('permBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('点🔐弹出权限面板', window.getComputedStyle(permPanel).display !== 'none')
+	check('权限是按会话读的（请求带上了当前 sessionId）',
+		permRequests.length === 0 && requests.some((entry) => entry.path === '/api/permission?sessionId=' + SESSION),
+		requests.filter((entry) => entry.path.startsWith('/api/permission')).map((entry) => entry.path).join(' | '))
+	check('三档都在，而且是中文标签', permPanel.querySelectorAll('.permopt').length === 3 && permPanel.textContent.includes('可写工作区'),
+		permPanel.textContent.replace(/\s+/g, ' ').slice(0, 90))
+	check('当前那档打勾了（灰底那颗点会被点亮）',
+		permPanel.querySelector('.permopt.on')?.dataset.perm === 'danger-full-access',
+		permPanel.querySelector('.permopt.on')?.dataset.perm)
+	check('每档都写着能干什么', permPanel.textContent.includes('不能改任何东西'), '')
+	check('锁上那颗角标点染的是当前档位', $('composer').dataset.perm === 'danger-full-access', $('composer').dataset.perm)
+
+	// 换成只读 = 收紧，不用重新验 PIN。
+	permPanel.querySelector('.permopt[data-perm="read-only"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('permApply').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('发出去的写请求带着 sessionId 与档位',
+		permRequests.at(-1)?.sessionId === SESSION && permRequests.at(-1)?.preset === 'read-only',
+		JSON.stringify(permRequests.at(-1)))
+	check('切成功后面板收起并回一句人话',
+		window.getComputedStyle(permPanel).display === 'none' && $('banner').textContent.includes('权限已改成'),
+		$('banner').textContent)
+	check('角标跟着换成新档位', $('composer').dataset.perm === 'read-only', $('composer').dataset.perm)
+
+	// 提权过期：令牌还能用（读得到），但一动手就被 403 + needPin 拦下。
+	// 桩里直接把"提权"这一位翻掉即可 —— jsdom 的 fetch 不解析相对地址，
+	// 真去 POST /api/logout 只会因为 URL 解析失败而假红。
+	permState.elevated = false
+	$('permBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('提权过期时权限仍然读得到（不是一片空白）',
+		window.getComputedStyle(permPanel).display !== 'none' && permPanel.querySelectorAll('.permopt').length === 3,
+		`${permPanel.querySelectorAll('.permopt').length} 档`)
+	permPanel.querySelector('.permopt[data-perm="workspace-write"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('permApply').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('被拒时把 PIN 门打开（用户不是卡在"提示要输 PIN 却到处没有输入框"）',
+		window.getComputedStyle($('gate')).display !== 'none' && window.getComputedStyle($('app')).display === 'none',
+		`gate=${window.getComputedStyle($('gate')).display}`)
+	check('被拒时没有改坏当前档位', permState.preset === 'read-only', permState.preset)
+	// PIN 门是盖在 app 上面的一层：面板的可见性这时被它挡住，但面板本身没收起、
+	// 用户点的那档也还在 —— 验完 PIN 回来直接接着点「应用」，不用重选一遍。
+	check('面板和选择都留着（PIN 门后面点的还是刚才那档）',
+		permPanel.style.display === 'flex'
+		&& permPanel.querySelector('.permopt.on')?.dataset.perm === 'workspace-write',
+		`display=${permPanel.style.display} picked=${permPanel.querySelector('.permopt.on')?.dataset.perm}`)
+
+	$('pin').value = '123456'
+	$('gateBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(160)
+	check('输对 PIN 后回到会话界面', window.getComputedStyle($('app')).display !== 'none')
+	permState.elevated = true
+	$('permApply').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('验过 PIN 后再点「应用」就改成了', permState.preset === 'workspace-write', permState.preset)
+	check('改完收起面板并回一句人话',
+		window.getComputedStyle(permPanel).display === 'none' && $('banner').textContent.includes('权限已改成'),
+		$('banner').textContent)
+
+	// 后面还有会话切换/流式等用例：把它们要的现场还原回去（提到放开档、回到可见状态）。
+	permState.preset = 'danger-full-access'
+	permState.elevated = true
+	$('composer').dataset.perm = 'danger-full-access'
+	await nextFrame()
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */
