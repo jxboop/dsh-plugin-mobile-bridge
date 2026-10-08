@@ -568,6 +568,48 @@ check('tool call renders with its result merged',
 }
 check('history image element is present', window.document.querySelectorAll('#log img').length === 1)
 
+/* --- 工具结果里的图片：必须变成真图，不能只剩一句"[图片]" ------------------ */
+/*
+ * 现场（2026-10-08 用户报"手机端看不到图片"）：`image_generate` 出的图在 tool/result 里
+ * 是一个 `type:image` 内容块，而这条路以前把它译成**文字** "[图片]" —— 图明明生成好了、
+ * `/api/media` 也取得到（实测 200 / image/jpeg / 201KB），手机上却一个字都看不到图。
+ * 工具结果里的图是那个工具**唯一的成果**，不能这么丢。
+ */
+{
+	source.emit({
+		t: 'event',
+		event: { type: 'tool/call', seq: 11, time: 11, data: { turn: 2, step: 3, callId: 'c-img', name: 'image_generate', arguments: '{"prompt":"a red apple"}' } },
+	})
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'tool/result', seq: 12, time: 12,
+			data: {
+				turn: 2, step: 3,
+				message: {
+					id: 'm11', role: 'user',
+					content: [{
+						type: 'tool-result', toolCallId: 'c-img',
+						content: [
+							{ type: 'text', text: '<url>https://example.invalid/x.png</url>' },
+							{ type: 'image', attachment: { attachmentId: 'att-gen', mediaType: 'image/jpeg', bytes: 123, width: 1024, height: 1024 } },
+						],
+					}],
+				},
+			},
+		},
+	})
+	await wait(120)
+	const shotSources = [...window.document.querySelectorAll('#log img')].map((node) => node.getAttribute('src'))
+	check('工具结果里的图片渲染成真图（不是"[图片]"三个字）',
+		shotSources.some((src) => typeof src === 'string' && src.startsWith('api/media?') && src.includes('attachmentId=att-gen')),
+		shotSources.join(' | '))
+	check('工具结果里不再出现"[图片]"占位文字',
+		$('log').textContent.includes('[图片]') === false, 'still rendered the placeholder')
+	check('图片旁边给了"点开/长按存相册"的提示',
+		$('log').textContent.includes('长按图片'))
+}
+
 /* --- agent 在电脑上产出的素材：路径要变成能看、能存的图 ------------------- */
 /*
  * 现场：agent 在电脑上做了图/视频，对话里只有一行绝对路径 —— 手机上什么都看不到，

@@ -1258,6 +1258,26 @@
 		return '<img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="图片">'
 	}
 
+	/**
+	 * 附件的缩略图组（工具结果 / 附注都会用到）。
+	 *
+	 * 为什么单独抽出来：**工具结果里的图片曾经被译成一句文字 `[图片]`** —— 现场就是
+	 * 用户报的"手机端看不到图片"：`image_generate` 明明出图成功、`api/media` 也取得回，
+	 * 手机上却只有三个字，谁都会以为生图又失败了。图是工具唯一的成果，不能这么丢。
+	 */
+	function attachmentShots(sessionId, attachments) {
+		return (attachments || []).map((attachment) => {
+			if (attachment === null || typeof attachment !== 'object') return ''
+			const src = 'api/media?sessionId=' + encodeURIComponent(sessionId) + '&attachmentId=' + encodeURIComponent(attachment.attachmentId)
+			if (String(attachment.mediaType ?? '').startsWith('video/')) {
+				return '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata"></video>' +
+					'<div class="shothint">长按视频可存到相册</div></div>'
+			}
+			return '<div class="shotwrap"><img class="shot" loading="lazy" src="' + src + '" data-full="' + src + '" alt="图片">' +
+				'<div class="shothint">点开看大图 · 长按图片 → 存储到照片</div></div>'
+		}).join('')
+	}
+
 	/** 文字里出现的图片/视频路径，变成能看、能存的东西。 */
 	const MEDIA_EXT = /\.(png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)$/i
 	const PATH_RE = /[A-Za-z]:\\[^\s"'<>|?*]+?\.(?:png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)/gi
@@ -1370,10 +1390,11 @@
 						// 素材缩略图必须放在折叠区【外面】：.body 默认只有 132px 高、
 						// 超出裁掉，图放里面就等于没放（用户还是什么都看不到）。
 						mediaPathHtml(body) +
+						attachmentShots(sessionId, item.attachments) +
 						'</div>',
 				})
 			} else if (item.kind === 'note') {
-				entries.push({ key: 'n' + index, html: '<div class="note">' + escapeHtml(item.text) + '</div>' })
+				entries.push({ key: 'n' + index, html: '<div class="note">' + escapeHtml(item.text) + '</div>' + attachmentShots(sessionId, item.attachments) })
 			} else if (item.kind === 'deliver') {
 				// agent 交付的素材：图片/视频直接给缩略图（能点开、能长按存相册），
 				// 其它文件给一行"描述 + 文件名"，至少让手机上知道电脑上有什么。
@@ -1805,9 +1826,13 @@
 			case 'tool/result': {
 				const block = (data.message && data.message.content && data.message.content[0]) || {}
 				const parts = []
+				// 附件（图片/视频）单独收起来，渲染时出真 <img>/<video> —— 不能只留一句
+				// "[图片]"，那等于把工具唯一的成果扔掉（用户报的"看不到图片"就是这个）。
+				const attachments = []
 				for (const inner of block.content || []) {
 					if (inner && inner.type === 'text') parts.push(inner.text)
-					else if (inner && inner.type === 'image') parts.push('[图片]')
+					else if (inner && inner.type === 'image' && inner.attachment) attachments.push(inner.attachment)
+					else if (inner && inner.type === 'file' && inner.attachment) parts.push('附件：' + (inner.attachment.name || '文件'))
 				}
 				let body = parts.join('\n').trim()
 				if (body.length > 4000) body = body.slice(0, 4000) + '\n…（已截断）'
@@ -1817,11 +1842,13 @@
 				}
 				if (target) {
 					target.done = true
-					target.result = body === '' ? '（无输出）' : body
+					target.result = body === '' ? (attachments.length > 0 ? '' : '（无输出）') : body
+					target.attachments = attachments
 					target.error = Boolean(data.error) || block.isError === true
 					target.open = target.error
 				} else {
-					state.items.push({ kind: 'note', text: '工具结果：' + (body.slice(0, 200) || '（空）') })
+					// 配不上 tool/call（例如刷新后只收到结果）时也要能看见图，别退化成一行字。
+					state.items.push({ kind: 'note', text: '工具结果：' + (body.slice(0, 200) || (attachments.length > 0 ? '' : '（空）')), attachments })
 				}
 				break
 			}
