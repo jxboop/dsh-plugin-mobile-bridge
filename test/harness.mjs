@@ -1076,6 +1076,78 @@ async function readInteraction(reader) {
 	check('未登录的 /api/boot 同样被拒（新入口不能开天窗）', bootNoAuth.status === 401, `status ${bootNoAuth.status}`)
 }
 
+/* --- 切走再切回来：只补"新的那几条"（since=） ----------------------------- */
+/*
+ * 现场：换到别的会话再换回来，又要等一次整段对话下载（隧道上好几秒），而这份内容
+ * 刚刚还在屏幕上。宿主现在认得客户端报的序号：`since=<cursor>` → 只回这之后的记录，
+ * 通常一条都没有。安全底线是"宁可多发，绝不能少发"：客户端比快照里最旧的记录还旧
+ * （页面放了很久、历史被裁过、被压缩重排过）时必须回整段，否则它会缺一段而不自知。
+ */
+{
+	const full = await (await fetch(`${base}/api/transcript?sessionId=session-test`, authed)).json()
+	check('不带 since 时照旧回整段（partial 不出现）',
+		Array.isArray(full.records) && full.records.length === 2 && full.partial === undefined,
+		`${full.records?.length} records partial=${JSON.stringify(full.partial)}`)
+
+	const nothingNew = await (await fetch(`${base}/api/transcript?sessionId=session-test&since=${full.cursor}`, authed)).json()
+	check('since=最新序号 → 只回"没有新记录"的增量（一条都不发）',
+		nothingNew.partial === true && nothingNew.records.length === 0 && nothingNew.cursor === full.cursor,
+		`partial=${nothingNew.partial} records=${nothingNew.records.length}`)
+
+	const oneNew = await (await fetch(`${base}/api/transcript?sessionId=session-test&since=1`, authed)).json()
+	check('since=1 → 只回第 2 条之后的记录（第一条不再重发）',
+		oneNew.partial === true && oneNew.records.length === 1 && oneNew.records[0].event.seq === 2,
+		`${oneNew.records.length} 条，seq=${oneNew.records[0]?.event?.seq}`)
+
+	const tooNew = await (await fetch(`${base}/api/transcript?sessionId=session-test&since=99`, authed)).json()
+	check('客户端报的序号比快照还新（不可能）→ 老实回整段，不裁剪',
+		tooNew.partial === undefined && tooNew.records.length === 2, `partial=${tooNew.partial}`)
+
+	const junk = await (await fetch(`${base}/api/transcript?sessionId=session-test&since=abc`, authed)).json()
+	const negative = await (await fetch(`${base}/api/transcript?sessionId=session-test&since=-1`, authed)).json()
+	check('乱写的 since 一律当没带（不 500、也不裁剪）',
+		junk.partial === undefined && junk.records.length === 2 && negative.partial === undefined && negative.records.length === 2,
+		`abc=${junk.records.length} -1=${negative.records.length}`)
+}
+
+{
+	// 长连接同样认 since：首帧变成"增量快照"，页面据此只追加、不清空。
+	const stream = await fetch(`${base}/api/stream?sessionId=session-test&since=2`, authed)
+	const reader = stream.body.getReader()
+	const decoder = new TextDecoder()
+	let raw = ''
+	const deadline = Date.now() + 5000
+	while (Date.now() < deadline) {
+		const { value, done } = await reader.read()
+		if (done) break
+		raw += decoder.decode(value, { stream: true })
+		if (raw.includes('"type":"assistant/message"')) break
+	}
+	await reader.cancel().catch(() => {})
+	const frames = raw.split('\n').filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6)))
+	const snapshot = frames.find((frame) => frame.t === 'snapshot')
+	check('带 since 的流：首帧标成 partial 且不带旧记录',
+		snapshot?.partial === true && snapshot.records.length === 0 && snapshot.cursor === 2,
+		`partial=${snapshot?.partial} records=${snapshot?.records?.length}`)
+	check('带 since 的流：之后的新事件照常推',
+		frames.some((frame) => frame.t === 'event' && frame.event?.type === 'tool/call'),
+		`${frames.length} 帧`)
+
+	const plainStream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
+	const plainReader = plainStream.body.getReader()
+	let plainRaw = ''
+	while (plainRaw.length < 400) {
+		const { value, done } = await plainReader.read()
+		if (done) break
+		plainRaw += decoder.decode(value, { stream: true })
+	}
+	await plainReader.cancel().catch(() => {})
+	const plainSnapshot = plainRaw.split('\n').filter((line) => line.startsWith('data: ')).map((line) => JSON.parse(line.slice(6))).find((frame) => frame.t === 'snapshot')
+	check('不带 since 的流：首帧照旧是整段快照（没被增量逻辑误伤）',
+		plainSnapshot?.records?.length === 2 && plainSnapshot.partial === undefined,
+		`${plainSnapshot?.records?.length} records`)
+}
+
 /* --- surviving a restart ------------------------------------------------- */
 /*
  * Tokens used to live only in the bridge's memory, so every `dsh web` restart

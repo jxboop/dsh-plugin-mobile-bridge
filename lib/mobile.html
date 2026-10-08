@@ -705,6 +705,23 @@
 		 * 每项：{ key, requestId, itemId, sessionId, text, note, state, error }
 		 */
 		pending: [],
+		/**
+		 * 已经收到过的最后一个事件序号（宿主那边的 cursor）。
+		 *
+		 * 换会话/重连时把它带上（`since=`），宿主就只补"这之后的新记录" ——
+		 * 平时一条都没有，几十 KB 的整段对话就不用再下一遍。
+		 */
+		cursor: 0,
+		/**
+		 * 每个会话留一份现场：切走再切回来先立刻铺上，不用再从零下载。
+		 *
+		 * 现场：换到别的会话再换回来，屏幕先空白一下、再等一次整段下载（隧道上
+		 * 好几秒），而这份内容刚刚就在屏幕上 —— 只是切走时被清掉了。
+		 * sessionId -> { items, tools, live, reasoning, cursor, at }
+		 */
+		cache: new Map(),
+		/** 当前内容是不是"从缓存里直接铺上的"（用来决定要不要跳过整段补拉）。 */
+		restoredAt: 0,
 	}
 
 	/* ------------------------------------------------------------ helpers */
@@ -1095,6 +1112,54 @@
 	}
 
 	/**
+	 * 切走之前，把当前会话的现场存一份（内存里，最多留 SESSION_CACHE_MAX 份）。
+	 *
+	 * `items` / `tools` 直接存引用：切到别的会话时 state 会换成新对象（或新 Map），
+	 * 缓存里这份不会被就地改坏。
+	 */
+	const SESSION_CACHE_MAX = 4
+	function rememberSession(sessionId) {
+		if (typeof sessionId !== 'string' || sessionId === '') return
+		state.cache.set(sessionId, {
+			items: state.items,
+			tools: state.tools,
+			live: state.live,
+			reasoning: state.reasoning,
+			cursor: state.cursor,
+			at: Date.now(),
+		})
+		// 只留最近几份：手机内存有限，更早的会话切回来重新拉也不算慢。
+		while (state.cache.size > SESSION_CACHE_MAX) state.cache.delete(state.cache.keys().next().value)
+	}
+
+	/**
+	 * 切回来时先立刻铺上缓存 —— 屏幕上立刻有内容，而不是"正在读取会话内容…"。
+	 *
+	 * 之后长连接会带着 `since=<cursor>` 去要"新记录"（通常一条都没有），
+	 * 所以这次切换既不空白、也不用把整段对话再下一遍。
+	 * @returns 是否用上了缓存。
+	 */
+	function restoreSession(sessionId) {
+		const cached = state.cache.get(sessionId)
+		if (cached === undefined) {
+			state.items = []
+			state.tools = new Map()
+			state.live = null
+			state.reasoning = null
+			state.cursor = 0
+			state.restoredAt = 0
+			return false
+		}
+		state.items = cached.items
+		state.tools = cached.tools
+		state.live = cached.live
+		state.reasoning = cached.reasoning
+		state.cursor = cached.cursor
+		state.restoredAt = Date.now()
+		return true
+	}
+
+	/**
 	 * 只动尾部：新消息、正在流式输出的那一条、本地回声。
 	 *
 	 * 用户往上翻着看历史时，尾部是在视口【下面】长高的，浏览器不会动 scrollTop ——
@@ -1306,6 +1371,8 @@
 
 	function applyEvent(event) {
 		const data = event.data || {}
+		// 记下"走到哪了"：换会话/重连时带上 since=，宿主就只补这之后的新记录。
+		if (typeof event.seq === 'number' && event.seq > state.cursor) state.cursor = event.seq
 		switch (event.type) {
 			case 'user/message': {
 				state.live = null
@@ -1436,8 +1503,30 @@
 		for (const record of frame.records || []) {
 			if (record && record.type === 'event' && record.event) applyEvent(record.event)
 		}
+		// 整段快照是权威的：cursor 直接采用它（也顺手清掉上一个会话留下的值）。
+		if (typeof frame.cursor === 'number') state.cursor = frame.cursor
 		// 快照里已经有那句话了 → 本地回声让位（重连/刷新时最容易撞上重复）。
 		reconcilePending()
+	}
+
+	/**
+	 * 只带"新记录"的快照（宿主按 `since=` 过滤过）。
+	 *
+	 * 绝不能走 applySnapshot：那是整段重建，会先把 items 清空 —— 而这份快照里
+	 * 只有新记录，清空就等于把历史全抹掉。所以只把新记录喂给 applyEvent。
+	 */
+	function applyPartialSnapshot(frame) {
+		const records = Array.isArray(frame.records) ? frame.records : []
+		for (const record of records) {
+			if (record && record.type === 'event' && record.event) applyEvent(record.event)
+		}
+		if (typeof frame.cursor === 'number' && frame.cursor > state.cursor) state.cursor = frame.cursor
+		reconcilePending()
+		if (records.length > 0) {
+			state.lastFrameAt = Date.now()
+			if (state.link === 'stale') setLink('live')
+			scheduleRender()
+		}
 	}
 
 	/* -------------------------------------------------------------- stream */
@@ -1457,8 +1546,11 @@
 		if (!wanted) return
 		state.lastPullAt = Date.now()
 		state.lastPullSession = wanted
+		// 手上已经有内容 + 知道走到哪个序号 → 只要"新的那几条"（平时一条都没有）。
+		// 几十 KB 的整段历史就不用每次切换都重下一遍。
+		const since = state.items.length > 0 && state.cursor > 0 ? '&since=' + state.cursor : ''
 		let body
-		try { body = await api('api/transcript?sessionId=' + encodeURIComponent(wanted)) } catch { return }
+		try { body = await api('api/transcript?sessionId=' + encodeURIComponent(wanted) + since) } catch { return }
 		if (state.sessionId !== wanted) return
 		if (body.pageTag) checkPageTag(body.pageTag)
 		if (body.unsupported === true) {
@@ -1468,13 +1560,21 @@
 			return
 		}
 		const records = Array.isArray(body.records) ? body.records : []
-		// 空结果不许覆盖已经画出来的对话：拉取失败或竞态会把画面清空。
-		if (records.length === 0 && state.items.length > 0) return
-		bootStep(58, '正在读对话内容')
 		// 普通请求能通，就证明电脑还在（只是长连接没把大包推过来）。这时候顶部那条
 		// "好像和电脑失去联系了"是误报 —— 恰恰在这个接口存在的场景里，它会一直挂着。
 		state.lastFrameAt = Date.now()
 		if (state.link === 'stale') setLink('live')
+		// 只补新记录的快照（宿主按 since 过滤过）：不能清空重建，
+		// 否则历史就没了 —— 而这份回包里本来只有新记录。
+		if (body.partial === true) {
+			bootStep(58, '正在核对新消息')
+			applyPartialSnapshot({ records, cursor: body.cursor })
+			scheduleRender()
+			return
+		}
+		// 空结果不许覆盖已经画出来的对话：拉取失败或竞态会把画面清空。
+		if (records.length === 0 && state.items.length > 0) return
+		bootStep(58, '正在读对话内容')
 		applySnapshot({ records, cursor: body.cursor ?? 0, hasMore: body.hasMore === true })
 		// applySnapshot 只改状态、不触发重绘 —— SSE 那条路径是在 onmessage 里另外
 		// 调 scheduleRender 的。这里漏了这一步，就会"数据拿到了、画面却不动"。
@@ -1509,14 +1609,20 @@
 			return
 		}
 		setStatus('busy')
-		const source = new EventSource('api/stream?sessionId=' + encodeURIComponent(state.sessionId))
+		// 带上 since=：宿主认得这个序号，就只推"这之后的新记录"（平时一条都没有）。
+		// 切回一个刚看过的会话不该再把整段历史下一遍。
+		const since = state.items.length > 0 && state.cursor > 0 ? '&since=' + state.cursor : ''
+		const source = new EventSource('api/stream?sessionId=' + encodeURIComponent(state.sessionId) + since)
 		state.source = source
 		// 立刻用普通请求拉一次：不赌这条长连接能不能把大快照推过来。
 		// 但刚开机那次已经在 /api/boot 里拿到同一份对话了 —— 只有"同一份"才跳过。
 		// 认会话而不是只认时间：boot 拿的是上次记住的那个会话，而 loadSessions 可能
 		// 选中另一个（记住的会话被删了/已不在列表里），这时必须照拉，否则画面上会留着
 		// 别的会话的对话。
-		if (state.lastPullSession !== state.sessionId || Date.now() - (state.lastPullAt ?? 0) > 1500) pullTranscript()
+		// 刚从缓存里恢复（切走又切回）也跳过：那份内容几秒前还在屏幕上，长连接
+		// 会带着 since 去补新的；再拉一次整段纯属浪费一个来回。
+		const warm = state.restoredAt > 0 && Date.now() - state.restoredAt < 15000
+		if (!warm && (state.lastPullSession !== state.sessionId || Date.now() - (state.lastPullAt ?? 0) > 1500)) pullTranscript()
 		source.onopen = () => { state.lastFrameAt = Date.now(); setLink('live') }
 		source.onerror = () => {
 			// 会话本身打不开时，EventSource 会一直自动重连 —— 每三秒一次，一直不停。
@@ -1533,7 +1639,12 @@
 			if (state.link !== 'live') setLink('live')
 			if (payload.t === 'ping') return
 			state.stick = atBottom()
-			if (payload.t === 'snapshot') { checkPageTag(payload.tag); applySnapshot(payload) }
+			if (payload.t === 'snapshot') {
+				checkPageTag(payload.tag)
+				// partial：宿主按 since 过滤过，里面只有新记录 —— 不能清空重建。
+				if (payload.partial === true) applyPartialSnapshot(payload)
+				else applySnapshot(payload)
+			}
 			else if (payload.t === 'event') applyEvent(payload.event)
 			else if (payload.t === 'delta') applyDelta(payload.frame)
 			else if (payload.t === 'error') {
@@ -2012,8 +2123,13 @@
 			// 已经在 showGate() 里被关掉了。只比较 sessionId 的话，页面看着一切正常，
 			// 却再也收不到任何实时更新。
 			if (chosen.sessionId !== state.sessionId || state.source === null) {
+				// 自动改选（上次那个会话是空的/没了/打不开）时同样把旧的存下来。
+				rememberSession(state.sessionId)
 				state.sessionId = chosen.sessionId
 				writeLocal('dshm.session', state.sessionId)
+				restoreSession(state.sessionId)
+				rendered = []
+				render()
 				connect()
 			}
 	}
@@ -2394,6 +2510,8 @@
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(request),
 		}).then((created) => {
+			// 跳到新会话之前，把现在这个的现场存下来（切回来时秒开）。
+			rememberSession(state.sessionId)
 			state.sessionId = created.sessionId
 			writeLocal('dshm.session', created.sessionId)
 			const after = first === '' ? Promise.resolve() : api('api/prompt', {
@@ -2553,6 +2671,8 @@
 	}
 
 	sessionSelect.addEventListener('change', () => {
+		// 先把当前这份存下来：切回来时它能让屏幕立刻有内容。
+		rememberSession(state.sessionId)
 		state.sessionId = sessionSelect.value
 		writeLocal('dshm.session', state.sessionId)
 		const picked = state.sessions.find((item) => item.sessionId === state.sessionId)
@@ -2560,8 +2680,12 @@
 		// 换会话必须把"在跑"重置成新会话的真实状态，否则按钮还写着「插话」、
 		// 停止键还亮着，而这条消息其实是普通发送（还会回一句假的"已插话"）。
 		state.running = picked !== undefined && picked.running === true
-		state.items = []
+		// 有缓存就立刻铺上（秒开），没有才走"空 + 等下载"那条老路。
+		const warm = restoreSession(state.sessionId)
+		// DOM 上现在是【另一个会话】的内容，增量比对的前缀对不上，必须整段换。
+		rendered = []
 		render()
+		if (warm) bootStep(58, '已经从本地恢复')
 		connect()
 	})
 

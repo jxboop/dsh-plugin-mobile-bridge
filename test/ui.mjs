@@ -81,6 +81,9 @@ const SESSION = 'session-ui-test'
 const SESSIONS = [
 	{ sessionId: SESSION, title: '手机界面测试', cwd: 'D:\\learn\\deepseek学习', running: false, blank: false, updatedAt: 2000 },
 	{ sessionId: 'session-older', title: '旧会话', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 1000 },
+	// 第三个会话专门留给"从没打开过"的场景：缓存测试要验证"没缓存的会话照旧拉整段"，
+	// 而任何被切走过的会话都会被记进缓存（这正是那个功能的定义），所以需要一个新的。
+	{ sessionId: 'session-fresh', title: '没打开过的会话', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 500 },
 ]
 
 const requests = []
@@ -302,7 +305,7 @@ await wait(150)
 check('bootstrap shows the app and hides the PIN gate',
 	window.getComputedStyle($('app')).display !== 'none' && window.getComputedStyle($('gate')).display === 'none',
 	`app=${window.getComputedStyle($('app')).display} gate=${window.getComputedStyle($('gate')).display}`)
-check('session picker is populated', $('session').options.length === 2, `${$('session').options.length} options`)
+check('session picker is populated', $('session').options.length === 3, `${$('session').options.length} options`)
 check('the most recent session is selected and streamed',
 	$('session').value === SESSION && source !== null && source.url.includes(SESSION),
 	`value=${$('session').value} url=${source?.url}`)
@@ -1218,9 +1221,12 @@ check('说明指向了下拉框或读取状态',
 	await wait(340)
 	check('无痕模式下（写不进去）重新登录照样连上流',
 		sources.length === streamsBefore + 1, `${streamsBefore} -> ${sources.length}`)
+	// 这条以前断言"必须再拉一次 /api/transcript"。现在切走又切回会先铺上本地那份现场
+	// （见会话缓存），长连接带着 since= 只补新记录 —— 少一个来回，但屏幕上必须有内容。
 	const pullsAfter = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
-	check('无痕模式下也去拉了对话（不是一片空白）',
-		pullsAfter > pullsBefore, `transcript ${pullsBefore} -> ${pullsAfter}`)
+	check('无痕模式下重新登录后对话还在（不是一片空白）',
+		$('log').textContent.trim().length > 20,
+		`transcript ${pullsBefore} -> ${pullsAfter}，画面 ${$('log').textContent.trim().length} 字符`)
 	proto.setItem = realSet
 }
 
@@ -1426,6 +1432,72 @@ check('说明指向了下拉框或读取状态',
 	check('松手后补画一次，消息不会丢',
 		log.children.length > frozenAt && log.textContent.includes('拖动期间到的消息'),
 		`${frozenAt} -> ${log.children.length}`)
+}
+
+/* --- 切走再切回来不再"又要加载" --------------------------------------------- */
+/*
+ * 现场：换到别的对话再换回来，屏幕先空白一下，再等一次整段对话下载（隧道上好几秒），
+ * 而这份内容刚刚就在屏幕上。现在切走前把现场按会话存一份（内存里，最多 4 份），
+ * 切回来先立刻铺上，再让长连接带着 since=<cursor> 去补"新的那几条"（通常一条都没有）。
+ */
+{
+	const log = $('log')
+	source.emit({
+		t: 'snapshot',
+		cursor: 500,
+		hasMore: false,
+		records: [
+			{ type: 'event', event: { type: 'user/message', seq: 499, time: 499, data: { id: 'c1', role: 'user', content: [{ type: 'text', text: '缓存测试的消息一' }] } } },
+			{ type: 'event', event: { type: 'assistant/message', seq: 500, time: 500, data: { turn: 50, step: 1, message: { id: 'c2', role: 'assistant', content: [{ type: 'text', text: '缓存测试的回答二' }] } } } },
+		],
+	})
+	await wait(120)
+	check('缓存测试前对话里有内容', log.textContent.includes('缓存测试的消息一'))
+
+	const pullsBefore = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	const others = [...$('session').options].map((option) => option.value).filter((value) => value !== SESSION)
+	check('测试前提：下拉框里还有另一个会话可以切', others.length > 0, `${$('session').options.length} 个选项`)
+	// 用一个【从没打开过】的会话来验证"没缓存就照旧拉整段"（切走过的都会被缓存，
+	// 那正是这个功能的定义）。
+	const fresh = others.includes('session-fresh') ? 'session-fresh' : (others[0] ?? SESSION)
+
+	// 切到一个没打开过的会话：没有缓存 → 走老路（拉整段）。
+	$('session').value = fresh
+	$('session').dispatchEvent(new window.Event('change'))
+	await wait(200)
+	const freshStream = sources[sources.length - 1]
+	const pullsAfterFresh = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
+	check('没有缓存的会话照旧去拉整段（不会假装有内容）',
+		pullsAfterFresh === pullsBefore + 1, `transcript ${pullsBefore} -> ${pullsAfterFresh}`)
+	check('没有缓存的会话不带 since（手上没有内容，不能报序号）',
+		!freshStream.url.includes('since='), freshStream.url)
+
+	// 切回来：这一次必须"立刻"有内容 —— 同一句同步断言里都不出现空白。
+	$('session').value = SESSION
+	$('session').dispatchEvent(new window.Event('change'))
+	const instant = log.textContent
+	check('切回刚看过的会话：立刻就有内容（不再空白、也不用等下载）',
+		instant.includes('缓存测试的消息一') && instant.includes('缓存测试的回答二'),
+		`${instant.trim().length} 字符`)
+	const warmStream = sources[sources.length - 1]
+	check('切回来时不再重拉整段对话（省掉一个来回）',
+		requests.filter((entry) => entry.path.startsWith('/api/transcript')).length === pullsBefore + 1,
+		`transcript ${pullsBefore} -> ${requests.filter((entry) => entry.path.startsWith('/api/transcript')).length}`)
+	check('切回来时长连接带着 since=<cursor>（宿主只补新记录）',
+		warmStream.url.includes('since=500'), warmStream.url)
+
+	// 增量快照（partial）只追加，绝不能把历史冲掉 —— 它里面本来就只有新记录。
+	source.emit({
+		t: 'snapshot',
+		partial: true,
+		cursor: 501,
+		hasMore: false,
+		records: [{ type: 'event', event: { type: 'user/message', seq: 501, time: 501, data: { id: 'c3', role: 'user', content: [{ type: 'text', text: '增量来的新消息' }] } } }],
+	})
+	await wait(120)
+	check('增量快照不会把历史冲掉，只把新记录接在后面',
+		log.textContent.includes('缓存测试的消息一') && log.textContent.includes('增量来的新消息'),
+		log.textContent.replace(/\s+/g, ' ').slice(0, 80))
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

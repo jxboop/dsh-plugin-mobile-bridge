@@ -344,6 +344,7 @@ npm install
 | `test/ui.mjs` | 手机页面的 DOM 与交互：含"没有请求跑出密钥段"、"提权过期时必须把 PIN 门打开"、**运行中同时给出「插话」与「停止」并确认插话已收下、换会话后「在跑」状态跟着重置**、**首次说明页（自动弹出 / 讲清四件事 / 点了就记住 / 真有提问时让位）**、**子会话不许谎报断线、也不再重连**、**迟到的旧会话回包不许贴到新会话上**、**localStorage 写不进去（无痕模式）也不许把页面搞死**、**Ctrl+Enter 连按两下只发一次**、**提问与审批卡片**（渲染、作答编码、防 XSS、重推保草稿、单选与自定义互斥、作废撤卡、跨页签可见），以及**断线提示条**（弹条、说清原因、给局域网兜底、心跳到达后收起）（116 项） | jsdom |
 | `test/addresses.mjs` | 地址排序与分类（16 项） | — |
 | `test/shot.mjs` | 真浏览器截图 + 布局/滚动体检（`scroll:` 那行会报能不能滚到顶底、消息行有没有被 content-visibility 估算、重取后位置还在不在） | Windows + Edge |
+| `test/switch-bench.mjs` | 真浏览器量"切会话"：切到没打开过的会话多久有内容、切回来是不是那一刻就有、这次切换下载了多少字节 | Windows + Edge |
 | `test/phone-diag.mjs` | 真浏览器诊断：抓页面异常、控制台、网络状态码 | Windows + Edge |
 
 ```bash
@@ -424,6 +425,11 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 42. **编辑带 BOM 的 `.ps1` 之后要把 BOM 补回去。** 改 `open-dsh.ps1` 加了两行，编辑工具把开头的 `EF BB BF` 吃掉了 —— 在 PowerShell 7 里看不出问题，但**这台机器是 PowerShell 5.1**，无 BOM 就按 GBK 读，中文注释里的字节被当成代码，解析器直接报 `The Try statement is missing its Catch or Finally block`。改完必须验：`[System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$null,[ref]$errors)` 看 `$errors.Count` 是不是 0，并确认前 3 字节仍是 `EF BB BF`。同一次排查还发现 `dsh-routing-suite/scripts/install-injector.ps1` 本来就没有 BOM，**4 个语法错误、根本跑不起来**，补上 BOM 后归零。
 43. **"拖动后又弹回原处、看不到消息"是渲染策略的锅，不是网络。** 老 `render()` 每帧 `log.innerHTML = 整段 HTML`：① 每次重排都重置滚动位置（手指拖多少抹多少）；② 重排把 `content-visibility` 记住的行高全丢掉 —— 没渲染过的行只能用 `contain-intrinsic-size` **估算**，于是 `scrollHeight` 是说谎的，滚到那儿行高突然变大，视口内容被顶回去。修法三条：① **增量渲染**：每条内容带稳定 key（条目序号 + 类型），比对出"前缀没变"就只重排差异之后那一段（`keep > 0` 走 `renderTail`，只有整片换掉才 `renderAll`）；② **拖动期间冻结渲染**：`touchstart/touchmove` 置冻结位，`touchend` 后还要等滚动事件停下来（每次 scroll 续 160 ms，覆盖 iOS 惯性滚动），松手后补画一次；③ `content-visibility` **只留给 `.tool/.deliver/.think` 折叠块**，绝不给 `.row`（消息行正是要滚动浏览的东西）。整段重排时的锚定也从"写回同一个 `scrollTop`"改成按【离底部多远】锚。真浏览器复核（`test/shot.mjs` 的 `scroll:` 行）：能滚到顶（`top:0`）、能到底（`bottomGap:0`）、行的 `contentVisibility` 是 `visible` 而折叠块是 `auto`、停在中间触发一次真实重取后位置不变（`held:true`）。
 44. **别把"拖动"和"点击"当一回事，也别在拖动中改 DOM。** 长按复制（`pointerdown` 起 550 ms 计时）已经存在，它和"拖动冻结"共用同一批触摸事件：冻结只影响渲染时机，不 preventDefault、不吞事件，所以重排让路和长按复制、点开折叠、点图看大图都不打架。测试里用 `new Event('touchstart')` 就够了（监听器是 passive 的、不看 touch 数据），这也是 `ui.mjs` 能覆盖这条路径的原因。
+45. **"换个对话再回来又要加载"是两次浪费：清空 + 重下整段。** 换会话的旧实现是 `state.items = []` → 空屏 → 再拉一次整段对话（实测 **43 KB gzip**，隧道上一个来回好几秒）。两层都改了：
+    - **按会话留现场**（`state.cache`，内存里最多 4 份）：切走前 `rememberSession()` 存下 items/tools/cursor，切回来 `restoreSession()` 立刻铺上 —— 真浏览器实测「切完那一刻画面上就有内容」（`immediate=true`），**不再有空白**。
+    - **只补新的那几条**：客户端把"我看到第几号事件了"（`state.cursor`）带上，`/api/stream?since=` 与 `/api/transcript?since=` 都认这个序号，只回这之后的记录。实测同一次切换 **43727 字节 → 84 字节**（`partial:true` 且 0 条记录）。
+    - 两条安全底线：① `partial:true` 的快照**只能追加、绝不能清空重建**（里面只有新记录，清空就等于把历史抹了）—— 页面走 `applyPartialSnapshot()`；② 服务端 `sliceSince()` 只在 `since` 落在本份快照的序号范围内时才裁剪，客户端比能给的还旧（页面放了很久 / 历史被裁过 / 被压缩重排过）就老实回整段（**宁可多发，绝不能少发**）。乱写的 `since`（`abc`、`-1`）一律当没带。
+    - 量法：`node test/switch-bench.mjs <url> <pin>`（真浏览器 + 真桥）报"切到没打开过的会话多久有内容 / 切回来是不是那一刻就有 / 这次切换下载了多少字节"。本机 127.0.0.1 实测：切回来 `immediate=true`、0 次整段下载。
 
 ---
 
