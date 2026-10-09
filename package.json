@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-mobile-bridge",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "private": true,
   "description": "LAN-only mobile surface for DeepSeek Harness: import photos from a phone and drive a Session with live feedback.",
   "keywords": [
@@ -19,8 +19,7 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "lib/index.js",
-    "lib/mobile.html",
+    "lib",
     "cordis.patch.yml",
     "README.md"
   ],

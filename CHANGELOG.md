@@ -17,6 +17,33 @@
 
 ---
 
+## 1.8.2 — 2026-10-09
+
+### 修（**从 GitHub 装的同学会装到残缺包** —— 同学那边报出来的，报得完全准确）
+
+- **`files` 漏了 `lib/addresses.js`**：入口第 29 行就要 `import './addresses.js'`，
+  而 `files` 里只列了 `lib/index.js` 和 `lib/mobile.html` → pnpm 按 `files` 打包 →
+  **包里没有这个文件** → 插件一加载就报找不到模块 → **手机页面打不开、一直转圈**。
+  实测 1.8.1 的包内容（就这 5 个）：
+  `lib/mobile.html`、`lib/index.js`、`package.json`、`README.md`、`cordis.patch.yml`。
+- 同一个原因，**三个图标也一直没进包**（`lib/icons/icon-*.png` → 手机上图标 404）。
+- 修法：`files` 改成 **`["lib", "cordis.patch.yml", "README.md"]`** —— 整个 `lib/` 都要，
+  不再逐个文件列举（列一个漏一个，这次就是这么漏的）。
+
+### 为什么本地一直没发现
+
+我这台机器用 `link:` 装插件 —— 它直接指向源码目录，也就是"整份源码都在"，
+所以 `files` 漏了什么我一点感觉都没有。**只有真正从 GitHub 装的人才会遇到**。
+这个盲区现在被一条测试堵住了：新增 `test/package.mjs`（8 项）——
+它解析入口里的每个相对导入，逐一核对是否被 `files` 覆盖，并钉住"必须覆盖整个 lib/"。
+反向验证过：把 `files` 改回旧写法，它立刻 5 条红。
+
+### 感谢
+
+同学那边（他自己的 DeepSeek）先报出来的：症状、排查办法（看
+`node_modules/dsh-plugin-mobile-bridge/lib` 里有没有 `addresses.js`）、绕过办法
+（`remove` + 用 codeload tar.gz 地址 `add`）全都对。
+
 ## 1.8.1 — 2026-10-09
 
 ### 改（为了 DSH 升级时的重启更安全）
