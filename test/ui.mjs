@@ -66,6 +66,7 @@ const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8'))
 	.replaceAll('__DSH_PAGE_TAG__', PAGE_TAG)
 	.replaceAll('__DSH_BRIDGE_VERSION__', FIXTURE_VERSION)
 	.replaceAll('__DSH_WHATSNEW__', FIXTURE_WHATSNEW)
+	.replaceAll('__DSH_THEMES__', JSON.stringify([['🎤 录音与转文字', '从找文件变成网页里直接录（1.5.0）'], ['📱 手机界面', '左右滑换页（1.7.0）']]))
 
 /**
  * 页面真实所在的地址：**藏在密钥段后面**。
@@ -2759,6 +2760,17 @@ check('说明指向了下拉框或读取状态',
 	check('登录页(PIN)上就写着版本号（还没进去就知道连的是哪一版）',
 		$('gateVer').textContent.includes('v' + FIXTURE_VERSION),
 		$('gateVer').textContent)
+	/*
+	 * 用户 2026-10-09：「是 1.0 到 2.0 的更新汇总，不是一个个分别列出了」。
+	 * 所以说明页**先摆按主题的汇总**，逐版清单退到下面（默认还只摆最近三版）。
+	 */
+	check('说明页先摆「1.0 → 今 按主题的汇总」（要的是汇总，不是逐版罗列）',
+		$('wnList').textContent.includes('都改了什么（按主题）')
+		&& $('wnList').textContent.includes('🎤 录音与转文字')
+		&& $('wnList').textContent.includes('从找文件变成网页里直接录'),
+		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(0, 90))
+	check('汇总排在逐版清单前面（主角是汇总）',
+		$('wnList').textContent.indexOf('按主题') < $('wnList').textContent.indexOf('逐版更新'))
 	check('说明页上有版本号 + 最近三版更新了什么',
 		$('wnVersion').textContent === 'v' + FIXTURE_VERSION
 		&& $('wnList').textContent.includes('v9.9.9') && $('wnList').textContent.includes('v9.9.8')

@@ -624,6 +624,11 @@
 	.wnhead { font-size: 13px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 	.wnbody { font-size: 13px; line-height: 1.7; color: var(--muted); }
 	.wnbody .wnver { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+	/* 「1.0 → 今 按主题的汇总」：用户要的是汇总，不是一版版罗列 —— 这块是主角，逐版清单退到下面。 */
+	.wnsum { border: 1px solid var(--field-line); border-radius: 12px; padding: 9px 11px; margin-bottom: 10px; background: var(--bg); }
+	.wnsumhead { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+	.wnsumrow { font-size: 13px; line-height: 1.62; color: var(--muted); margin-bottom: 5px; }
+	.wnsumlabel { color: var(--text); font-weight: 600; margin-right: 6px; }
 	/* 「展开全部更新」：说明页里能看到 1.0 → 今 的完整历史，默认折起来不糊屏。 */
 	.wnmore {
 		margin: 4px 0 2px; padding: 7px 12px; font-size: 12px; font-weight: 600;
@@ -700,6 +705,8 @@
 <!-- 「最近更新了什么」：服务端从 CHANGELOG.md 头部现读后注入（JSON，不是 HTML）。
      在这里是数据，客户端用 textContent 建节点 —— 不把文本当 HTML 塞进页面。 -->
 <script type="application/json" id="whatsnew">__DSH_WHATSNEW__</script>
+<!-- 「1.0 → 今 按主题的汇总」：用户要求"要汇总，不要一版版罗列"。服务端手写维护（index.js 的 WHATS_NEW_THEMES）。 -->
+<script type="application/json" id="themes">__DSH_THEMES__</script>
 
 <div id="app" data-display="flex" style="display:none">
 	<header>
@@ -5083,7 +5090,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '14'
+	const WELCOME_VERSION = '15'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -5161,7 +5168,28 @@
 		}
 
 		const RECENT = 3
-		host.appendChild(mk('div', undefined, '最近更新：'))
+		/*
+		 * 先摆「1.0 → 今 按主题的汇总」——用户明确要求："要汇总，不要一版版罗列"。
+		 * 逐版清单留在下面（默认最近三版，想看细节的人自己展开）。
+		 */
+		let themes = []
+		try {
+			const parsed = JSON.parse($('themes')?.textContent ?? '[]')
+			if (Array.isArray(parsed)) themes = parsed
+		} catch { /* 没注入就算了，只有逐版清单 */ }
+		if (themes.length > 0) {
+			const summary = mk('div', 'wnsum', '')
+			summary.appendChild(mk('div', 'wnsumhead', '1.0 → ' + String(sections[0].version ?? '') + ' 都改了什么（按主题）'))
+			for (const entry of themes) {
+				const [label, text] = Array.isArray(entry) ? entry : [String(entry), '']
+				const row = mk('div', 'wnsumrow', '')
+				row.appendChild(mk('span', 'wnsumlabel', String(label)))
+				row.appendChild(document.createTextNode(String(text)))
+				summary.appendChild(row)
+			}
+			host.appendChild(summary)
+		}
+		host.appendChild(mk('div', undefined, '逐版更新：'))
 		for (const section of sections.slice(0, RECENT)) renderSection(host, section)
 
 		// 还有更早的版本：折起来，想看全量的人自己点开（默认不糊屏）。
