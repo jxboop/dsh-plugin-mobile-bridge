@@ -624,6 +624,12 @@
 	.wnhead { font-size: 13px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 	.wnbody { font-size: 13px; line-height: 1.7; color: var(--muted); }
 	.wnbody .wnver { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+	/* 「展开全部更新」：说明页里能看到 1.0 → 今 的完整历史，默认折起来不糊屏。 */
+	.wnmore {
+		margin: 4px 0 2px; padding: 7px 12px; font-size: 12px; font-weight: 600;
+		color: var(--accent); background: none; border: 1px dashed var(--field-line);
+		border-radius: 10px; width: 100%; text-align: center;
+	}
 	.wnbody ul { margin: 3px 0 7px; padding-left: 18px; }
 	.wnbody li { margin-bottom: 2px; }
 	.welcometip li { margin-bottom: 7px; }
@@ -5077,7 +5083,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '13'
+	const WELCOME_VERSION = '14'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -5112,10 +5118,12 @@
 
 	/* ------------------------------------------------- 开始页的版本说明 */
 	/**
-	 * 用户要求「开始页加入版本说明」。
+	 * 用户要求「开始页加入版本说明」；随后又要求**说明里能看到 1.0 → 2.0 全量更新**。
 	 *
-	 * 开始页有两处：还没进去时的 **PIN 登录页**（上面直接印着版本号）和进来后的
-	 * **「开始使用」说明页**（版本号 + 最近三版更新了什么）。
+	 * 所以这里不是"只摆最近三版"了：默认仍然只铺最近三版（手机上别一屏糊满），
+	 * 底下给一个「展开全部更新（1.0 → 今）」的按钮，展开就是完整历史。
+	 * 两处都派生自注入的 JSON：还没进去时的 **PIN 登录页**只印版本号，进来后的
+	 * **「开始使用」说明页**才摆这份清单。
 	 *
 	 * 数据是服务端从 package.json / CHANGELOG.md **现读**后注入的（JSON，不是 HTML），
 	 * 所以"页面写的版本"永远等于"实际装的那一版" —— 报障时第一句问的就是版本号，
@@ -5137,18 +5145,40 @@
 		$('gateVer').textContent = '手机桥 v' + String(sections[0].version ?? '')
 		const host = $('wnList')
 		host.textContent = ''
-		host.appendChild(mk('div', undefined, '最近更新：'))
-		for (const section of sections) {
+
+		/** 把一节渲染成"版本号（日期）+ 几条要点"。 */
+		const renderSection = (wrapper, section) => {
 			const line = mk('div', undefined, '')
 			line.appendChild(mk('span', 'wnver', 'v' + String(section.version ?? '')))
 			if (section.date) line.appendChild(document.createTextNode('（' + String(section.date) + '）'))
-			host.appendChild(line)
+			wrapper.appendChild(line)
 			const list = document.createElement('ul')
 			for (const item of Array.isArray(section.lines) ? section.lines : []) {
 				// CHANGELOG 里的 `**重点**` 标记对手机屏幕只是噪音，去掉标记但保留字。
 				list.appendChild(mk('li', undefined, String(item).replace(/\*\*/g, '')))
 			}
-			host.appendChild(list)
+			wrapper.appendChild(list)
+		}
+
+		const RECENT = 3
+		host.appendChild(mk('div', undefined, '最近更新：'))
+		for (const section of sections.slice(0, RECENT)) renderSection(host, section)
+
+		// 还有更早的版本：折起来，想看全量的人自己点开（默认不糊屏）。
+		if (sections.length > RECENT) {
+			const rest = mk('div', undefined, '')
+			rest.style.display = 'none'
+			for (const section of sections.slice(RECENT)) renderSection(rest, section)
+			const toggle = mk('button', 'wnmore', '展开全部更新（1.0 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）')
+			toggle.addEventListener('click', () => {
+				const open = rest.style.display !== 'none'
+				rest.style.display = open ? 'none' : 'block'
+				toggle.textContent = open
+					? '展开全部更新（1.0 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）'
+					: '收起'
+			})
+			host.appendChild(toggle)
+			host.appendChild(rest)
 		}
 	}
 	renderVersionInfo()

@@ -58,6 +58,8 @@ const FIXTURE_VERSION = '9.9.9'
 const FIXTURE_WHATSNEW = JSON.stringify([
 	{ version: '9.9.9', date: '2026-10-09', lines: ['加（一条**加**的功能）', '修（一个真 bug）'] },
 	{ version: '9.9.8', date: '2026-10-08', lines: ['改（某个位置）'] },
+	{ version: '9.9.7', date: '2026-10-08', lines: ['加（第三版）'] },
+	{ version: '1.0.0', date: '2026-10-08', lines: ['加（最早那一版）'] },
 ])
 const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8'))
 	// 服务端用的是 replaceAll（标记在页面里出现不止一次），测试也得一样。
@@ -2764,6 +2766,29 @@ check('说明指向了下拉框或读取状态',
 		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(0, 60))
 	check('更新清单里的 ** 标记被去掉了（手机上那只是噪音）',
 		$('wnList').textContent.includes('**') === false)
+	/*
+	 * 用户 2026-10-09：「说明内容没有展示 1.0 到 2.0 更新了什么」。
+	 * 默认只摆最近三版（别一屏糊满），底下那个按钮点开是**完整历史**（最早那一版也在）。
+	 */
+	const moreButton = () => $('wnList').querySelector('.wnmore')
+	// 注意：jsdom 的 textContent 连 display:none 的内容也算，所以"折起来了没有"必须查容器本身。
+	const restBox = () => $('wnList').lastElementChild
+	check('说明页默认只摆最近三版，更早的折起来（不糊屏）',
+		$('wnList').textContent.includes('v9.9.9') && $('wnList').textContent.includes('v9.9.7')
+		&& restBox().style.display === 'none'
+		&& moreButton() !== null && moreButton().textContent.includes('共 4 版'),
+		`${String(moreButton()?.textContent ?? '没有展开按钮')} rest=${restBox().style.display}`)
+	click(moreButton())
+	await wait(30)
+	check('点「展开全部更新」→ 完整历史展开（最早那一版也在）',
+		restBox().style.display !== 'none' && $('wnList').textContent.includes('v1.0.0')
+		&& moreButton().textContent === '收起',
+		`${moreButton().textContent} rest=${restBox().style.display}`)
+	click(moreButton())
+	await wait(30)
+	check('再点一下收起：按钮文字回来、最老那版重新折起来',
+		restBox().style.display === 'none' && moreButton().textContent.includes('展开全部更新'),
+		`${moreButton().textContent.slice(0, 24)} rest=${restBox().style.display}`)
 	// 注意：不能只查 `__DSH_` 前缀 —— 客户端守卫里那个标记是故意拆开拼的
 	// （'__DSH_' + 'PAGE_TAG__'），所以它在源码里必然含这个前缀。要查的是**完整标记**。
 	check('页面里没有漏出来的注入标记（漏了就是把服务端模板摆给用户看）',

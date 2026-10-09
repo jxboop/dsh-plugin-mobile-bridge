@@ -67,6 +67,27 @@ for (const rel of ['lib/mobile.html', 'lib/icons/icon-180.png', 'lib/icons/icon-
 	check(`打包包含 ${rel}`, existsSync(join(ROOT, rel)) && packedBy(rel))
 }
 
+/*
+ * 2b) **运行时会去读的数据文件**也必须在包里。
+ *
+ * 这条是同学那边报出来的（他自己的 DeepSeek 核对文案时发现）：`CHANGELOG.md` 没进 files，
+ * 于是 `github:` 装的用户，服务端 `whatsNew()`（index.js 里 `readFileSync(join(HERE,'..','CHANGELOG.md'))`）
+ * 读不到东西 → 「说明」页那块**是空的**，只有版本号。
+ * 我本地是 `link:` 装（源码目录就在旁边），所以这条永远不会在我这儿露馅 ——
+ * 和 1.8.2 漏 addresses.js 是**同一类盲区**，所以用同一张网兜住。
+ */
+{
+	const entryText = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const readFromRoot = [...entryText.matchAll(/readFileSync\(\s*join\(\s*HERE\s*,\s*'\.\.'\s*,\s*'([^']+)'/g)].map((m) => m[1])
+	check('从包根目录读的文件被认出来了（自检）', readFromRoot.length > 0, readFromRoot.join(', '))
+	// 这几个 npm 永远会打（不受 files 影响），别把它们算成"漏了"。
+	const alwaysPacked = new Set(['package.json', 'README.md', 'LICENSE', 'LICENCE'])
+	for (const name of readFromRoot) {
+		if (alwaysPacked.has(name)) continue
+		check(`打包包含运行时读取的 ${name}`, existsSync(join(ROOT, name)) && packedBy(name))
+	}
+}
+
 // 3) 别再用"逐个文件列举"的写法：新增一个 lib 下的文件就会再漏一次。
 check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	(Array.isArray(pkg.files) ? pkg.files : []).some((pattern) => String(pattern).replace(/^\.\//, '').replace(/\/+$/, '') === 'lib'),
