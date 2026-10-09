@@ -854,6 +854,37 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		tiny.status === 200 && tinyBody.unknown === true, JSON.stringify(tinyBody))
 }
 
+/* --- 手机把"我这儿出错了"上报回来（否则服务端一行日志都没有）--------------- */
+/*
+ * 现场（2026-10-09 用户报"手机发图发不出去"）：日志里**一行失败都没有** —— 因为失败发生在
+ * 隧道边缘（手机上行的慢请求被入口掐断，服务端根本没收到），也可能发生在客户端的读图/转码里。
+ * 这两种服务端都看不见，只能靠猜。现在手机可以把事件+细节写进桥日志。
+ */
+{
+	const anon = await fetch(`${base}/api/clientlog`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ event: 'x', detail: 'y' }),
+	})
+	check('/api/clientlog 要鉴权（401）', anon.status === 401, String(anon.status))
+	const ok = await fetch(`${base}/api/clientlog`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ event: 'attach-fail', detail: 'photo.heic 12MB → 解不开', bytes: 12345678 }),
+	})
+	const body = await ok.json().catch(() => ({}))
+	check('手机的上报被收下（200 ok）', ok.status === 200 && body.ok === true, JSON.stringify(body))
+	// 超大上报体：桥会中断读取（既有的 readBody 行为，客户端看到 ECONNRESET）——
+	// 手机那边是 fire-and-forget，无所谓；**真正要保证的是它不会把桥弄挂**。
+	await fetch(`${base}/api/clientlog`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ event: 'huge', detail: 'x'.repeat(200 * 1024) }),
+	}).catch(() => {})
+	const stillAlive = await fetch(`${base}/api/bootstrap`, authed)
+	check('超大/畸形上报不会把桥弄挂（随后请求照常）', stillAlive.status === 200, String(stillAlive.status))
+}
+
 const stream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)
 const reader = stream.body.getReader()
 const decoder = new TextDecoder()

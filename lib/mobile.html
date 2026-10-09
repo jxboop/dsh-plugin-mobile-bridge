@@ -2998,7 +2998,12 @@
 
 	function send() {
 		const body = text.value.trim()
-		if (body === '' && state.images.length === 0 && state.files.length === 0) return
+		if (body === '' && state.images.length === 0 && state.files.length === 0) {
+			// 以前这里**静默 return**：附件没挂上（读图失败/挑选器没返回文件）时，用户按「发送」
+			// 什么都不会发生 —— 也就是用户嘴里的"发不出去"，而且屏幕上一点解释都没有。
+			flash('还没内容可发：先在下面选一张图/写一句话。', 4000)
+			return
+		}
 		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
 		// 键盘路径（Ctrl/Cmd+Enter）绕过了按钮，只靠 disabled 挡不住连按两下 ——
 		// 同一个 prompt 会被发两次，两次都是要花钱的一轮。
@@ -3012,7 +3017,13 @@
 		// 超出的那几张改走"分片上传 + 路径"，一张都不丢。
 		const images = []
 		const overflow = []
-		let budget = 3 * 1024 * 1024
+		/*
+		 * 内联预算从 3 MB 降到 1 MB（2026-10-09）：用户报"手机发图发不出去"，而日志里
+		 * 一行失败都没有 —— 因为**失败发生在隧道边缘**（手机上行的慢请求会被入口掐断，
+		 * 服务端根本没收到，自然没日志）。3 MB 的 base64 ≈ 4 MB 的 body，在手机上行下
+		 * 很容易被掐；1 MB 以内基本秒到。超出的走分片上传（384 KB/片，慢但不失败）。
+		 */
+		let budget = 1024 * 1024
 		for (const image of state.images) {
 			if (image.data.length <= budget) { images.push(image); budget -= image.data.length; continue }
 			overflow.push({ name: image.name || 'image', mediaType: image.mediaType, data: image.data })
@@ -3039,12 +3050,12 @@
 			// 一次发送用一个固定 requestId：隧道抖一下自动重试时复用它，
 			// 宿主对同一个 id 是幂等的 —— 重试不会变成两条消息。
 			const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
-			const post = () => api('api/prompt', {
+			const post = (inlineImages, refs) => api('api/prompt', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ sessionId: target, text: body, images, fileRefs, requestId: clientId }),
+				body: JSON.stringify({ sessionId: target, text: body, images: inlineImages, fileRefs: refs, requestId: clientId }),
 			})
-			const attempt = (tries) => post().catch((error) => {
+			const attempt = (tries) => post(images, fileRefs).catch((error) => {
 				// 网络层失败（隧道一抖就是 TypeError: Load failed）自动再来一次 ——
 				// 用户看到的"发不出去"，其实往往只差再试一遍。
 				const transient = error === null || error === undefined || typeof error.status !== 'number'
@@ -3053,7 +3064,24 @@
 				}
 				throw error
 			})
-			return attempt(1)
+			return attempt(1).catch(async (error) => {
+				/*
+				 * 带着内联图片还是失败：几乎就是**隧道边缘把这个大 body 掐了**
+				 * （用户报的"发图发不出去"就是这么来的：服务端一行日志都没有）。
+				 * 别再让用户手点第二次 —— 把图片改成切片上传（384 KB/片）再发一次。
+				 */
+				if (images.length === 0) throw error
+				const total = images.reduce((sum, image) => sum + image.data.length, 0)
+				reportToBridge('send-inline-failed', `${String(error?.message ?? error)}；改走切片上传（内联 ${images.length} 张 / ${total} 字节）`, total)
+				flash('这张图内联发送被网络掐断了，正在改用切片上传重发…', 7000)
+				const again = []
+				for (let index = 0; index < images.length; index += 1) {
+					again.push(await uploadInChunks(
+						{ name: images[index].name || 'image', mediaType: images[index].mediaType, data: images[index].data },
+						images[index].name || 'image', index + 1, images.length))
+				}
+				return post([], fileRefs.concat(again))
+			})
 		}).then((result) => {
 			text.value = ''
 			growComposer()
@@ -3089,6 +3117,24 @@
 			flash('发送失败：' + error.message)
 		})
 			.finally(() => { sendBtn.disabled = false })
+	}
+
+	/**
+	 * 把"手机上出错了"写进电脑那边的桥日志（`POST /api/clientlog`）。
+	 *
+	 * 为什么必须有：**客户端根本没发出去的失败，服务端一行日志都没有** —— 用户报
+	 * "手机发图发不出去"时我这边日志干干净净，只能靠猜（2026-10-09 卡了很久）。
+	 * 现在是"fire and forget"：上报本身失败绝不能再影响用户操作。
+	 */
+	function reportToBridge(event, detail, bytes) {
+		try {
+			fetch('api/clientlog', {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ event, detail: String(detail ?? '').slice(0, 300), bytes: Number(bytes) || 0 }),
+			}).catch(() => {})
+		} catch { /* 上报失败就算了，绝不能因为它打断发送 */ }
 	}
 
 	function renderThumbs() {
@@ -3328,8 +3374,10 @@
 					blob = await shrinkImage(file, 1600, 0.82)
 					mediaType = 'image/jpeg'
 				}
-			} catch {
+			} catch (error) {
 				// 转不了/缩不了就退回"当文件发"：电脑那边会存成文件并把路径交给 agent。
+				// 同时上报一句：手机上"图片变成文件"的原因，服务端本来完全看不见。
+				reportToBridge('attach-as-file', `${file.name || 'image'} ${type || '(无类型)'} ${file.size}B → ${String(error?.message ?? error)}`, file.size)
 				state.files.push({ name: file.name || 'image', mediaType: type || 'application/octet-stream', data: await readBase64(file) })
 				renderThumbs()
 				return
@@ -3337,6 +3385,7 @@
 			const data = await readBase64(blob)
 			// 还是太大（比如几 MB 的动图）：走分片上传，别赌隧道那一口气。
 			if (data.length > 2 * 1024 * 1024) {
+				reportToBridge('attach-chunked', `${file.name || 'image'} ${mediaType} 原始 ${file.size}B → ${data.length}B 太大，改走切片`, data.length)
 				state.files.push({ name: file.name || 'image', mediaType, data })
 				renderThumbs()
 				flash('这张图比较大，会切片上传（慢一点，但不会再失败）。', 4000)
@@ -3361,8 +3410,12 @@
 	fileInput.addEventListener('change', () => {
 		const picked = Array.from(fileInput.files || [])
 		fileInput.value = ''
+		if (picked.length === 0) reportToBridge('pick-empty', '选择器返回了 0 个文件（用户取消，或系统没给文件）', 0)
 		for (const file of picked) {
-			addAttachment(file).catch((error) => flash('读取失败：' + error.message))
+			addAttachment(file).catch((error) => {
+				reportToBridge('attach-fail', `${file.name || 'file'} ${file.type || '(无类型)'} ${file.size}B → ${String(error?.message ?? error)}`, file.size)
+				flash('读取失败：' + error.message)
+			})
 		}
 	})
 

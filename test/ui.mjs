@@ -127,12 +127,16 @@ let bootHold = null
 let loginFailures = 0
 /** /api/login 的 HTTP 状态（401 = PIN 不对，页面**不该**重试）。 */
 let loginStatus = 200
+/** 接下来几次 /api/prompt 以"网络层失败"结束（模拟隧道边缘把大 body 掐断）。 */
+let promptFailures = 0
 /** 记录假的 XHR 报过的 (loaded,total) 组合，验证加载条是按字节走的。 */
 const progressReports = []
 /** 页面发出的每个 XHR（含 boot 那个）—— 用来断言 boot 请求设了超时。 */
 const xhrRequests = []
 /** 让接下来 N 次 /api/prompt 在 fetch 层直接失败（模拟隧道抖动 → 页面该自动重试）。 */
 let promptFailTimes = 0
+/** 手机上报给桥的客户端日志（`POST /api/clientlog`）。 */
+const clientLogs = []
 /** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
 const promptIds = []
 
@@ -264,6 +268,10 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse(target.toLowerCase().endsWith('.png')
 			? { mediaType: 'image/png', width: 24, height: 12 }
 			: { mediaType: 'image/jpeg', width: 40, height: 30 })
+	}
+	if (path.startsWith('/api/clientlog')) {
+		clientLogs.push(JSON.parse(options.body ?? '{}'))
+		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/upload')) {
 		const body = JSON.parse(options.body ?? '{}')
@@ -1843,6 +1851,56 @@ check('说明指向了下拉框或读取状态',
 	check('重试用的是同一个 requestId（宿主幂等，不会变成两条）',
 		promptIds.length === 2 && promptIds[0] === promptIds[1], promptIds.join(' / '))
 	promptFailTimes = 0
+}
+
+/* --- 图片内联发送被隧道边缘掐断 → 自动改走分片上传重发 ---------------------- */
+/*
+ * 现场（2026-10-09 用户报"我手机界面发送图片发不出去"）：
+ * 日志里**一行失败都没有** —— 因为失败发生在**隧道边缘**（手机上行的慢请求会被入口掐断，
+ * 服务端根本没收到请求，自然没日志）。图片内联在 prompt 的 body 里（≤3MB）时最容易撞上。
+ * 现在：① 内联预算降到 1MB；② 内联失败**自动**改成切片上传（384KB/片）再发一次，
+ * 不让用户手点第二次；③ 手机把失败上报进桥日志（`/api/clientlog`），下次不用猜。
+ */
+{
+	uploaded.length = 0
+	clientLogs.length = 0
+	const promptsBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	// 先挂一张真图（走内联），再把接下来两次 prompt 打成网络层失败（真宿主里就是隧道掐断）。
+	const inlineFile = new window.File([png], 'inline.png', { type: 'image/png' })
+	Object.defineProperty($('file'), 'files', { value: [inlineFile], configurable: true })
+	$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(200)
+	check('准备：图片已挂上（缩略图 on）', $('thumbs').querySelectorAll('img').length === 1,
+		`thumbs img=${$('thumbs').querySelectorAll('img').length}`)
+
+	promptFailTimes = 2
+	$('text').value = '带图的一条'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(5200)
+	const after = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
+	const lastBody = JSON.parse(after[after.length - 1].options.body)
+	check('内联被掐断后自动改走切片上传（用户不用再点一次）',
+		uploaded.length >= 1 && after.length > promptsBefore + 2, `切片 ${uploaded.length} 片 / prompt ${after.length - promptsBefore} 次`)
+	check('重发时图片改成 fileRefs（不再内联），而且消息最终发出去了',
+		lastBody.images.length === 0 && lastBody.fileRefs.length === 1
+		&& $('thumbs').children.length === 0,
+		JSON.stringify({ images: lastBody.images.length, fileRefs: lastBody.fileRefs.length, thumbs: $('thumbs').children.length }))
+	check('手机把这次失败上报进了桥日志（服务端本来一行都看不到）',
+		clientLogs.some((entry) => String(entry.event).includes('send-inline-failed')),
+		JSON.stringify(clientLogs.map((entry) => entry.event)))
+	promptFailTimes = 0
+}
+
+/* --- 「发送」在没内容时要说人话（以前是静默无反应）------------------------ */
+{
+	const before = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	$('text').value = ''
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('没内容时按发送给提示，而不是静默无反应（用户嘴里的"发不出去"）',
+		$('banner').textContent.includes('还没内容可发')
+		&& requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === before,
+		$('banner').textContent)
 }
 
 /* --- 手机上"拖一下又弹回原处、看不到消息" ---------------------------------- */
