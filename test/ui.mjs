@@ -2803,6 +2803,22 @@ check('说明指向了下拉框或读取状态',
 		`${moreButton().textContent.slice(0, 24)} rest=${restBox().style.display}`)
 	// 注意：不能只查 `__DSH_` 前缀 —— 客户端守卫里那个标记是故意拆开拼的
 	// （'__DSH_' + 'PAGE_TAG__'），所以它在源码里必然含这个前缀。要查的是**完整标记**。
+	/*
+	 * 用户现场（2026-10-09）：手机上登录页一直显示 1.8.2，而服务器三条路（隧道/Tailscale/本机）
+	 * 都已经是 2.0.0 —— Service Worker 在"网络请求失败"时兜底给了**缓存的旧页面**，
+	 * 而自愈重载是"每个 tag 只一次"，于是被永久锁死 ✗。
+	 * 所以：① 自愈改成冷却 60 秒可重试；② 登录页给一个"点这里强制刷新"（注销 SW + 清缓存 + 重载）。
+	 */
+	check('登录页上有「版本号不对？点这里强制刷新」（卡在旧页面时能自救）',
+		$('gateFresh') !== null && $('gateFresh').textContent.includes('强制刷新'))
+	{
+		const before = jsdomErrors.length
+		click($('gateFresh'))
+		await wait(60)
+		check('点它会走"强制刷新"这条路（注销 SW/清缓存后重载，不是干等）',
+			jsdomErrors.length > before || window.document.location.search.includes('fresh'),
+			`reload=${jsdomErrors.length - before} search=${window.document.location.search}`)
+	}
 	check('页面里没有漏出来的注入标记（漏了就是把服务端模板摆给用户看）',
 		window.document.documentElement.outerHTML.includes('__DSH_PAGE_TAG__') === false
 		&& window.document.documentElement.outerHTML.includes('__DSH_BRIDGE_VERSION__') === false

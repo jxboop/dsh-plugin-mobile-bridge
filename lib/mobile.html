@@ -235,6 +235,11 @@
 	@keyframes pagein-right { from { transform: translateX(-26px); opacity: .35 } to { transform: none; opacity: 1 } }
 	.pagein-left { animation: pagein-left 200ms ease-out; }
 	.pagein-right { animation: pagein-right 200ms ease-out; }
+	/* 说明页里的「强制刷新」：和登录页那个同一个用途（注销 SW + 清缓存 + 重载）。 */
+	#welcomeFresh {
+		margin: 8px 0 4px; padding: 8px 12px; font-size: 12px; font-weight: 600;
+		color: var(--accent); background: none; border: 1px dashed var(--field-line); border-radius: 10px;
+	}
 	/* 录音键住在页签栏里，但它**不是页签**（点了是开录音面板，不换页）：
 	   所以它不带 data-tab，样式上也不吃 .active 那套，只在自己"正在录"时变红。 */
 	#tabs #recBtn { color: var(--muted); }
@@ -617,6 +622,11 @@
 	.welcometip ul { margin: 0 0 12px; padding-left: 20px; }
 	/* ---- 开始页上的版本说明 ---- */
 	.gatever { margin-top: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+	/* 登录页上的"版本号不对？点这里强制刷新"：低调但点得到，专门治"卡在旧页面"。 */
+	#gateFresh {
+		margin-top: 6px; padding: 8px 12px; font-size: 12px; font-weight: 600;
+		color: var(--accent); background: none; border: 1px dashed var(--field-line); border-radius: 10px;
+	}
 	.whatsnew {
 		margin: 12px 0; padding: 11px 13px; border: 1px solid var(--field-line);
 		border-radius: 13px; background: var(--panel); box-shadow: var(--glass-edge);
@@ -700,6 +710,8 @@
 	<button id="gateBtn">连接</button>
 	<!-- 版本说明：还没进去就该知道"我连的是哪一版" —— 报障时第一句问的就是这个。 -->
 	<div class="gatever" id="gateVer">手机桥 v__DSH_BRIDGE_VERSION__</div>
+	<!-- 卡在旧页面上时的一键自救：注销 SW + 清它的缓存再重载（服务器已经是新版却还显示旧版本号）。 -->
+	<button id="gateFresh">版本号不对？点这里强制刷新</button>
 </div>
 
 <!-- 「最近更新了什么」：服务端从 CHANGELOG.md 头部现读后注入（JSON，不是 HTML）。
@@ -843,6 +855,8 @@
 					<div class="whatsnew" id="welcomeVer">
 						<div class="wnhead">手机桥 <strong id="wnVersion">v__DSH_BRIDGE_VERSION__</strong></div>
 						<div class="wnbody" id="wnList"></div>
+						<!-- 说明页版本号还是旧的（卡在 Service Worker 缓存的旧页面）时，一键自救。 -->
+						<button id="welcomeFresh">版本号不对？点这里强制刷新</button>
 					</div>
 					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。这一页想再看，点右上角「说明」。</p>
 				</div>
@@ -1125,13 +1139,47 @@
 	function checkPageTag(tag) {
 		if (typeof tag !== 'string' || tag === '' || servedTag === '' || tag === servedTag) return
 		if (servedTag === pageTagMarker) return
-		// One automatic reload per observed tag: if the browser keeps handing
-		// back the old document, stop rather than spin.
+		/*
+		 * 每个 tag 自动重载一次 —— 但如果那次重载拿回来的是 **Service Worker 缓存的旧页面**
+		 * （隧道抖了一下、网络请求失败时 SW 会兜底给缓存），旧页面里的 servedTag 还是旧的，
+		 * 于是"每个 tag 只重载一次"就把它永久锁死在旧页面上 ✗。
+		 *
+		 * 现场：手机上登录页一直显示 1.8.2，服务器三条路（隧道/局域网/本机）都已经是 2.0.0。
+		 * 所以改成**冷却 60 秒后可再试**：网络一恢复它就会自己追上，不用用户去清缓存。
+		 */
 		try {
-			if (window.sessionStorage.getItem('dshm.reloaded') === tag) return
-			window.sessionStorage.setItem('dshm.reloaded', tag)
+			const stamp = Number(window.sessionStorage.getItem('dshm.reloaded') ?? 0)
+			const lastTag = window.sessionStorage.getItem('dshm.reloadedTag') ?? ''
+			if (lastTag === tag && Date.now() - stamp < 60000) return
+			window.sessionStorage.setItem('dshm.reloaded', String(Date.now()))
+			window.sessionStorage.setItem('dshm.reloadedTag', tag)
 		} catch { /* private mode */ }
 		window.location.reload()
+	}
+
+	/**
+	 * 一键强制刷新：**注销 Service Worker + 清掉它的所有缓存**再重载。
+	 *
+	 * 为什么需要它（用户现场）：手机卡在旧页面上，服务器明明已经是新版 ✗。
+	 * 普通下拉刷新在"SW 兜底给缓存"这条路上是没用的 —— 必须先把缓存端掉。
+	 * 带 `?fresh=<时间>` 绕过 HTTP 缓存，用 replace 避免在历史里留一串脏地址。
+	 */
+	async function hardRefresh() {
+		try {
+			if (navigator.serviceWorker !== undefined) {
+				const regs = await navigator.serviceWorker.getRegistrations()
+				await Promise.all(regs.map((reg) => reg.unregister()))
+			}
+		} catch { /* 注销失败也继续往下走 */ }
+		try {
+			if (window.caches !== undefined) {
+				const keys = await window.caches.keys()
+				await Promise.all(keys.map((key) => window.caches.delete(key)))
+			}
+		} catch { /* 同上 */ }
+		const url = new URL(window.location.href)
+		url.searchParams.set('fresh', String(Date.now()))
+		window.location.replace(url.toString())
 	}
 
 	// Inline styles only: no stylesheet `display` rule participates, so the
@@ -5117,6 +5165,9 @@
 		markWelcomed()
 		hide(welcome)
 	})
+	// 登录页上的"版本号不对？点这里强制刷新"（卡在 Service Worker 缓存的旧页面时用）。
+	$('gateFresh').addEventListener('click', () => { void hardRefresh() })
+	$('welcomeFresh').addEventListener('click', () => { void hardRefresh() })
 
 	// 「说明」键：随时再看一遍那次讲的东西。
 	// 它是**给人重看的入口**，所以不动"已看过"的标记 —— 首访只讲一次这件事仍然成立，
