@@ -137,6 +137,9 @@ const xhrRequests = []
 let promptFailTimes = 0
 /** 手机上报给桥的客户端日志（`POST /api/clientlog`）。 */
 const clientLogs = []
+/** 上传接口的并发观测（峰值同时在飞的片数）。 */
+let uploadInFlight = 0
+let uploadPeak = 0
 /** 每次 /api/prompt 带上的 requestId（断言重试复用它）。 */
 const promptIds = []
 
@@ -276,6 +279,11 @@ async function stubFetch(input, options = {}) {
 	if (path.startsWith('/api/upload')) {
 		const body = JSON.parse(options.body ?? '{}')
 		uploaded.push(body)
+		// 并发观测：同时在飞的片数峰值（"传图快一点"就靠这个）。
+		uploadInFlight += 1
+		uploadPeak = Math.max(uploadPeak, uploadInFlight)
+		await new Promise((resolve) => setTimeout(resolve, 25))
+		uploadInFlight -= 1
 		return jsonResponse({
 			ok: true,
 			done: body.index === body.total - 1,
@@ -1889,6 +1897,60 @@ check('说明指向了下拉框或读取状态',
 		clientLogs.some((entry) => String(entry.event).includes('send-inline-failed')),
 		JSON.stringify(clientLogs.map((entry) => entry.event)))
 	promptFailTimes = 0
+}
+
+/* --- 多张一起挑：打包成**一个请求**发出去（用户要的"别干等"）--------------- */
+/*
+ * 现场要求：「传图片能不能快一点，要能多个图片一起打包发送，而不是在那里干等」。
+ * 一次挑多张时：① 每张走"打包档"压缩（长边 1280/q0.78），好让整批塞进一个请求；
+ * ② 一个请求 = 一次往返 = 最快。分片只在单张实在太大时才用。
+ */
+{
+	uploaded.length = 0
+	uploadPeak = 0
+	const promptsBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	const trio = ['a.png', 'b.png', 'c.png'].map((name) =>
+		new window.File([new window.Uint8Array([137, 80, 78, 71, 1, 2, 3])], name, { type: 'image/png' }))
+	Object.defineProperty($('file'), 'files', { value: trio, configurable: true })
+	$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(300)
+	check('一次挑三张：三张都挂上了（一张都不许丢）',
+		$('thumbs').querySelectorAll('img').length === 3,
+		`thumbs img=${$('thumbs').querySelectorAll('img').length}`)
+	$('text').value = '三张一起看'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(400)
+	const sent = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
+	const batch = JSON.parse(sent[sent.length - 1].options.body)
+	check('三张图打包在**同一个请求**里发出去（不是三趟来回）',
+		sent.length === promptsBefore + 1 && batch.images.length === 3 && uploaded.length === 0,
+		JSON.stringify({ prompts: sent.length - promptsBefore, images: batch.images.length, 分片: uploaded.length }))
+	check('整批发完缩略图清空（界面上不留"发了还在"的假象）', $('thumbs').children.length === 0,
+		`thumbs=${$('thumbs').children.length}`)
+}
+
+/* --- 分片上传必须**并发**（串行等一片一个来回，就是用户说的"干等"）--------- */
+{
+	uploaded.length = 0
+	uploadPeak = 0
+	// 走「原图」通道（不压缩），3 MB 的附件必然要分片 —— 正好看并发。
+	const heavy = new window.File([new Uint8Array(3 * 1024 * 1024).fill(9)], 'heavy.bin', { type: 'application/octet-stream' })
+	const rawToggle = $('rawToggle')
+	if (rawToggle.classList.contains('on') === false) rawToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	Object.defineProperty($('file'), 'files', { value: [heavy], configurable: true })
+	$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(300)
+	$('text').value = '传个大文件'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(3000)
+	check('3 MB 附件分成多片上传', uploaded.length >= 5, `${uploaded.length} 片`)
+	check('分片是**并发**发的（同时在飞 ≥2 片）', uploadPeak >= 2, `峰值并发 ${uploadPeak}`)
+	check('每片都带上 size/chunkBytes（服务端才能乱序收）',
+		uploaded.every((entry) => entry.size > 0 && entry.chunkBytes > 0),
+		JSON.stringify(uploaded[0] ?? {}).slice(0, 120))
+	if (rawToggle.classList.contains('on')) rawToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
 }
 
 /* --- 「发送」在没内容时要说人话（以前是静默无反应）------------------------ */

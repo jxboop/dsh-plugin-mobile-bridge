@@ -3032,19 +3032,45 @@
 		if (overflow.length > 0) flash('图片比较大，超出的会切片上传（慢一点，但不会再失败）。', 4000)
 		sendBtn.disabled = true
 		// 附件先分片传上去（大文件一整块发会被隧道入口掐断），拿到路径再发任务。
+		//
+		// 2026-10-09「传图太慢、要能多张一起发」：附件之间也并行（2 路），而每个附件内部
+		// 已经 3 片并发 —— 合计最多 6 个请求在飞，手机上行到这就吃满了。进度按**片**汇总成
+		// 一个数字，用户看到的是"5/12 片"稳步走，而不是每张图各自跳。
 		const prepared = files.length === 0
 			? Promise.resolve([])
 			: (async () => {
 				const refs = []
-				for (let index = 0; index < files.length; index += 1) {
+				const totalChunks = files.reduce((sum, file) => sum + Math.max(1, Math.ceil(file.data.length / CHUNK_BYTES)), 0)
+				const label = files.length > 1 ? `${files.length} 个附件` : files[0].name
+				let doneChunks = 0
+				let shownAt = 0
+				const tick = () => {
+					doneChunks += 1
+					// 片很小、完成很密：限流到 ~6 次/秒，别让 flash 变成抖动源。
+					const now = Date.now()
+					if (now - shownAt < 160 && doneChunks < totalChunks) return
+					shownAt = now
+					flash(`正在上传 ${label} … ${doneChunks}/${totalChunks} 片`, 0)
+				}
+				const uploadOne = async (index) => {
+					const file = files[index]
 					try {
-						refs.push(await uploadInChunks(files[index], files[index].name, index + 1, files.length))
+						refs[index] = await uploadInChunks(file, file.name, index + 1, files.length, tick)
 					} catch (error) {
 						error.upload = true
 						throw error
 					}
 				}
-				return refs
+				let nextFile = 0
+				const worker = async () => {
+					while (nextFile < files.length) {
+						const index = nextFile
+						nextFile += 1
+						await uploadOne(index)
+					}
+				}
+				await Promise.all(Array.from({ length: Math.min(2, files.length) }, worker))
+				return refs.filter(Boolean)
 			})()
 		prepared.then((fileRefs) => {
 			// 一次发送用一个固定 requestId：隧道抖一下自动重试时复用它，
@@ -3240,13 +3266,18 @@
 	/* ------------------------------------------------ 大文件：分片上传 */
 
 	/**
-	 * 一片 384 KB 原文件（base64 后约 512 KB 的请求体）。
+	 * 一片 512 KB 原文件（base64 后约 683 KB 的请求体）。
 	 *
 	 * 为什么必须分片：隧道入口会掐断"慢而大"的请求（实测 IPv6 入口 16 MB 回 408，
 	 * 6.7 MB 要 89 秒，手机上行更慢）。一整块发过去必然死在边缘，而边缘的错误页
 	 * 不是 JSON —— 用户只看到"发送失败 http 403"，谁也猜不出是什么。
+	 *
+	 * 2026-10-09：从 384 KB 提到 512 KB（少一个来回），并且**并发发**（见下）。
+	 * 服务端现在按偏移写，允许乱序 —— 这是能并发的前提。
 	 */
-	const CHUNK_BYTES = 384 * 1024
+	const CHUNK_BYTES = 512 * 1024
+	/** 同时在飞的片数：手机上行 3 条基本能把带宽吃满，再多只是排队（还会互相拖慢）。 */
+	const CHUNK_PARALLEL = 3
 
 	function base64ToBytes(b64) {
 		const bin = atob(b64)
@@ -3264,29 +3295,61 @@
 		return btoa(bin)
 	}
 
-	/** 把一个附件分片传上去，返回 { name, mediaType, path }。 */
-	async function uploadInChunks(entry, label, position, count) {
+	/**
+	 * 把一个附件分片传上去，返回 { name, mediaType, path }。
+	 *
+	 * 并发要点：**第 0 片先单独发**（服务端用它建文件并定下大小），剩下 1..n-1 片
+	 * 以 CHUNK_PARALLEL 条同时在飞、按偏移写 —— 谁先到都行。每片失败重试 2 次
+	 * （同一片同尺寸，不能中途改尺寸，否则偏移全错）。
+	 */
+	async function uploadInChunks(entry, label, position, count, onProgress) {
 		const uploadId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 		const bytes = base64ToBytes(entry.data)
 		const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES))
-		let last = null
-		for (let index = 0; index < total; index += 1) {
+		const sendChunk = async (index) => {
 			const slice = bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES)
-			last = await api('api/upload', {
-				method: 'POST',
-				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({
-					uploadId,
-					index,
-					total,
-					name: entry.name,
-					mediaType: entry.mediaType,
-					data: bytesToBase64(slice),
-				}),
-			})
-			const pct = Math.round(((index + 1) / total) * 100)
-			flash('正在上传 ' + label + (count > 1 ? '（' + position + '/' + count + '）' : '') + ' … ' + pct + '%')
+			let lastError = null
+			for (let tries = 0; tries < 3; tries += 1) {
+				try {
+					return await api('api/upload', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							uploadId,
+							index,
+							total,
+							// 新协议：报上总长与片长，服务端就能乱序收（手机上缓存的老页面不带这两个字段，
+							// 服务端会退回"顺序追加"，所以不需要考虑版本兼容的开关）。
+							size: bytes.length,
+							chunkBytes: CHUNK_BYTES,
+							name: entry.name,
+							mediaType: entry.mediaType,
+							data: bytesToBase64(slice),
+						}),
+					})
+				} catch (error) {
+					lastError = error
+					await new Promise((resolve) => setTimeout(resolve, 400 * (tries + 1)))
+				}
+			}
+			throw lastError ?? new Error('分片上传失败')
 		}
+		let done = 1
+		let last = await sendChunk(0)
+		if (onProgress) onProgress(done, total)
+		let next = 1
+		const worker = async () => {
+			while (next < total) {
+				const index = next
+				next += 1
+				const result = await sendChunk(index)
+				done += 1
+				if (onProgress) onProgress(done, total)
+				if (result?.done === true) last = result
+			}
+		}
+		await Promise.all(Array.from({ length: Math.min(CHUNK_PARALLEL, Math.max(0, total - 1)) }, worker))
+		if (total === 1) { /* 单片：上面已经发完 */ }
 		return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
 	}
 
@@ -3323,8 +3386,10 @@
 	 *
 	 * @param asFile 「文件」键挑的：**一律原样当文件**传到电脑，agent 拿到路径。
 	 *   （照片从这条路走就是原图：不压缩、不转格式。）
+	 * @param compact 一次挑了好几张时的"打包档"：压得更小（长边 1280 / q0.78），
+	 *   好让整批**塞进一个请求**发出去 —— 那是最快的一条路（不用分片、不用来回）。
 	 */
-	async function addAttachment(file, asFile = false) {
+	async function addAttachment(file, asFile = false, compact = false) {
 		const type = String(file.type || '')
 		// 「文件」键：原样上传（不压缩、不转格式），电脑那边存盘、把路径交给 agent。
 		if (asFile === true) {
@@ -3368,10 +3433,11 @@
 				if (!HOST_IMAGE_TYPES.has(type)) {
 					blob = await toPngBlob(file)
 					mediaType = 'image/png'
-				} else if (!animated && file.size > 900 * 1024) {
+				} else if (!animated && file.size > (compact ? 400 * 1024 : 900 * 1024)) {
 					// 手机照片动辄 3-8 MB，base64 再涨三分之一 —— 隧道那头会掐断。
-					// 长边 1600、质量 0.82 之后通常只有几百 KB，手机上看不出差别。
-					blob = await shrinkImage(file, 1600, 0.82)
+					// 单张：长边 1600 / q0.82；**一次挑好几张**时压得更狠（1280 / 0.78），
+					// 因为"整批一个请求"比"分片传"快得多（用户的要求就是别干等）。
+					blob = await shrinkImage(file, compact ? 1280 : 1600, compact ? 0.78 : 0.82)
 					mediaType = 'image/jpeg'
 				}
 			} catch (error) {
@@ -3427,8 +3493,10 @@
 		const picked = Array.from(fileInput.files || [])
 		fileInput.value = ''
 		if (picked.length === 0) reportToBridge('pick-empty', '选择器返回了 0 个文件（用户取消，或系统没给文件）', 0)
+		// 一次挑多张：全部走"打包档"压缩，好让整批塞进**一个请求**（比分片快得多）。
+		const compact = picked.length > 1
 		for (const file of picked) {
-			addAttachment(file).catch((error) => {
+			addAttachment(file, false, compact).catch((error) => {
 				reportToBridge('attach-fail', `${file.name || 'file'} ${file.type || '(无类型)'} ${file.size}B → ${String(error?.message ?? error)}`, file.size)
 				flash('读取失败：' + error.message)
 			})

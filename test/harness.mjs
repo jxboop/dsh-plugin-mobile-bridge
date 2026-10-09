@@ -605,6 +605,53 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		JSON.stringify(asText).slice(0, 200))
 }
 
+/* --- 并发分片：乱序到达也必须拼回原样（手机上"传图快一点"就靠它）------------ */
+/*
+ * 用户要求「传图片快一点、多张一起打包」。以前服务端 `appendFile` 按到达顺序追加，
+ * 手机只能一片一片串行发 —— 一片一个来回，几 MB 的图就是"在那里干等"。
+ * 现在客户端报上 `size` + `chunkBytes`，服务端**按偏移写**，片与片没有先后要求，
+ * 于是可以 3~4 片并发。这里用**故意打乱**的顺序验证拼回来的字节一字不差。
+ */
+{
+	const chunkBytes = 64 * 1024          // 服务端允许的下限；小片省内存，但必须凑够 4 片
+	const pieces = ['A', 'B', 'C', 'D'].map((ch) => Buffer.alloc(chunkBytes, ch))
+	const size = chunkBytes * pieces.length
+	const total = pieces.length
+	const uploadId = 'parallel-probe'
+	const put = (index) => fetch(`${base}/api/upload`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			uploadId, index, total, size, chunkBytes,
+			name: 'multi.bin', mediaType: 'application/octet-stream',
+			data: pieces[index].toString('base64'),
+		}),
+	})
+	// 故意乱序，而且**第 0 片最后到** —— 顺序追加的旧实现会拼成 "CCCCDDDDAAAA"，
+	// 用 writeFile 建文件的实现会把前几片截断掉。
+	const outOfOrder = [2, 3, 1, 0]
+	const results = []
+	for (const index of outOfOrder) results.push(await put(index))
+	const bodies = await Promise.all(results.map((res) => res.json().catch(() => ({}))))
+	const doneOne = bodies.find((entry) => entry?.done === true)
+	check('乱序分片也能收齐（并发的前提）', doneOne?.done === true, JSON.stringify(bodies).slice(0, 200))
+	const assembled = doneOne?.path === undefined ? null : await readFile(doneOne.path)
+	check('乱序拼回来的内容一字不差（第 0 片最后到也不许截断）',
+		assembled !== null && Buffer.compare(assembled, Buffer.concat(pieces)) === 0,
+		assembled === null ? '(没拿到路径)' : `${assembled.length} 字节，首字节=${String.fromCharCode(assembled[0])} 末字节=${String.fromCharCode(assembled[assembled.length - 1])}`)
+
+	// 尺寸对不上的片必须被拒（否则会静默写歪，比失败更难查）。
+	const badSize = await fetch(`${base}/api/upload`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			uploadId: 'parallel-bad', index: 0, total: 2, size: chunkBytes * 2, chunkBytes,
+			name: 'x.bin', data: Buffer.from('too short').toString('base64'),
+		}),
+	})
+	check('分片尺寸不符直接拒（不许静默写歪）', badSize.status === 400, String(badSize.status))
+}
+
 /* --- 自定义背景：Range / 304 / 鉴权，一个都不能少 ------------------------ */
 /*
  * 用户把自己手机上传的一段 .mov 设成手机界面背景。iOS Safari 放视频会先发
