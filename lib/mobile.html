@@ -3384,7 +3384,23 @@
 			}
 			const data = await readBase64(blob)
 			// 还是太大（比如几 MB 的动图）：走分片上传，别赌隧道那一口气。
+			//
+			// ⚠️ 但"当文件传"是有代价的：服务端只会把**路径**交给模型，模型**看不到图** ——
+			// 用户看到的就是"我发的图发不出去"（2026-10-09 现场）。所以先把静图**再压一档**
+			// （手机上 1280px 完全够看），实在压不下去（动图/压缩失败）才降级成文件。
 			if (data.length > 2 * 1024 * 1024) {
+				if (!animated) {
+					try {
+						const smaller = await shrinkImage(blob, 1280, 0.75)
+						const smallData = await readBase64(smaller)
+						if (smallData.length <= 2 * 1024 * 1024) {
+							state.images.push({ mediaType: 'image/jpeg', data: smallData, name: file.name || '' })
+							renderThumbs()
+							flash('这张图比较大，已经压过了（手机上看着没差别）。', 3500)
+							return
+						}
+					} catch { /* 压不动就往下走，还能当文件传 */ }
+				}
 				reportToBridge('attach-chunked', `${file.name || 'image'} ${mediaType} 原始 ${file.size}B → ${data.length}B 太大，改走切片`, data.length)
 				state.files.push({ name: file.name || 'image', mediaType, data })
 				renderThumbs()

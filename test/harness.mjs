@@ -558,6 +558,53 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('uploadId 里带路径分隔符直接拒', badId.status === 400, String(badId.status))
 }
 
+/* --- 分片传上来的大图必须仍然当"图片"给模型，而不是一个文件路径 ------------ */
+/*
+ * 现场（2026-10-09 用户报"我手机界面发送图片发不出去"）：图一大（或 iPhone 的 HEIC 转出来的
+ * PNG 一大），客户端就改走分片上传，而服务端以前**一律当文件**下发 —— 只给模型一个路径，
+ * 模型看不到图，只能回一句"图片之外的内容我没法直接看，请用工具打开/处理"。
+ * 用户看到的就是"图发不出去"。现在：静态图（png/jpeg）按图片附件下发，模型直接看图。
+ */
+{
+	const pngBytes = Buffer.from(
+		'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+		'base64')
+	const uploadChunk = async (uploadId, name, mediaType, bytes) => {
+		const res = await fetch(`${base}/api/upload`, {
+			method: 'POST',
+			headers: { cookie, 'content-type': 'application/json' },
+			body: JSON.stringify({ uploadId, index: 0, total: 1, name, mediaType, data: bytes.toString('base64') }),
+		})
+		return res.json()
+	}
+	const beforeImages = STATE.prompts.length
+	const shot = await uploadChunk('probe-img-png', 'photo.png', 'image/png', pngBytes)
+	const clip = await uploadChunk('probe-img-mp4', 'clip.mp4', 'video/mp4', Buffer.from('FAKEVIDEO'))
+	const sent = await fetch(`${base}/api/prompt`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			sessionId: 'session-test',
+			text: '看看这张照片',
+			fileRefs: [
+				{ name: 'photo.png', mediaType: 'image/png', path: shot.path },
+				{ name: 'clip.mp4', mediaType: 'video/mp4', path: clip.path },
+			],
+		}),
+	})
+	check('分片上传的大图也能正常发出去', sent.status === 200, String(sent.status))
+	const content = STATE.prompts[beforeImages]?.content ?? []
+	const asImage = content.filter((entry) => entry.type === 'image')
+	const asText = content.filter((entry) => entry.type === 'text')
+	check('分片传上来的图按**图片附件**下发（模型能直接看图，不是一个路径）',
+		asImage.length === 1 && asImage[0].mediaType === 'image/png'
+		&& typeof asImage[0].data === 'string' && asImage[0].data.length > 0,
+		JSON.stringify(asImage).slice(0, 160))
+	check('视频仍然走"文件 + 路径"那套（模型看不了视频）',
+		asImage.length === 1 && asText.some((entry) => entry.text.includes('clip.mp4')),
+		JSON.stringify(asText).slice(0, 200))
+}
+
 /* --- 自定义背景：Range / 304 / 鉴权，一个都不能少 ------------------------ */
 /*
  * 用户把自己手机上传的一段 .mov 设成手机界面背景。iOS Safari 放视频会先发
