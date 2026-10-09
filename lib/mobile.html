@@ -423,6 +423,18 @@
 		padding: 10px 13px; font-size: 13px; color: var(--muted); box-shadow: var(--glass-edge);
 	}
 	.genopt.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+	/* 图片 / 视频模式那一排：比尺寸键更靠前、更宽，一眼看出这个面板能出两种东西。 */
+	.genmodes { margin: 2px 0 12px; }
+	.genmode {
+		flex: 1; background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 13px;
+		padding: 11px 12px; font-size: 14px; color: var(--muted); box-shadow: var(--glass-edge);
+	}
+	.genmode.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+	.genvopt {
+		background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 13px;
+		padding: 10px 13px; font-size: 13px; color: var(--muted); box-shadow: var(--glass-edge);
+	}
+	.genvopt.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
 	/* 「将要发给 agent 的那句话」原样摆出来：用户点下去之前就知道会发生什么。 */
 	.genpreview {
 		font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
@@ -707,7 +719,7 @@
 						<li><strong>语音 / 录音</strong> —— 语音备忘录、录音也走这个键：电脑会做<strong>语音转文字</strong>，模型直接"读"到内容（中文识别很准，一分钟约六分钱）。</li>
 						<li><strong>文件</strong> —— 从手机里挑<strong>任意文件</strong>（文档、压缩包、代码…）传到电脑上；它拿到的是文件路径，能自己打开读内容。</li>
 						<li><strong>原图</strong> —— 点亮后按原始画质发，不压缩（大图会慢一些，费流量）。</li>
-						<li><strong>生图</strong> —— 用一句话让它画一张图。出图靠<strong>电脑上的生图插件</strong>：电脑没装、或者没配好 key，它只会回「没有生图模型」。提示词写<strong>英文</strong>、越具体越准（主体 / 风格 / 光线 / 镜头）。</li>
+						<li><strong>生图</strong> —— 用一句话让它画一张图<strong>或出一段视频</strong>（面板上有 🖼 图片 / 🎬 视频 切换）。两者都靠<strong>电脑上的生图插件</strong>：电脑没装、或者没配好 key，它只会回「没有生图模型」。提示词越具体越准（主体 / 动作 / 风格 / 光线 / 镜头）；<strong>视频是分钟级的</strong>（免费模型约 1 分钟），出好会直接变成能播的视频。</li>
 						<li><strong>背景</strong> —— 给这个手机界面换一张图 / 动图（GIF）/ 视频当壁纸。背景是配在<strong>电脑</strong>上的，连上来的手机看到的都一样。</li>
 						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。</li>
 					</ul>
@@ -781,24 +793,35 @@
 	<section class="sheet" id="genopen" data-display="flex" style="display:none">
 			<div class="sheetbar">
 				<button class="iconbtn" id="genBack">← 返回</button>
-				<span class="title">生成图片</span>
+				<span class="title" id="genTitle">生成图片</span>
 				<span class="spacer"></span>
 			</div>
 			<div class="scroll pad">
+				<!-- 图片 / 视频：同一个面板切模式。再往工具键那一排挤一个按钮会把 390px 挤爆，
+				     而"生成"本来就只有一个入口，切成两种产物更顺。 -->
+				<div class="genwrap genmodes">
+					<button class="genmode on" data-mode="image">🖼 图片</button>
+					<button class="genmode" data-mode="video">🎬 视频</button>
+				</div>
 				<div class="field">
-					<label>描述（英文最准）</label>
+					<label id="genPromptLabel">描述（英文最准）</label>
 					<textarea class="plain" id="genPrompt" placeholder="a red apple on a white table, soft daylight, photo" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
-					<div class="hint">生图工具只做 URL 编码、不改写提示词 —— 越具体越准（主体 / 风格 / 光线 / 镜头）。</div>
+					<div class="hint" id="genPromptHint">生图工具只做 URL 编码、不改写提示词 —— 越具体越准（主体 / 风格 / 光线 / 镜头）。</div>
 				</div>
 				<div class="field">
 					<label>尺寸</label>
-					<div class="genwrap">
+					<div class="genwrap" id="genSizesImage">
 						<button class="genopt on" data-gw="1024" data-gh="1024">1024×1024 方图</button>
 						<button class="genopt" data-gw="1024" data-gh="1536">1024×1536 竖屏</button>
 						<button class="genopt" data-gw="1536" data-gh="1024">1536×1024 横屏</button>
 					</div>
+					<div class="genwrap" id="genSizesVideo" style="display:none">
+						<button class="genvopt on" data-vsize="1920x1080">1920×1080 横屏</button>
+						<button class="genvopt" data-vsize="1280x720">1280×720 横屏</button>
+						<button class="genvopt" data-vsize="1080x1920">1080×1920 竖屏</button>
+					</div>
 				</div>
-				<div class="field">
+				<div class="field" id="genSeedField">
 					<label>种子（可留空）</label>
 					<input class="plain" id="genSeed" inputmode="numeric" placeholder="同一个种子 = 同一张图，便于重出" autocapitalize="off" autocorrect="off" spellcheck="false">
 				</div>
@@ -806,8 +829,10 @@
 					<label>发给 agent 的那句话</label>
 					<div class="genpreview" id="genPreview">（填了描述才会出现）</div>
 				</div>
-				<div class="hint">发出去后 agent 会调 <code>image_generate</code> 出图，图会出现在当前会话里；出图慢时页面会显示它在跑。</div>
-				<div class="hint">⚠️ 真正出图的是<strong>电脑上的 <code>image_generate</code> 工具</strong>（一个单独的 DSH 插件）。电脑没装的话，agent 只会回一句"没有这个工具 / 没有生图模型" —— 那是电脑缺插件，不是手机桥坏了，装法见 README。</div>
+				<div class="hint" id="genHintImage">发出去后 agent 会调 <code>image_generate</code> 出图，图会出现在当前会话里；出图慢时页面会显示它在跑。</div>
+				<div class="hint" id="genHintVideo" style="display:none">发出去后 agent 会调 <code>video_generate</code> 出片。<strong>视频是分钟级的</strong>（免费模型排队更久，通常 1 分钟左右）；出好之后会以<strong>能直接播的视频</strong>出现在对话里，长按可以存到相册。</div>
+				<div class="hint" id="genHintImageTool">⚠️ 真正出图的是<strong>电脑上的 <code>image_generate</code> 工具</strong>（一个单独的 DSH 插件）。电脑没装的话，agent 只会回一句"没有这个工具 / 没有生图模型" —— 那是电脑缺插件，不是手机桥坏了，装法见 README。</div>
+				<div class="hint" id="genHintVideoTool" style="display:none">⚠️ 出片的是同一个插件里的 <code>video_generate</code>（智谱 CogVideoX）。<strong>cogvideox-flash 免费</strong>（画面带智谱水印）；<code>cogvideox-3</code> 更清晰、可带音频但按量计费。用的是<strong>生图那份智谱 key</strong>，不用另外配。</div>
 				<div class="hint">⚠️ 国内免费又稳的是<strong>智谱 CogView</strong>：去 bigmodel.cn 注册拿 key，填进电脑上的 <code>~/.dsh/image-gen.json</code>（<code>"zhipu": {"key": "…"}</code>），再把 <code>providers</code> 设成 <code>["zhipu"]</code>。<strong>key 要点「复制」拿整串</strong>（形如 <code>xxxxxxxx…xxxx.xxxxxxxxxxxxxxxx</code>，中间有一个点，约 49 位）；只复制了点号前面那段，出图时会报「格式不对」。</div>
 			</div>
 			<div class="sheetfoot">
@@ -3585,12 +3610,45 @@
 	   「把一句英文描述翻译成一条给 agent 的 image_generate 指令，再走普通发送」。 */
 
 	/** 面板上的尺寸/种子：发送那一刻冻结，免得用户在 agent 跑的时候改面板。 */
-	const gen = { width: 1024, height: 1024, seed: '', sent: false }
+	const gen = { mode: 'image', width: 1024, height: 1024, seed: '', vsize: '1920x1080', vfps: 30, sent: false }
 
-	/** 面板里那三行 → 真正发给 agent 的一句话。 */
+	/** 图片 / 视频两种模式的界面差异，集中在这里，免得散得到处都是。 */
+	function genApplyMode() {
+		const video = gen.mode === 'video'
+		$('genTitle').textContent = video ? '生成视频' : '生成图片'
+		$('genPromptLabel').textContent = video ? '描述（中英文都行，越具体越好）' : '描述（英文最准）'
+		$('genPromptHint').textContent = video
+			? '视频提示词说清四件事：主体、动作、镜头怎么动、什么风格。出片是分钟级的，别催。'
+			: '生图工具只做 URL 编码、不改写提示词 —— 越具体越准（主体 / 风格 / 光线 / 镜头）。'
+		$('genPrompt').placeholder = video
+			? '一只红苹果在木桌上缓缓旋转，暖光，镜头缓慢推近，电影感'
+			: 'a red apple on a white table, soft daylight, photo'
+		$('genSizesImage').style.display = video ? 'none' : ''
+		$('genSizesVideo').style.display = video ? '' : 'none'
+		// 视频没有种子（接口不吃这个参数），留着输入框只会让人以为能用。
+		$('genSeedField').style.display = video ? 'none' : ''
+		$('genHintImage').style.display = video ? 'none' : ''
+		$('genHintVideo').style.display = video ? '' : 'none'
+		$('genHintImageTool').style.display = video ? 'none' : ''
+		$('genHintVideoTool').style.display = video ? '' : 'none'
+		for (const button of document.querySelectorAll('#genopen .genmode')) {
+			button.classList.toggle('on', button.dataset.mode === gen.mode)
+		}
+		genPreview()
+	}
+
+	/** 面板里那几行 → 真正发给 agent 的一句话。 */
 	function genText() {
 		const prompt = $('genPrompt').value.trim()
 		if (prompt === '') return ''
+		if (gen.mode === 'video') {
+			return [
+				'请用 video_generate 生成一段视频。',
+				'提示词（请原样使用）：' + prompt,
+				'分辨率：' + gen.vsize + '，帧率：' + gen.vfps,
+				'生成完把 mp4 的完整文件路径单独放在一行里（手机上要能直接点开播、也能存相册）。',
+			].join('\n')
+		}
 		const seed = $('genSeed').value.trim()
 		const lines = [
 			'请用 image_generate 生成一张图片。',
@@ -3625,13 +3683,27 @@
 		send()
 	}
 
-	$('genBtn').addEventListener('click', () => { show(genSheet); genPreview(); $('genPrompt').focus() })
+	$('genBtn').addEventListener('click', () => { show(genSheet); genApplyMode(); $('genPrompt').focus() })
 	$('genBack').addEventListener('click', () => {
-		if ($('genPrompt').value.trim() !== '' && !window.confirm('放弃这张图的描述？')) return
+		const what = gen.mode === 'video' ? '这段视频的描述' : '这张图的描述'
+		if ($('genPrompt').value.trim() !== '' && !window.confirm('放弃' + what + '？')) return
 		genClose()
 	})
 	$('genPrompt').addEventListener('input', genPreview)
 	$('genSeed').addEventListener('input', genPreview)
+	// 图片 / 视频切换：只改界面，不改提示词（用户可能先把描述写好再决定出图还是出片）。
+	for (const button of document.querySelectorAll('#genopen .genmode')) {
+		button.addEventListener('click', () => { gen.mode = button.dataset.mode === 'video' ? 'video' : 'image'; genApplyMode() })
+	}
+	for (const option of document.querySelectorAll('#genopen .genvopt')) {
+		option.addEventListener('click', () => {
+			gen.vsize = option.dataset.vsize
+			for (const other of document.querySelectorAll('#genopen .genvopt')) {
+				other.classList.toggle('on', other === option)
+			}
+			genPreview()
+		})
+	}
 	for (const option of document.querySelectorAll('#genopen .genopt')) {
 		option.addEventListener('click', () => {
 			gen.width = Number(option.dataset.gw)
@@ -4246,7 +4318,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '4'
+	const WELCOME_VERSION = '5'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

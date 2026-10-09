@@ -2361,6 +2361,47 @@ check('说明指向了下拉框或读取状态',
 	$('genBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	check('确认放弃后才真的收起', window.getComputedStyle(genPanel).display === 'none')
 
+	// 视频模式：同一个面板切成 🎬 —— 尺寸换成视频档、种子藏起来、那句话改调 video_generate。
+	textarea.value = ''
+	$('genBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('genopen').querySelector('.genmode[data-mode="video"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	check('切成视频：面板标题与提示词说明都变了',
+		$('genTitle').textContent === '生成视频' && $('genPromptHint').textContent.includes('镜头'),
+		$('genTitle').textContent)
+	check('切成视频：尺寸换成视频档、种子藏起来（视频接口不吃种子）',
+		window.getComputedStyle($('genSizesVideo')).display !== 'none'
+		&& window.getComputedStyle($('genSizesImage')).display === 'none'
+		&& window.getComputedStyle($('genSeedField')).display === 'none')
+	check('切成视频：提示说明也换成出片那条（免得以为秒回）',
+		window.getComputedStyle($('genHintVideo')).display !== 'none'
+		&& $('genHintVideo').textContent.includes('分钟')
+		&& window.getComputedStyle($('genHintImage')).display === 'none')
+	$('genPrompt').value = '一只红苹果在木桌上缓缓旋转，暖光，镜头缓慢推近'
+	$('genPrompt').dispatchEvent(new window.Event('input', { bubbles: true }))
+	$('genopen').querySelectorAll('.genvopt')[2].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	const videoPreview = $('genPreview').textContent
+	check('视频预览里调的是 video_generate，且带上了分辨率',
+		videoPreview.includes('video_generate') && videoPreview.includes('1080x1920'), videoPreview.slice(0, 90))
+	check('视频预览要求把 mp4 路径单独放一行（手机靠它变成可播视频）',
+		videoPreview.includes('路径'), videoPreview.slice(0, 120))
+	check('视频模式不再出现 seed 字样', videoPreview.includes('种子') === false)
+	$('genGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('视频那句话进了输入框（同样先让用户过目）', textarea.value.includes('video_generate'), textarea.value.slice(0, 40))
+	$('genBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(40)
+	// 切回图片模式：界面要回到图片那一套（模式是"粘"的，不能让两种界面混着）。
+	$('genBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	$('genopen').querySelector('.genmode[data-mode="image"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	check('切回图片：标题/尺寸/种子都回来了',
+		$('genTitle').textContent === '生成图片'
+		&& window.getComputedStyle($('genSizesImage')).display !== 'none'
+		&& window.getComputedStyle($('genSeedField')).display !== 'none')
+	$('genPrompt').value = ''
+	$('genPrompt').dispatchEvent(new window.Event('input', { bubbles: true }))
+	$('genBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(40)
+
 	// 权限面板：三档、人话、当前档打勾、改权限要重新输 PIN。
 	$('permBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(80)
