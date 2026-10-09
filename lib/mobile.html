@@ -229,6 +229,12 @@
 	}
 	#tabs button .glyph { font-size: 19px; line-height: 1; }
 	#tabs button.active { color: var(--accent); }
+	/* 换页进场：只是"我确实翻页了"的即时反馈，不参与布局（结束就摘类名）。
+	   有 prefers-reduced-motion 的人不该看到它（下面的 JS 里直接跳过加类）。 */
+	@keyframes pagein-left { from { transform: translateX(26px); opacity: .35 } to { transform: none; opacity: 1 } }
+	@keyframes pagein-right { from { transform: translateX(-26px); opacity: .35 } to { transform: none; opacity: 1 } }
+	.pagein-left { animation: pagein-left 200ms ease-out; }
+	.pagein-right { animation: pagein-right 200ms ease-out; }
 	/* 录音键住在页签栏里，但它**不是页签**（点了是开录音面板，不换页）：
 	   所以它不带 data-tab，样式上也不吃 .active 那套，只在自己"正在录"时变红。 */
 	#tabs #recBtn { color: var(--muted); }
@@ -774,8 +780,13 @@
 						<li><strong>回答提问 / 批准操作</strong> —— 它需要你拍板时会弹出卡片，直接点。</li>
 						<li><strong>插话</strong> —— 它正在跑的时候，右边按钮是「插话」：现在就能说，你这条会排在这一轮之后接着处理，不用干等。</li>
 					</ul>
-					<p>输入框上面那排按键，从左到右：</p>
+					<p><strong>最底下那一栏是三个页面：任务 → 新建 → 余额</strong>。</p>
 					<ul>
+						<li><strong>左右滑动就能换页</strong>：往左滑到下一页，往右滑回上一页（比如在「新建」上往左滑就是「余额」），和点底下那三个键是一回事。</li>
+						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
+						<li>「新建」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。</li>
+					</ul>
+					<p>输入框上面那排按键，从左到右：</p>					<ul>
 						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。</li>
 						<li><strong>录音</strong>（<strong>最底下那一栏的 🎤</strong>）—— <strong>直接在网页里录</strong>，不用去系统录音 App 里找文件：录完能先听一遍再发，电脑会自动转成文字给模型。录的是压缩格式（opus），一节课约 10 MB，比系统录音小三分之二。<strong>要用 https 地址打开</strong>浏览器才给麦克风，录的时候别锁屏、别切走。</li>
 						<li><strong>视频</strong> —— 选视频也走这个键：传到电脑后<strong>自动抽 6 帧</strong>给模型看（"视频里讲了什么"能直接答），**视频里的语音还会转成文字**；原片也留在电脑上，要看细节/听声音随时让它处理。</li>
@@ -1541,13 +1552,148 @@
 		hide(sheet)
 	}
 
+	/* ------------------------------------------------- 左右滑动换页（1.7.0） */
+	/**
+	 * 用户要求：「左滑右滑可以换页，比如左滑从新建到余额」。
+	 *
+	 * 页面顺序按**用户心里的顺序**：任务 → 新建 → 余额。
+	 * 「新建」其实不是一个 view，而是一个盖在当前页上的面板（历史原因：它当初是页签时，
+	 * 主按钮正好在页签栏上方，拇指瞄页签会误建会话并立刻产生一次计费回合）。
+	 * 但用户不关心这个实现细节：他心里就是三页，从"新建"往左滑就是"余额"。
+	 * 所以滑动走的是这个**逻辑顺序**，而不是 DOM 里那两个 view。
+	 */
+	const PAGE_ORDER = ['task', 'new', 'bill']
+	const PAGE_LABEL = { task: '任务', new: '新建', bill: '余额' }
+
+	function nodeShown(node) {
+		return node !== null && node !== undefined && node.style.display !== 'none'
+	}
+
+	/**
+	 * 有没有"挡住整屏、自带返回键"的面板开着（说明页 / 录音 / 生图 / 背景 / 权限 / 提问卡片）。
+	 *
+	 * 这些面板开着时滑动**不能在背后换页**：用户以为在翻页，实际把底下的会话换掉了，
+	 * 关掉面板才发现自己在另一个页签 —— 这类"东西自己动了"的故障最难解释。
+	 */
+	function modalOpen() {
+		for (const id of ['welcome', 'recopen', 'genopen', 'bgopen', 'permopen', 'ask']) {
+			if (nodeShown($(id))) return true
+		}
+		return false
+	}
+
+	/** 现在算"哪一页"。 */
+	function currentPage() {
+		if (nodeShown(sheet)) return 'new'
+		return state.tab === 'bill' ? 'bill' : 'task'
+	}
+
+	/**
+	 * 从这点开始滑，算不算"想翻页"。
+	 *
+	 * 三种情况一定要让开：① 输入框/下拉/播放器 —— 在那儿拖是选文字、调进度；
+	 * ② 横向能滚的元素（代码块、长表格）—— 在那儿左右滑是看内容（"看不到右边"的报障
+	 * 有一半来自把代码块当成了不能滚的）；③ 录着音的时候交给录音面板。
+	 */
+	function swipeIgnored(node) {
+		let el = node
+		for (let depth = 0; el !== null && el !== undefined && el !== document.body && depth < 6; depth += 1) {
+			const tag = String(el.tagName ?? '')
+			if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'AUDIO' || tag === 'VIDEO') return true
+			if (el.scrollWidth > el.clientWidth + 8) return true
+			el = el.parentElement
+		}
+		return false
+	}
+
+	/** 换到某一页（pageIn 只负责"进场往哪边滑一下"的动画方向）。 */
+	function goPage(name, step) {
+		/*
+		 * 离开「新建」前问一句：那一页上写着"第一条任务"，划走/点走会把它丢掉。
+		 * 返回键本来就是这么做的（confirm），滑动**更容易误触**，所以更要问。
+		 */
+		if (currentPage() === 'new' && name !== 'new') {
+			const draft = String($('firstText')?.value ?? '').trim() + String($('cwd')?.value ?? '').trim()
+			if (draft !== '' && window.confirm('新建里写的还没用上，确定离开？') === false) return
+		}
+		if (name === 'new') openSheet()
+		else { closeSheet(); switchTab(name) }
+		const target = name === 'new' ? sheet : views[name]
+		if (target === null || target === undefined) return
+		// 动画只是"我确实翻页了"的即时反馈，不参与布局（结束就摘掉类名）。
+		if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return
+		const cls = step < 0 ? 'pagein-right' : 'pagein-left'
+		target.classList.remove('pagein-left', 'pagein-right')
+		void target.offsetWidth
+		target.classList.add(cls)
+		window.setTimeout(() => target.classList.remove(cls), 260)
+	}
+
+	function swipeGo(step) {
+		const at = PAGE_ORDER.indexOf(currentPage())
+		const next = at + step
+		if (next < 0 || next >= PAGE_ORDER.length) {
+			flash(step > 0
+				? `已经是最右边了（${PAGE_LABEL[PAGE_ORDER[PAGE_ORDER.length - 1]]}）`
+				: `已经是最左边了（${PAGE_LABEL[PAGE_ORDER[0]]}）`, 2500)
+			return
+		}
+		goPage(PAGE_ORDER[next], step)
+	}
+
+	const swipe = { x: 0, y: 0, live: false, decided: false }
+
+	function swipeStart(event) {
+		swipe.live = false
+		swipe.decided = false
+		if (modalOpen()) return
+		if (swipeIgnored(event.target)) return
+		const touch = event.touches?.[0]
+		if (touch === undefined) return
+		swipe.x = touch.clientX
+		swipe.y = touch.clientY
+		swipe.live = true
+	}
+
+	function swipeMove(event) {
+		if (swipe.live === false || swipe.decided === true) return
+		const touch = event.touches?.[0]
+		if (touch === undefined) return
+		const dx = touch.clientX - swipe.x
+		const dy = touch.clientY - swipe.y
+		if (Math.abs(dx) < 12) return
+		// 竖着为主的滑动是滚动，不是翻页 —— 一旦判成竖向就本次不再管。
+		if (Math.abs(dx) < Math.abs(dy) * 1.2) { swipe.live = false; return }
+		swipe.decided = true
+	}
+
+	function swipeEnd(event) {
+		const wasLive = swipe.live
+		const decided = swipe.decided
+		swipe.live = false
+		swipe.decided = false
+		if (wasLive === false || decided === false) return
+		// touchend 上 touches 是空的，位置在 changedTouches 里（iOS 上一直如此）。
+		const touch = event.changedTouches?.[0] ?? event.touches?.[0]
+		if (touch === undefined) return
+		const dx = touch.clientX - swipe.x
+		if (Math.abs(dx) < 60) return   // 幅度不够：当点击，别翻页
+		swipeGo(dx < 0 ? 1 : -1)
+	}
+
+	// passive：只在旁边看，绝不 preventDefault —— 纵向滚动/点按的老行为一个字都不改。
+	document.addEventListener('touchstart', swipeStart, { passive: true })
+	document.addEventListener('touchmove', swipeMove, { passive: true })
+	document.addEventListener('touchend', swipeEnd, { passive: true })
+	document.addEventListener('touchcancel', () => { swipe.live = false; swipe.decided = false }, { passive: true })
+
 	for (const button of tabButtons) {
 		button.addEventListener('click', () => {
 			// 新建 is deliberately not a tab. As a tab its primary action sat
 			// directly above the tab bar, so a thumb aiming at a tab could
 			// create a Session and immediately start a billable agent turn.
-			if (button.dataset.tab === 'new') { openSheet(); return }
-			switchTab(button.dataset.tab)
+			if (button.dataset.tab === 'new') { goPage('new', 1); return }
+			goPage(button.dataset.tab, currentPage() === 'bill' && button.dataset.tab === 'task' ? -1 : 1)
 		})
 	}
 
@@ -4818,7 +4964,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '9'
+	const WELCOME_VERSION = '10'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

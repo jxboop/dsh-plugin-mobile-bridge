@@ -2517,6 +2517,92 @@ check('说明指向了下拉框或读取状态',
 		await wait(40)
 	}
 
+	/* --- 左右滑动换页（1.7.0）---------------------------------------------------
+	 * 用户要求：「左滑右滑可以换页，比如左滑从新建到余额」。
+	 * jsdom 没有真的触摸事件，但代码只读 touches/changedTouches 里的坐标 ——
+	 * 所以造一个带这两样东西的普通事件就能把**真代码**走一遍。
+	 */
+	const swipe = async (from, to, { target = null, steps = 4 } = {}) => {
+		const node = target ?? window.document.getElementById('log')
+		const fire = (type, x, y, changed = false) => {
+			const event = new window.Event(type, { bubbles: true, cancelable: true })
+			event.touches = changed ? [] : [{ clientX: x, clientY: y }]
+			event.changedTouches = changed ? [{ clientX: x, clientY: y }] : []
+			node.dispatchEvent(event)
+		}
+		fire('touchstart', from.x, from.y)
+		for (let i = 1; i <= steps; i += 1) {
+			fire('touchmove', from.x + (to.x - from.x) * (i / steps), from.y + (to.y - from.y) * (i / steps))
+		}
+		fire('touchend', to.x, to.y, true)
+		await wait(60)
+	}
+	const activeTab = () => window.document.querySelector('#tabs button.active')?.dataset.tab
+	const newOpen = () => window.getComputedStyle($('view-new')).display !== 'none'
+
+	// 先回到"任务"这一页，作为出发点。
+	click(tabButton('task'))
+	await wait(60)
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 405 })
+	check('在「任务」页左滑 → 到「新建」（新建是盖在上面的面板，也算一页）',
+		newOpen() === true && activeTab() === 'task', `new=${newOpen()} active=${activeTab()}`)
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 398 })
+	check('在「新建」页左滑 → 到「余额」（用户举的就是这个例子）',
+		newOpen() === false && activeTab() === 'bill', `new=${newOpen()} active=${activeTab()}`)
+	await swipe({ x: 120, y: 400 }, { x: 300, y: 402 })
+	check('在「余额」页右滑 → 回到「新建」',
+		newOpen() === true && activeTab() === 'bill', `new=${newOpen()} active=${activeTab()}`)
+	await swipe({ x: 120, y: 400 }, { x: 300, y: 400 })
+	check('在「新建」页右滑 → 回到「任务」',
+		newOpen() === false && activeTab() === 'task', `new=${newOpen()} active=${activeTab()}`)
+	await swipe({ x: 120, y: 400 }, { x: 320, y: 400 })
+	check('已经在最左边（任务）再右滑：不翻页，只提示一句',
+		activeTab() === 'task' && newOpen() === false && $('banner').textContent.includes('最左边'),
+		$('banner').textContent.trim().slice(0, 30))
+
+	// 边界：竖着滑是滚动，不能翻页（这条错了最烦人：用户在下滑看历史，页面自己跳走）。
+	await swipe({ x: 200, y: 500 }, { x: 205, y: 300 })
+	check('竖着滑（看历史/滚动）不会被当成翻页',
+		activeTab() === 'task' && newOpen() === false, `active=${activeTab()}`)
+	// 边界：幅度太小算点击，不算翻页。
+	await swipe({ x: 200, y: 400 }, { x: 230, y: 405 })
+	check('只滑了一点（30px）不算翻页（否则会误伤点按）',
+		activeTab() === 'task' && newOpen() === false, `active=${activeTab()}`)
+	// 边界：在输入框里左右滑（选文字）不能翻页。
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 }, { target: textarea })
+	check('在输入框里左右滑 → 不翻页（那是在选文字/移光标）',
+		activeTab() === 'task' && newOpen() === false, `active=${activeTab()}`)
+	// 边界：说明页/录音面板这类"挡住整屏"的面板开着时，背后不能换页。
+	click($('help'))
+	await wait(60)
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('说明页开着时滑动不在背后换页（东西自己动了最难解释）',
+		activeTab() === 'task' && newOpen() === false && window.getComputedStyle($('welcome')).display !== 'none',
+		`active=${activeTab()} welcome=${window.getComputedStyle($('welcome')).display}`)
+	click($('welcomeGo'))
+	await wait(60)
+	// 边界：新建里写了草稿，划走要先问一句（滑动比点返回更容易误触，不能默默丢）。
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })   // 任务 → 新建
+	$('firstText').value = '把讲义整理成提纲'
+	window.confirm = () => { confirmAnswer = false; return confirmAnswer }
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('新建里写了草稿：划走先问一句，说"不"就留在原地',
+		newOpen() === true, `new=${newOpen()}`)
+	window.confirm = () => { confirmAnswer = true; return confirmAnswer }
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('确认之后才真的划到「余额」', newOpen() === false && activeTab() === 'bill', `new=${newOpen()} active=${activeTab()}`)
+	$('firstText').value = ''
+	click(tabButton('task'))
+	await wait(60)
+
+	// 翻页会带一下进场动画（"确实翻了"的即时反馈）。
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('翻页时有进场动画的类名（即时反馈）',
+		$('view-new').classList.contains('pagein-left') || $('view-new').classList.contains('pagein-right'),
+		$('view-new').className)
+	click($('newBack'))
+	await wait(60)
+
 	// 权限面板：三档、人话、当前档打勾、改权限要重新输 PIN。
 	$('permBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(80)
