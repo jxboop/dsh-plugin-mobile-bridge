@@ -50,8 +50,20 @@ const { JSDOM, VirtualConsole } = loadJsdom()
 
 /** Stand-in for the server-computed page tag; the marker ships once. */
 const PAGE_TAG = 'testtag000001'
+/**
+ * 服务端注入的三样东西（1.8.0 起多了版本与"最近更新"）：
+ * 页面里的 `__DSH_*__` 标记在真桥上一定会被替换掉，测试也得替，否则测的是"标记漏在页面上"。
+ */
+const FIXTURE_VERSION = '9.9.9'
+const FIXTURE_WHATSNEW = JSON.stringify([
+	{ version: '9.9.9', date: '2026-10-09', lines: ['加（一条**加**的功能）', '修（一个真 bug）'] },
+	{ version: '9.9.8', date: '2026-10-08', lines: ['改（某个位置）'] },
+])
 const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8'))
-	.replace('__DSH_PAGE_TAG__', PAGE_TAG)
+	// 服务端用的是 replaceAll（标记在页面里出现不止一次），测试也得一样。
+	.replaceAll('__DSH_PAGE_TAG__', PAGE_TAG)
+	.replaceAll('__DSH_BRIDGE_VERSION__', FIXTURE_VERSION)
+	.replaceAll('__DSH_WHATSNEW__', FIXTURE_WHATSNEW)
 
 /**
  * 页面真实所在的地址：**藏在密钥段后面**。
@@ -2602,6 +2614,30 @@ check('说明指向了下拉框或读取状态',
 		$('view-new').className)
 	click($('newBack'))
 	await wait(60)
+
+	/* --- 开始页的版本说明（1.8.0）---------------------------------------------
+	 * 用户要求「开始页加入版本说明」。两处：还没进去时的 PIN 登录页，和进来后的说明页。
+	 * 数据由服务端从 package.json / CHANGELOG.md 现读后注入（JSON），客户端用 textContent 建节点。
+	 */
+	check('登录页(PIN)上就写着版本号（还没进去就知道连的是哪一版）',
+		$('gateVer').textContent.includes('v' + FIXTURE_VERSION),
+		$('gateVer').textContent)
+	check('说明页上有版本号 + 最近三版更新了什么',
+		$('wnVersion').textContent === 'v' + FIXTURE_VERSION
+		&& $('wnList').textContent.includes('v9.9.9') && $('wnList').textContent.includes('v9.9.8')
+		&& $('wnList').textContent.includes('加（一条加的功能）'),
+		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(0, 60))
+	check('更新清单里的 ** 标记被去掉了（手机上那只是噪音）',
+		$('wnList').textContent.includes('**') === false)
+	// 注意：不能只查 `__DSH_` 前缀 —— 客户端守卫里那个标记是故意拆开拼的
+	// （'__DSH_' + 'PAGE_TAG__'），所以它在源码里必然含这个前缀。要查的是**完整标记**。
+	check('页面里没有漏出来的注入标记（漏了就是把服务端模板摆给用户看）',
+		window.document.documentElement.outerHTML.includes('__DSH_PAGE_TAG__') === false
+		&& window.document.documentElement.outerHTML.includes('__DSH_BRIDGE_VERSION__') === false
+		&& window.document.documentElement.outerHTML.includes('__DSH_WHATSNEW__') === false
+		// 注入的 JSON 是"数据"，不能变成用户看到的文字（它躺在 <script type=application/json> 里）。
+		&& $('wnList').textContent.includes('{"version"') === false,
+		`pageTag=${window.document.documentElement.outerHTML.includes('__DSH_PAGE_TAG__')}`)
 
 	// 权限面板：三档、人话、当前档打勾、改权限要重新输 PIN。
 	$('permBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))

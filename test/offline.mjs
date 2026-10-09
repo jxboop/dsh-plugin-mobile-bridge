@@ -33,7 +33,9 @@ function loadJsdom() {
 
 const { JSDOM, VirtualConsole } = loadJsdom()
 const PAGE_TAG = 'offlinetag0001'
-const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')).replace('__DSH_PAGE_TAG__', PAGE_TAG)
+const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')).replaceAll('__DSH_PAGE_TAG__', PAGE_TAG)
+	.replaceAll('__DSH_BRIDGE_VERSION__', '1.0.0')
+	.replaceAll('__DSH_WHATSNEW__', '[]')
 
 const SECRET = 'deadbeefdeadbeef'
 const PAGE_URL = `http://127.0.0.1:3081/${SECRET}/`

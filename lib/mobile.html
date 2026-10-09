@@ -607,6 +607,17 @@
 	.welcometip { font-size: 14px; line-height: 1.75; }
 	.welcometip p { margin: 0 0 10px; }
 	.welcometip ul { margin: 0 0 12px; padding-left: 20px; }
+	/* ---- 开始页上的版本说明 ---- */
+	.gatever { margin-top: 14px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+	.whatsnew {
+		margin: 12px 0; padding: 11px 13px; border: 1px solid var(--field-line);
+		border-radius: 13px; background: var(--panel); box-shadow: var(--glass-edge);
+	}
+	.wnhead { font-size: 13px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
+	.wnbody { font-size: 13px; line-height: 1.7; color: var(--muted); }
+	.wnbody .wnver { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+	.wnbody ul { margin: 3px 0 7px; padding-left: 18px; }
+	.wnbody li { margin-bottom: 2px; }
 	.welcometip li { margin-bottom: 7px; }
 	.welcomego {
 		width: 100%; margin-top: 8px; padding: 15px; border: 0; border-radius: var(--radius);
@@ -668,7 +679,13 @@
 	<input id="pin" type="tel" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="······">
 	<div id="gateError"></div>
 	<button id="gateBtn">连接</button>
+	<!-- 版本说明：还没进去就该知道"我连的是哪一版" —— 报障时第一句问的就是这个。 -->
+	<div class="gatever" id="gateVer">手机桥 v__DSH_BRIDGE_VERSION__</div>
 </div>
+
+<!-- 「最近更新了什么」：服务端从 CHANGELOG.md 头部现读后注入（JSON，不是 HTML）。
+     在这里是数据，客户端用 textContent 建节点 —— 不把文本当 HTML 塞进页面。 -->
+<script type="application/json" id="whatsnew">__DSH_WHATSNEW__</script>
 
 <div id="app" data-display="flex" style="display:none">
 	<header>
@@ -780,8 +797,7 @@
 						<li><strong>回答提问 / 批准操作</strong> —— 它需要你拍板时会弹出卡片，直接点。</li>
 						<li><strong>插话</strong> —— 它正在跑的时候，右边按钮是「插话」：现在就能说，你这条会排在这一轮之后接着处理，不用干等。</li>
 					</ul>
-					<p><strong>最底下那一栏是三个页面：任务 → 新建 → 余额</strong>。</p>
-					<ul>
+					<p><strong>最底下那一栏是三个页面：任务 → 新建 → 余额</strong>。</p>					<ul>
 						<li><strong>左右滑动就能换页</strong>：往左滑到下一页，往右滑回上一页（比如在「新建」上往左滑就是「余额」），和点底下那三个键是一回事。</li>
 						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
 						<li>「新建」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。</li>
@@ -798,6 +814,12 @@
 						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。</li>
 					</ul>
 					<p>连不上时屏幕顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了 —— 照着上面写的做就行。<strong>彻底连不上时会有一整屏提示</strong>（不会只留个黑屏/白屏）：上面写着是哪一类故障、10 秒后自动重试，还有「立即重试」「先看上次的对话（离线能读）」「换个地址」。</p>
+					<!-- 版本说明：这一页每次发新版都会重新弹一次（服务端把说明内容版本 +1），
+					     所以"这次更新了什么"放在这里最合适 —— 用户看到的就是刚变的那些。 -->
+					<div class="whatsnew" id="welcomeVer">
+						<div class="wnhead">手机桥 <strong id="wnVersion">v__DSH_BRIDGE_VERSION__</strong></div>
+						<div class="wnbody" id="wnList"></div>
+					</div>
 					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。这一页想再看，点右上角「说明」。</p>
 				</div>
 				<button class="welcomego" id="welcomeGo">开始使用</button>
@@ -1066,9 +1088,19 @@
 	// reconnects — comparing this on every stream open is what closes that gap.
 	const servedTag = (document.querySelector('meta[name="dsh-page-tag"]') || {}).content || ''
 
+	/**
+	 * "这一页到底是不是桥发出来的"—— 模板标记没被替换时（本地直接打开文件、测试里只替了
+	 * 一部分）就不做自愈检查，否则会拿一个假 tag 去比、无意义地刷新。
+	 *
+	 * ⚠️ 这个标记必须**在运行时拼出来**，不能写成完整字面量：服务端替换标记用的是
+	 * `replaceAll`（标记在页面里出现不止一次），写成完整字面量的话它会被一起换成真 tag
+	 * —— 于是"没替换"和"替换了"变得一模一样，守卫失效、页面在旧 build 上反复刷新。
+	 */
+	const pageTagMarker = '__DSH_' + 'PAGE_TAG__'
+
 	function checkPageTag(tag) {
 		if (typeof tag !== 'string' || tag === '' || servedTag === '' || tag === servedTag) return
-		if (servedTag === '__DSH_PAGE_TAG__') return
+		if (servedTag === pageTagMarker) return
 		// One automatic reload per observed tag: if the browser keeps handing
 		// back the old document, stop rather than spin.
 		try {
@@ -4964,7 +4996,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '10'
+	const WELCOME_VERSION = '11'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -4997,6 +5029,48 @@
 	// 但"我当时没看清 / 要教同学怎么用"时得有个地方点。
 	$('help').addEventListener('click', () => { show(welcome) })
 
+	/* ------------------------------------------------- 开始页的版本说明 */
+	/**
+	 * 用户要求「开始页加入版本说明」。
+	 *
+	 * 开始页有两处：还没进去时的 **PIN 登录页**（上面直接印着版本号）和进来后的
+	 * **「开始使用」说明页**（版本号 + 最近三版更新了什么）。
+	 *
+	 * 数据是服务端从 package.json / CHANGELOG.md **现读**后注入的（JSON，不是 HTML），
+	 * 所以"页面写的版本"永远等于"实际装的那一版" —— 报障时第一句问的就是版本号，
+	 * 手抄一份的下场是它迟早开始撒谎。读不到（老页面、文件缺失）就整块收起来，不报错。
+	 */
+	function renderVersionInfo() {
+		const raw = $('whatsnew')?.textContent ?? ''
+		let sections = []
+		try {
+			const parsed = JSON.parse(raw)
+			if (Array.isArray(parsed)) sections = parsed
+		} catch { /* 没注入/注入坏了：这一块就不显示 */ }
+		if (sections.length === 0) {
+			$('welcomeVer')?.remove()
+			return
+		}
+		// 版本号以"最近一版"为准（和 package.json 同一来源），避免两个数字对上不。
+		$('wnVersion').textContent = 'v' + String(sections[0].version ?? '')
+		$('gateVer').textContent = '手机桥 v' + String(sections[0].version ?? '')
+		const host = $('wnList')
+		host.textContent = ''
+		host.appendChild(mk('div', undefined, '最近更新：'))
+		for (const section of sections) {
+			const line = mk('div', undefined, '')
+			line.appendChild(mk('span', 'wnver', 'v' + String(section.version ?? '')))
+			if (section.date) line.appendChild(document.createTextNode('（' + String(section.date) + '）'))
+			host.appendChild(line)
+			const list = document.createElement('ul')
+			for (const item of Array.isArray(section.lines) ? section.lines : []) {
+				// CHANGELOG 里的 `**重点**` 标记对手机屏幕只是噪音，去掉标记但保留字。
+				list.appendChild(mk('li', undefined, String(item).replace(/\*\*/g, '')))
+			}
+			host.appendChild(list)
+		}
+	}
+	renderVersionInfo()
 	/* --------------------------------------------------------------- boot */
 
 	// 打开时**一次请求**把"会话列表 + 上次那个会话的对话"都拿回来。

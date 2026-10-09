@@ -359,6 +359,37 @@ check('the served page carries a real page tag, not the marker',
 	typeof pageTag === 'string' && pageTag !== '__DSH_PAGE_TAG__' && /^[0-9a-f]{12}$/.test(pageTag),
 	String(pageTag))
 
+/*
+ * 开始页的版本说明（1.8.0）：页面上的版本必须**等于 package.json**（服务端现读的），
+ * 而且"最近更新"要是从 CHANGELOG 现读出来的真内容。这两条只有在真桥上跑才算数 ——
+ * ui.mjs 那边用的是固定夹具。
+ *
+ * 顺带钉住这次的教训：标记在页面里出现不止一次（版本标记登录页一处、说明页一处），
+ * 只换第一处的 `replace` 会让第二处原样漏给用户。
+ */
+const pkgVersion = JSON.parse(await readFile(join(import.meta.dirname, '..', 'package.json'), 'utf8')).version
+check('页面上的版本号 = package.json 里的版本（现读，不手抄）',
+	pageHtml.includes(`手机桥 v${pkgVersion}`) && pageHtml.includes(`v${pkgVersion}</strong>`),
+	`package.json=${pkgVersion}`)
+check('注入标记一处都没漏（replaceAll 而不是 replace）',
+	pageHtml.includes('__DSH_PAGE_TAG__') === false
+	&& pageHtml.includes('__DSH_BRIDGE_VERSION__') === false
+	&& pageHtml.includes('__DSH_WHATSNEW__') === false)
+{
+	const injected = /<script type="application\/json" id="whatsnew">([\s\S]*?)<\/script>/.exec(pageHtml)
+	let sections = []
+	try { sections = JSON.parse(injected?.[1] ?? '[]') } catch { sections = [] }
+	check('"最近更新"是从 CHANGELOG 现读出来的真内容（不是空的、也不是模板）',
+		Array.isArray(sections) && sections.length > 0
+		&& typeof sections[0].version === 'string'
+		&& Array.isArray(sections[0].lines) && sections[0].lines.length > 0,
+		JSON.stringify(sections[0] ?? null).slice(0, 90))
+	check('"最近更新"只挑用户能感知的那几类（加/改/修…），不带"测试""实现细节"',
+		Array.isArray(sections) && sections.every((section) => (section.lines ?? [])
+			.every((line) => /^(加|新增|改|修改|修|修复|变更|优化|调整)/.test(String(line)))),
+		JSON.stringify((sections[0]?.lines ?? [])).slice(0, 90))
+}
+
 const guarded = await fetch(`${base}/api/bootstrap`)
 check('unauthenticated API is refused', guarded.status === 401)
 
