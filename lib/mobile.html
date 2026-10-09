@@ -250,14 +250,19 @@
 	}
 	#log { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 4px; }
 	/* 「回到最新」：往上翻着看历史时，新内容在下面长出来，给一个明确的回去入口。
-	   以前是自动把视线拽回底部（和用户抢滚动条），现在改成"用户说了算"。 */
+	   以前是自动把视线拽回底部（和用户抢滚动条），现在改成"用户说了算"。
+	   2.0：从"一条小文字胶囊"改成**看得见的圆形箭头**（用户的原话是"上滑就会出现的回到底部的箭头"）——
+	   原来那版是 12px 灰字小胶囊、还要松手 160ms 后才出现，等于藏起来了。 */
 	#tonew {
-		position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 6;
-		border: 1px solid var(--glass-edge); border-radius: 99px; padding: 7px 14px;
-		font-size: 12px; font-weight: 600; color: var(--text);
+		position: absolute; left: 50%; transform: translateX(-50%); bottom: 96px; z-index: 40;
+		width: 44px; height: 44px; border: 1px solid var(--glass-edge); border-radius: 50%;
+		font-size: 20px; line-height: 1; font-weight: 700; color: var(--text);
+		display: flex; align-items: center; justify-content: center;
 		background: var(--panel-2); box-shadow: var(--glass-shadow);
 		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
 	}
+	/* 上滑过程中把它顶出来一点点，手指还没松就知道"松手后能点它回去"。 */
+	#tonew.dragging { transform: translateX(-50%) scale(1.06); }
 	#task { position: relative; }
 	.row { margin-bottom: 12px; display: flex; }
 	.row.user { justify-content: flex-end; }
@@ -556,7 +561,10 @@
 		position: fixed; left: 50%; bottom: calc(84px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(8px);
 		background: var(--text); color: var(--bg); border-radius: 999px; padding: 10px 19px; font-size: 13px;
 		box-shadow: var(--glass-shadow);
-		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 60; max-width: 80vw; text-align: center;
+		/* z-index 必须高过所有会盖住它的东西：.sheet 是 80、#boot 是 90、#offline 是 95。
+		   1.9.0 之前这里是 60 —— 于是"划到最后了""正在录音先停掉"这类提示在录音/生图面板上
+		   根本看不见（用户看到的还是"滑动在这儿不灵"），而看不见的提示等于没提示。 */
+		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 120; max-width: 80vw; text-align: center;
 	}
 	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
 	/* ---- 断线提示条：站在所有页签上方，讲清楚出了什么事 ---- */
@@ -723,7 +731,7 @@
 			<div class="sessionbar"><select id="session"></select></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
-			<button id="tonew" style="display:none">↓ 回到最新</button>
+			<button id="tonew" style="display:none" title="回到最新" aria-label="回到最新">↓</button>
 			<div id="composer">
 				<div id="thumbs"></div>
 				<!-- 工具键单独一行：一排五个键（图片/原图/生图/权限/发送）在 390px 上
@@ -797,12 +805,15 @@
 						<li><strong>回答提问 / 批准操作</strong> —— 它需要你拍板时会弹出卡片，直接点。</li>
 						<li><strong>插话</strong> —— 它正在跑的时候，右边按钮是「插话」：现在就能说，你这条会排在这一轮之后接着处理，不用干等。</li>
 					</ul>
-					<p><strong>最底下那一栏是三个页面：任务 → 新建 → 余额</strong>。</p>					<ul>
+					<p><strong>最底下那一栏是三个页面：任务 → 新建 → 余额</strong>。</p>
+					<ul>
 						<li><strong>左右滑动就能换页</strong>：往左滑到下一页，往右滑回上一页（比如在「新建」上往左滑就是「余额」），和点底下那三个键是一回事。</li>
+						<li><strong>录音、生图、背景、权限这些面板上也照样能滑</strong> —— 划走时那个面板自己关掉、直接翻到下一页。（<strong>正在录音</strong>时会拦一下并告诉你先按「停止」：面板上就是停止键，划走了你够不着它。）</li>
 						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
-						<li>「新建」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。</li>
+						<li>「新建」/「生图」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。<strong>只有说明页和提问卡片会让滑动整个失效</strong>（那两处得先处理掉）。</li>
 					</ul>
-					<p>输入框上面那排按键，从左到右：</p>					<ul>
+					<p>输入框上面那排按键，从左到右：</p>
+					<ul>
 						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。</li>
 						<li><strong>录音</strong>（<strong>最底下那一栏的 🎤</strong>）—— <strong>直接在网页里录</strong>，不用去系统录音 App 里找文件：录完能先听一遍再发，电脑会自动转成文字给模型。录的是压缩格式（opus），一节课约 10 MB，比系统录音小三分之二。<strong>要用 https 地址打开</strong>浏览器才给麦克风，录的时候别锁屏、别切走。</li>
 						<li><strong>视频</strong> —— 选视频也走这个键：传到电脑后<strong>自动抽 6 帧</strong>给模型看（"视频里讲了什么"能直接答），**视频里的语音还会转成文字**；原片也留在电脑上，要看细节/听声音随时让它处理。</li>
@@ -1602,16 +1613,29 @@
 	}
 
 	/**
-	 * 有没有"挡住整屏、自带返回键"的面板开着（说明页 / 录音 / 生图 / 背景 / 权限 / 提问卡片）。
+	 * 真正"必须先处理"、不能让滑动穿过去的东西：**说明页**（首次讲解，上面那个
+	 * 「开始使用」键要按）和**提问卡片**（agent 在等你回答，划走等于把它晾在那儿）。
+	 * 只有这两个。
 	 *
-	 * 这些面板开着时滑动**不能在背后换页**：用户以为在翻页，实际把底下的会话换掉了，
-	 * 关掉面板才发现自己在另一个页签 —— 这类"东西自己动了"的故障最难解释。
+	 * 1.9.0 改动（用户报的：「左右滑动时录音界面不行」）：录音 / 生图 / 背景 / 权限
+	 * 这四个"工具抽屉"**不再挡滑动**了。抽屉里的人一样想直接翻到下一页，挡着只会让人
+	 * 觉得"滑动时灵时不灵" —— 而"时灵时不灵"比"不支持"更难理解。
+	 *
+	 * 挡着时的那点好处，用两条更小的规则补回来（见 goPage）：
+	 *   ① 录音**正在录**时不让走：面板上就是停止键，划走就够不着了；
+	 *   ② 生图里**写了提示词**时先问一句：和「新建」同一套，别把写好的话丢掉。
 	 */
-	function modalOpen() {
-		for (const id of ['welcome', 'recopen', 'genopen', 'bgopen', 'permopen', 'ask']) {
-			if (nodeShown($(id))) return true
+	function takeoverOpen() {
+		// 离线整屏（z-index 95）也算"先处理"：它盖住整屏，背后翻页毫无意义。
+		return nodeShown($('welcome')) || nodeShown($('ask')) || nodeShown($('offline'))
+	}
+
+	/** 现在开着的是哪个"工具抽屉"（录音 / 生图 / 背景 / 权限）；没有就 null。 */
+	function openToolPanel() {
+		for (const id of ['recopen', 'genopen', 'bgopen', 'permopen']) {
+			if (nodeShown($(id))) return $(id)
 		}
-		return false
+		return null
 	}
 
 	/** 现在算"哪一页"。 */
@@ -1623,9 +1647,9 @@
 	/**
 	 * 从这点开始滑，算不算"想翻页"。
 	 *
-	 * 三种情况一定要让开：① 输入框/下拉/播放器 —— 在那儿拖是选文字、调进度；
+	 * 两种情况一定要让开：① 输入框/下拉/播放器 —— 在那儿拖是选文字、调进度；
 	 * ② 横向能滚的元素（代码块、长表格）—— 在那儿左右滑是看内容（"看不到右边"的报障
-	 * 有一半来自把代码块当成了不能滚的）；③ 录着音的时候交给录音面板。
+	 * 有一半来自把代码块当成了不能滚的）。
 	 */
 	function swipeIgnored(node) {
 		let el = node
@@ -1648,6 +1672,22 @@
 			const draft = String($('firstText')?.value ?? '').trim() + String($('cwd')?.value ?? '').trim()
 			if (draft !== '' && window.confirm('新建里写的还没用上，确定离开？') === false) return
 		}
+		const panel = openToolPanel()
+		if (panel !== null) {
+			// ① 正在录音：面板上就是停止键，划走就够不着了。不让走 —— 但**必须说明原因**，
+			//    否则用户看到的又是"滑动在这儿不灵"（这正是 1.9.0 要治的那个感受）。
+			if (panel === $('recopen') && rec.on === true) {
+				toast('正在录音 —— 先按「停止」，再左右滑动换页', 2600)
+				return
+			}
+			// ② 生图里写了提示词：和「新建」同一套，先问一句。
+			if (panel === $('genopen')) {
+				const draft = String($('genPrompt')?.value ?? '').trim() + String($('genSeed')?.value ?? '').trim()
+				if (draft !== '' && window.confirm('生图里写的还没发出去，确定离开？') === false) return
+			}
+			// 抽屉关掉再翻页：留着它盖在上面，用户会以为"翻了个寂寞"。
+			hide(panel)
+		}
 		if (name === 'new') openSheet()
 		else { closeSheet(); switchTab(name) }
 		const target = name === 'new' ? sheet : views[name]
@@ -1665,9 +1705,11 @@
 		const at = PAGE_ORDER.indexOf(currentPage())
 		const next = at + step
 		if (next < 0 || next >= PAGE_ORDER.length) {
-			flash(step > 0
+			// 用 toast 而不是 flash：flash 那条横幅在 #view-task 里，z-index 也低于面板 ——
+			// 在「余额」页或录音/生图面板上根本看不见，等于"划到头了但什么都不说"。
+			toast(step > 0
 				? `已经是最右边了（${PAGE_LABEL[PAGE_ORDER[PAGE_ORDER.length - 1]]}）`
-				: `已经是最左边了（${PAGE_LABEL[PAGE_ORDER[0]]}）`, 2500)
+				: `已经是最左边了（${PAGE_LABEL[PAGE_ORDER[0]]}）`, 2200)
 			return
 		}
 		goPage(PAGE_ORDER[next], step)
@@ -1678,7 +1720,8 @@
 	function swipeStart(event) {
 		swipe.live = false
 		swipe.decided = false
-		if (modalOpen()) return
+		// 只有说明页 / 提问卡片能让滑动整个失效；工具抽屉（录音/生图/背景/权限）不再挡（1.9.0）。
+		if (takeoverOpen()) return
 		if (swipeIgnored(event.target)) return
 		const touch = event.touches?.[0]
 		if (touch === undefined) return
@@ -2157,12 +2200,18 @@
 	}
 
 	let toastTimer = 0
-	function toast(message) {
+	/**
+	 * 屏幕下方那条一次性提示（"已复制 12 字""已经是最左边了…"）。
+	 *
+	 * `ms` 是给"需要读完才能照做"的提示用的：滑动/录音这类提示 2.6 秒，比默认 1.7 秒好读。
+	 * 它必须能盖过面板（z-index 见 #toast 那段 CSS），否则在录音/生图面板里等于没提示。
+	 */
+	function toast(message, ms = 1700) {
 		const node = $('toast')
 		node.textContent = message
 		node.classList.add('on')
 		clearTimeout(toastTimer)
-		toastTimer = setTimeout(() => node.classList.remove('on'), 1700)
+		toastTimer = setTimeout(() => node.classList.remove('on'), ms)
 	}
 
 	log.addEventListener('click', (event) => {
@@ -2253,7 +2302,7 @@
 		const button = $('tonew')
 		if (button === null) return
 		if (state.stick === false) show(button)
-		else hide(button)
+		else { hide(button); button.classList.remove('dragging') }
 	}
 
 	log.addEventListener('scroll', () => {
@@ -2285,10 +2334,29 @@
 		// 这也是聊天类 App 的常规行为（往下翻 = 收起键盘）。
 		try { if (window.document.activeElement === text) text.blur() } catch { /* 忽略 */ }
 	}
+
+	/**
+	 * 手指在屏幕上**往上滑的过程中**就把箭头亮出来（2.0）。
+	 *
+	 * 原来只在松手 160ms 后（keepFrozen 里）才算一次 —— 用户滑到一半时屏幕上什么都没有，
+	 * 就会以为"没有回到底部的入口"。这里只**看位置**、不动 `state.stick`：
+	 * 判断的是"离开底部了没有"，和"要不要继续追随新消息"是两件事，混在一起会互相干扰。
+	 */
+	function revealToNewWhileDragging() {
+		const button = $('tonew')
+		if (button === null) return
+		if (atBottom() === false) {
+			show(button)
+			button.classList.add('dragging')
+		} else {
+			hide(button)
+		}
+	}
 	function keepFrozen() {
 		clearTimeout(touchIdle)
 		touchIdle = setTimeout(() => {
 			touching = false
+			$('tonew').classList.remove('dragging')
 			// 松手落在底部 → 恢复"跟着新消息走"；停在上面 → 保持不动，直到用户自己滑回去
 			// （或点「回到最新」）。
 			state.stick = atBottom()
@@ -2302,9 +2370,13 @@
 		lastUserScrollAt = 0
 		setScrollTop(log.scrollHeight)
 		hide($('tonew'))
+		$('tonew').classList.remove('dragging')
 	})
 	log.addEventListener('touchstart', holdFrozen, { passive: true })
 	log.addEventListener('touchmove', holdFrozen, { passive: true })
+	// 手指还在滑的时候就亮箭头（用户要求："上滑就会出现的回到底部的箭头"）。
+	log.addEventListener('touchmove', revealToNewWhileDragging, { passive: true })
+	log.addEventListener('pointermove', () => { if (touching) revealToNewWhileDragging() }, { passive: true })
 	log.addEventListener('touchend', keepFrozen, { passive: true })
 	log.addEventListener('touchcancel', keepFrozen, { passive: true })
 	log.addEventListener('pointerdown', holdFrozen)
@@ -4996,7 +5068,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '12'
+	const WELCOME_VERSION = '13'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

@@ -2337,6 +2337,41 @@ check('说明指向了下拉框或读取状态',
 	check('点它就贴回底部并收起按钮',
 		log.scrollTop === bottom() && window.getComputedStyle($('tonew')).display === 'none',
 		`scrollTop=${log.scrollTop} 底部=${bottom()} display=${window.getComputedStyle($('tonew')).display}`)
+
+	/*
+	 * 2.0：用户要求「上滑就会出现的会到底部的箭头」。
+	 * 原来那版是 12px 灰字小胶囊、还要**松手 160ms 后**才出现 —— 滑到一半屏幕上什么都没有，
+	 * 用户就会以为"没有回到底部的入口"（他报的就是这个）。现在：手指还在滑就亮、是个圆形箭头。
+	 */
+	// 先把箭头收起来（`hide()` 是页面内部的函数，测试里只能用 DOM）。
+	$('tonew').style.display = 'none'
+	log.scrollTop = Math.max(0, bottom() - 300)
+	{
+		const move = new window.Event('touchmove', { bubbles: true })
+		move.touches = [{ clientX: 200, clientY: 300 }]
+		log.dispatchEvent(move)
+	}
+	await wait(30)
+	check('手指还按着往上滑的时候，箭头就已经出现了（不用等松手）',
+		window.getComputedStyle($('tonew')).display !== 'none',
+		window.getComputedStyle($('tonew')).display)
+	check('它是看得见的圆形箭头（不是原来那条 12px 小胶囊）',
+		$('tonew').textContent.trim() === '↓'
+		&& window.getComputedStyle($('tonew')).borderRadius.includes('50%'),
+		`文字=${$('tonew').textContent.trim()} 圆角=${window.getComputedStyle($('tonew')).borderRadius}`)
+	check('它的层级在内容之上、面板之下（面板盖着时不该冒出来）',
+		Number.parseInt(window.getComputedStyle($('tonew')).zIndex, 10) >= 10
+		&& Number.parseInt(window.getComputedStyle($('tonew')).zIndex, 10) < 80,
+		window.getComputedStyle($('tonew')).zIndex)
+	// 已经在底部时不该出现（否则等于常驻一个没用的按钮）。
+	// 注意：上面故意只发了 touchmove —— 得补一个 touchend，页面才会在 160ms 空闲后重算"贴底没有"。
+	log.dispatchEvent(new window.Event('touchend'))
+	await wait(260)
+	log.scrollTop = bottom()
+	log.dispatchEvent(new window.Event('scroll'))
+	await wait(60)
+	check('已经贴到底部时箭头不出现', window.getComputedStyle($('tonew')).display === 'none',
+		window.getComputedStyle($('tonew')).display)
 }
 
 /* --- 生图面板 与 权限面板（输入框旁边那两个新键）--------------------------- */
@@ -2568,9 +2603,17 @@ check('说明指向了下拉框或读取状态',
 	check('在「新建」页右滑 → 回到「任务」',
 		newOpen() === false && activeTab() === 'task', `new=${newOpen()} active=${activeTab()}`)
 	await swipe({ x: 120, y: 400 }, { x: 320, y: 400 })
-	check('已经在最左边（任务）再右滑：不翻页，只提示一句',
-		activeTab() === 'task' && newOpen() === false && $('banner').textContent.includes('最左边'),
-		$('banner').textContent.trim().slice(0, 30))
+	/*
+	 * 提示必须走 toast，而不是 #banner：banner 在 #view-task 里面、z-index 也低于面板，
+	 * 所以在「余额」页或录音/生图面板上根本看不见 —— 看不见的提示等于没提示。
+	 * 顺带钉住 toast 的层级要高于所有会盖住它的东西（sheet 80 / boot 90 / offline 95）。
+	 */
+	check('已经在最左边（任务）再右滑：不翻页，只提示一句（用能盖过面板的 toast）',
+		activeTab() === 'task' && newOpen() === false && $('toast').textContent.includes('最左边'),
+		$('toast').textContent.trim().slice(0, 30))
+	check('提示条的层级高于所有面板（sheet 80 / boot 90 / 离线 95）',
+		Number.parseInt(window.getComputedStyle($('toast')).zIndex, 10) > 95,
+		window.getComputedStyle($('toast')).zIndex)
 
 	// 边界：竖着滑是滚动，不能翻页（这条错了最烦人：用户在下滑看历史，页面自己跳走）。
 	await swipe({ x: 200, y: 500 }, { x: 205, y: 300 })
@@ -2607,7 +2650,78 @@ check('说明指向了下拉框或读取状态',
 	click(tabButton('task'))
 	await wait(60)
 
+	/* --- 2.0：录音 / 生图 / 背景 / 权限这些面板上也照样能滑 ---------------------
+	 * 用户原话：「左右滑动时录音界面不行」。
+	 * 1.7.0 时这些"工具抽屉"开着会**整个挡掉**滑动 —— 用户的感受就是"滑动时灵时不灵"。
+	 * 2.0 放开，用两条更小的规则补回来：正在录音不让走（面板上就是停止键）、
+	 * 生图里写了提示词先问一句。录音那两条放在录音那一块里测（那里假麦克风是装好的），
+	 * 生图草稿那条复用上面已有的 confirm 断言。
+	 */
+	// 离线整屏（z-index 95）盖着时也不该在背后换页。
+	$('offline').style.display = 'flex'
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('离线整屏盖着时滑动不在背后换页', activeTab() === 'task' && newOpen() === false, `active=${activeTab()}`)
+	$('offline').style.display = 'none'
+
+	/*
+	 * 2.0：用户报「左右滑动时录音界面不行」。
+	 * 录音面板属于"工具抽屉"：1.7.0 时它整个挡掉滑动，2.0 放开 —— 但正在录的时候要拦，
+	 * 因为面板上就是停止键，划走了用户够不着它；而且**必须说明原因**，
+	 * 静默不响应正是用户报的那个感受。（假麦克风/MediaRecorder 在这一块之前就装好了。）
+	 */
+	click(tabButton('task'))
+	await wait(40)
+	click($('recBtn'))
+	await wait(40)
+	check('（前置）录音面板开着、还没在录',
+		window.getComputedStyle($('recopen')).display !== 'none' && $('recToggle').textContent.includes('开始录音'))
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	// 从「任务」往左滑的下一页是「新建」（页面顺序：任务 → 新建 → 余额），所以断言的是新建打开。
+	check('录音面板上左滑 → 面板自己关掉、翻到下一页（用户就是在这儿卡住的）',
+		window.getComputedStyle($('recopen')).display === 'none' && newOpen() === true,
+		`rec=${window.getComputedStyle($('recopen')).display} new=${newOpen()}`)
+	click($('newBack'))
+	await wait(40)
+	click(tabButton('task'))
+	await wait(40)
+	click($('recBtn'))
+	await wait(40)
+	click($('recToggle'))
+	await wait(80)
+	check('（前置）确实在录了', $('recToggle').textContent.includes('停止'), $('recToggle').textContent)
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('正在录音时左滑 → 不翻页，而且明确告诉你先按「停止」',
+		window.getComputedStyle($('recopen')).display !== 'none'
+		&& activeTab() === 'task' && $('toast').textContent.includes('停止'),
+		`rec=${window.getComputedStyle($('recopen')).display} active=${activeTab()} toast=${$('toast').textContent.trim().slice(0, 24)}`)
+	click($('recToggle'))
+	await wait(80)
+	click($('recBack'))
+	await wait(40)
+
+	// 生图面板里写了提示词：划走要和「新建」一样先问一句（那是用户写好的话，不能默默丢）。
+	click(tabButton('task'))
+	await wait(40)
+	click($('genBtn'))
+	await wait(40)
+	$('genPrompt').value = '一只橘猫趴在窗台上'
+	window.confirm = () => { confirmAnswer = false; return confirmAnswer }
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('生图里写了提示词：划走先问一句，说"不"就留在原地',
+		window.getComputedStyle($('genopen')).display !== 'none' && newOpen() === false,
+		`gen=${window.getComputedStyle($('genopen')).display}`)
+	window.confirm = () => { confirmAnswer = true; return confirmAnswer }
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	check('确认之后：生图面板收起、真的翻到下一页',
+		window.getComputedStyle($('genopen')).display === 'none' && newOpen() === true,
+		`gen=${window.getComputedStyle($('genopen')).display} new=${newOpen()}`)
+	$('genPrompt').value = ''
+	click($('newBack'))
+	await wait(40)
+
 	// 翻页会带一下进场动画（"确实翻了"的即时反馈）。
+	click(tabButton('task'))
+	await wait(40)
 	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
 	check('翻页时有进场动画的类名（即时反馈）',
 		$('view-new').classList.contains('pagein-left') || $('view-new').classList.contains('pagein-right'),
