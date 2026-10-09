@@ -13,11 +13,38 @@
 
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { request } from 'node:http'
+import { createServer, request } from 'node:http'
 import { spawnSync } from 'node:child_process'
 import net from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+/*
+ * 语音转写的桩服务：**绝不在测试里打真的智谱接口**（花钱、还要网络、结果不可控）。
+ * 桥的 asrBaseUrl 是可配置的，指到这里就行。它会记下每次请求的 model / 有没有文件 /
+ * 有没有带上文（prompt），好让用例断言"长音频真的被切片、而且切片之间有上下文"。
+ */
+const ASR_CALLS = []
+const asrStub = createServer((req, res) => {
+	const chunks = []
+	req.on('data', (chunk) => chunks.push(chunk))
+	req.on('end', () => {
+		const body = Buffer.concat(chunks)
+		const raw = body.toString('latin1')
+		// multipart 里既有二进制（音频）也有 UTF-8 文本：整体按 latin1 读是为了不破坏字节位置，
+		// 取到文本字段后再 latin1→utf8 还原（否则中文会变成乱码，断言"上下文带过去了"就会假红）。
+		const utf8 = (value) => Buffer.from(String(value ?? ''), 'latin1').toString('utf8')
+		const model = utf8((/name="model"\r\n\r\n([^\r]+)/.exec(raw) ?? [])[1])
+		const prompt = utf8((/name="prompt"\r\n\r\n([^\r]*)/.exec(raw) ?? [])[1])
+		const hasFile = raw.includes('name="file"; filename=')
+		ASR_CALLS.push({ model, prompt, hasFile, bytes: body.length, url: req.url })
+		res.writeHead(200, { 'content-type': 'application/json' })
+		res.end(JSON.stringify({ id: 'stub', model, text: `第${ASR_CALLS.length}段转写` }))
+	})
+})
+await new Promise((resolve) => asrStub.listen(0, '127.0.0.1', resolve))
+const ASR_PORT = asrStub.address().port
+const ASR_BASE = `http://127.0.0.1:${ASR_PORT}`
 
 const scratch = await mkdtemp(join(tmpdir(), 'dsh-mobile-bridge-'))
 process.env.DSH_HOME = scratch
@@ -32,7 +59,7 @@ await mkdir(join(scratch, 'mobile-uploads'), { recursive: true })
 await writeFile(join(scratch, 'mobile-uploads', 'bg.mov'), BACKDROP_BYTES)
 await writeFile(
 	join(scratch, 'mobile-bridge.json'),
-	JSON.stringify({ version: 1, port: PORT, pin: '123456', answerOnPhone: true, backgroundFile: 'bg.mov' }),
+	JSON.stringify({ version: 1, port: PORT, pin: '123456', answerOnPhone: true, backgroundFile: 'bg.mov', asrKey: 'harness-asr-key', asrBaseUrl: ASR_BASE }),
 	'utf8',
 )
 
@@ -746,6 +773,57 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		check('原文件路径照样给（要原片/音频还能用工具）',
 			content.some((entry) => entry.type === 'text' && entry.text.includes('clip-test.mp4')),
 			JSON.stringify(content.filter((entry) => entry.type === 'text').map((entry) => entry.text.slice(0, 60))))
+	}
+}
+
+/* --- 音频：语音转文字（用户 2026-10-09："还有音频识别功能"）----------------- */
+/*
+ * 手机上的语音备忘录（.m4a/.caf/.mp3）模型读不了。现在桥直接转写：
+ * ffmpeg 切成 25 秒的 mp3 → 逐段调智谱 GLM-ASR → 拼起来交给模型。
+ * 这里全部打在本地桩上：不打真接口（花钱 + 不可控），但协议、切片、上文衔接都验到。
+ */
+{
+	const uploads = join(scratch, 'mobile-uploads')
+	const ffmpegBin = process.env.DSH_BRIDGE_FFMPEG
+		?? join(homedir(), '.dsh', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+	// 30 秒音频 → 按 25 秒切片 = 2 段（正好验"切片 + 第二段带上文"）。
+	const audio = join(uploads, 'voice-test.mp3')
+	const made = spawnSync(ffmpegBin, [
+		'-hide_banner', '-loglevel', 'error', '-y',
+		'-f', 'lavfi', '-i', 'sine=frequency=440:duration=30',
+		'-c:a', 'libmp3lame', '-b:a', '48k', audio,
+	], { stdio: 'ignore' })
+	if (made.status !== 0 || existsSync(audio) === false) {
+		console.log('  SKIP  没找到 ffmpeg，语音转写用例跳过')
+	} else {
+		ASR_CALLS.length = 0
+		const beforeAudio = STATE.prompts.length
+		const voice = await fetch(`${base}/api/prompt`, {
+			method: 'POST',
+			headers: { cookie, 'content-type': 'application/json' },
+			body: JSON.stringify({
+				sessionId: 'session-test',
+				text: '听一下这段录音',
+				fileRefs: [{ name: 'voice-test.mp3', mediaType: 'audio/mpeg', path: audio }],
+			}),
+		})
+		check('带音频的消息发得出去', voice.status === 200, String(voice.status))
+		const content = STATE.prompts[beforeAudio]?.content ?? []
+		const transcript = content.find((entry) => entry.type === 'text' && entry.text.includes('语音转写'))
+		check('音频被转写成文字交给模型', transcript !== undefined,
+			JSON.stringify(content.map((entry) => String(entry.text ?? entry.type).slice(0, 40))))
+		check('长音频按 25 秒切片（30 秒 → 2 段）', ASR_CALLS.length === 2, `${ASR_CALLS.length} 次调用`)
+		check('每段都真的带着音频文件（不是空请求）',
+			ASR_CALLS.every((call) => call.hasFile === true && call.bytes > 1000),
+			JSON.stringify(ASR_CALLS.map((call) => call.bytes)))
+		check('第二段带上一段的转写当上下文（句子不会在切口处断）',
+			ASR_CALLS[1]?.prompt !== undefined && ASR_CALLS[1].prompt.includes('第1段转写'),
+			JSON.stringify(ASR_CALLS[1]?.prompt))
+		check('两段拼成一份完整转写',
+			String(transcript?.text ?? '').includes('第1段转写') && String(transcript?.text ?? '').includes('第2段转写'),
+			String(transcript?.text ?? '(没有)').slice(0, 80))
+		check('转写用的是配置的模型名', ASR_CALLS.every((call) => call.model === 'glm-asr-2512'),
+			ASR_CALLS.map((call) => call.model).join(','))
 	}
 }
 
