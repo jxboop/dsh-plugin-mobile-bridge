@@ -426,19 +426,30 @@ npm run test:all  # 再加上 ui 的 116 项，共 281 项
 
 模型本身**看不了视频**。桥会在电脑上自动**抽 6 帧**（均匀分布、每帧缩到 768 宽、JPEG），
 连同一句"这是第几秒"的说明一起交给模型 —— 于是"这段视频里讲了什么"能直接答。
-实测：一支 66 秒的 iPhone HEVC `.MOV`，抽帧 **0.9 秒**、6 帧合计 **约 100 KB**（比原片小三个数量级，
+实测：一支 66 秒的 iPhone HEVC `.MOV`，抽帧 **0.6 秒**、6 帧合计 **约 100 KB**（比原片小三个数量级，
 手机上行也扛得住）。原片照样留在 `~/.dsh/mobile-uploads/`，路径也一并给模型，
 要看细节/听声音时它自己用 ffmpeg 处理。
 
-抽帧靠 **ffmpeg**。插件本身不打包它（80 MB 的二进制不该塞进插件），按下面的顺序找：
+抽帧（以及语音转写的切片）靠 **ffmpeg**。插件本身不打包它（100 MB 的二进制不该塞进插件），
+按下面的顺序找：
 
 1. 配置里的 `ffmpegPath`（`~/.dsh/mobile-bridge.json`，可选）；
 2. `~/.dsh/bin/ffmpeg.exe`；
 3. `PATH` 里的 `ffmpeg`。
 
-**装一个（Windows，不用管理员，国内镜像几秒钟）**：
+**装一个（Windows，不用管理员）**。两条路都行，**建议下官方的 essentials 包**（同时给你
+`ffprobe`，读时长更准更快：实测 65 ms，而不是解析 ffmpeg 的日志）：
 
 ```powershell
+# 路 A（推荐，约 110 MB，含 ffprobe；国内可能慢，几十 KB/s 也能下完）
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\bin" | Out-Null
+$zip = "$env:TEMP\ffmpeg.zip"
+Invoke-WebRequest 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile $zip
+Expand-Archive $zip "$env:TEMP\ffmpeg-x" -Force
+Copy-Item (Get-ChildItem "$env:TEMP\ffmpeg-x" -Recurse -Filter ffmpeg.exe)[0].FullName "$env:USERPROFILE\.dsh\bin\" -Force
+Copy-Item (Get-ChildItem "$env:TEMP\ffmpeg-x" -Recurse -Filter ffprobe.exe)[0].FullName "$env:USERPROFILE\.dsh\bin\" -Force
+
+# 路 B（国内镜像，几秒钟，只有 ffmpeg 没有 ffprobe；够用，时长走 ffmpeg 日志兜底）
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\bin" | Out-Null
 Invoke-WebRequest 'https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.0/ffmpeg-win32-x64' `
   -OutFile "$env:USERPROFILE\.dsh\bin\ffmpeg.exe"
