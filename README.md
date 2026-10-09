@@ -110,6 +110,10 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 > 版本号从 **0.9.4** 起才是准的。0.7.0～0.9.3 那一段只在提交标题里写了版本，`package.json`
 > 一直停在 `0.6.7` —— 所以那几版**看不出新旧**，照"重跑一遍安装命令 + 重启"来判断即可。
 
+**版本怎么排（2026-10-09 起）**：**加功能 = 进一位小数**（1.3.17 之后的下一个功能是 **1.4.0**，
+再下一个 1.5.0…）；**修 bug / 只改文案 = 补丁位**（1.4.1、1.4.2…）。一次提交里两者都有时按功能算。
+每个版本都带 `package.json` 版本、`CHANGELOG.md` 一段、`git tag v<版本>` 和 Release。
+
 ### 2. 首次启动会自动生成配置
 
 `~/.dsh/mobile-bridge.json`（Windows：`%USERPROFILE%\.dsh\mobile-bridge.json`）：
