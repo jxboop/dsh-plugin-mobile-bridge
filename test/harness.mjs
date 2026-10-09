@@ -371,6 +371,18 @@ const pkgVersion = JSON.parse(await readFile(join(import.meta.dirname, '..', 'pa
 check('页面上的版本号 = package.json 里的版本（现读，不手抄）',
 	pageHtml.includes(`手机桥 v${pkgVersion}`) && pageHtml.includes(`v${pkgVersion}</strong>`),
 	`package.json=${pkgVersion}`)
+/*
+ * 现场（2026-10-09）：CHANGELOG 标题加了"· 最终版"后缀之后，服务端解析标题的正则漏掉了那一节，
+ * 注入进页面的"最新版本"退回 1.8.2 —— 手机登录页与说明页都显示旧版本号 ✗。
+ * 把"注入的最新版本必须等于 package.json"钉死，标题格式怎么变都不许退版。
+ */
+{
+	const injectedNews = /<script type="application\/json" id="whatsnew">([\s\S]*?)<\/script>/.exec(pageHtml)
+	let first = ''
+	try { first = JSON.parse(injectedNews?.[1] ?? '[]')[0]?.version ?? '' } catch { first = '' }
+	check('注入的"最新版本"= package.json 的版本（标题格式变了也不许退版）',
+		first === pkgVersion, `注入=${first} package.json=${pkgVersion}`)
+}
 check('注入标记一处都没漏（replaceAll 而不是 replace）',
 	pageHtml.includes('__DSH_PAGE_TAG__') === false
 	&& pageHtml.includes('__DSH_BRIDGE_VERSION__') === false

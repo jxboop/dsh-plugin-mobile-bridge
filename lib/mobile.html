@@ -1121,6 +1121,9 @@
 
 	/* ------------------------------------------------------------ helpers */
 
+	// 服务端发页面时会把下面这个标记换成**实际装的版本**（现读 package.json）。
+	const BRIDGE_VERSION = '__DSH_BRIDGE_VERSION__'
+
 	// The tag this HTML was served with. When the server restarts with new UI,
 	// a page that stayed open keeps its stale DOM while SSE silently
 	// reconnects — comparing this on every stream open is what closes that gap.
@@ -5198,9 +5201,11 @@
 			$('welcomeVer')?.remove()
 			return
 		}
-		// 版本号以"最近一版"为准（和 package.json 同一来源），避免两个数字对上不。
-		$('wnVersion').textContent = 'v' + String(sections[0].version ?? '')
-		$('gateVer').textContent = '手机桥 v' + String(sections[0].version ?? '')
+		// 版本号**以服务端现读的 package.json 为准**（不取 CHANGELOG 里"最新那一节"）：
+		// 标题格式一变就会取错（2026-10-09 现场：CHANGELOG 标题加了"· 最终版"后缀，
+		// 服务端解析漏掉 2.0.0，手机登录页与说明页就都退回显示 1.8.2）。
+		$('wnVersion').textContent = 'v' + BRIDGE_VERSION
+		$('gateVer').textContent = '手机桥 v' + BRIDGE_VERSION
 		const host = $('wnList')
 		host.textContent = ''
 
