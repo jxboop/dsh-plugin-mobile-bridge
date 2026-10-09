@@ -380,6 +380,42 @@ const dom = new JSDOM(html, {
 	beforeParse(window) {
 		window.fetch = stubFetch
 		window.EventSource = FakeEventSource
+		/*
+		 * 录音（1.5.0）：jsdom 既没有 MediaRecorder 也没有麦克风，塞一对假的进去，
+		 * 好把「开录 → 计时/电平 → 停止 → 预览 → 发送」整条链路验完。
+		 * 假 recorder 会把实例登记到 window.__recorders，测试才能往里灌音频数据。
+		 */
+		window.__recorders = []
+		window.MediaRecorder = class {
+			static isTypeSupported(type) { return type === 'audio/webm;codecs=opus' }
+			constructor(stream, options) {
+				this.stream = stream
+				this.mimeType = options?.mimeType ?? ''
+				this.audioBitsPerSecond = options?.audioBitsPerSecond ?? 0
+				this.listeners = {}
+				this.state = 'inactive'
+				window.__recorders.push(this)
+			}
+			addEventListener(name, fn) { (this.listeners[name] ??= []).push(fn) }
+			emit(name, event) { for (const fn of this.listeners[name] ?? []) fn(event) }
+			start() { this.state = 'recording' }
+			stop() {
+				this.state = 'inactive'
+				this.emit('dataavailable', { data: new window.Blob([new Uint8Array(9000).fill(7)], { type: 'audio/webm' }) })
+				this.emit('stop', {})
+			}
+		}
+		window.navigator.mediaDevices = {
+			getUserMedia: async () => ({ getTracks: () => [{ stopped: false, stop() { this.stopped = true } }] }),
+		}
+		window.AudioContext = class {
+			createMediaStreamSource() { return { connect() {} } }
+			createAnalyser() {
+				return { fftSize: 512, getByteTimeDomainData: (buffer) => buffer.fill(140) }
+			}
+			close() {}
+		}
+		window.URL.createObjectURL = () => 'blob:fake-recording'
 		// 页面启动时用 XHR 拉 /api/boot（要真实的下载进度：XHR 的 progress 与
 		// content-length 同口径，fetch 的流是解压后的字节、算不准）。jsdom 没有网络，
 		// 这里给一个最小实现：走同一套 stubFetch，并按"整包两次进度"回报。
@@ -2401,6 +2437,72 @@ check('说明指向了下拉框或读取状态',
 	$('genPrompt').dispatchEvent(new window.Event('input', { bubbles: true }))
 	$('genBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(40)
+
+	/* --- 网页里直接录音（1.5.0）------------------------------------------------ */
+	/*
+	 * 用户要的是"别让我在手机上找录音文件"：按住网页里的键直接录，录完自动转文字。
+	 * 这里用假的 MediaRecorder + 假麦克风把整条链路走完，验的是**真代码**：
+	 * 开录 → 计时/电平 → 停止合成 → 预览 → 塞进待发文件 → 分片上传带上 audio/webm。
+	 */
+	{
+		uploaded.length = 0
+		$('recBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		check('点「录音」弹出录音面板', window.getComputedStyle($('recopen')).display !== 'none')
+		check('还没录时：只有「开始录音」，没有发送/重录',
+			window.getComputedStyle($('recSend')).display === 'none'
+			&& window.getComputedStyle($('recRedo')).display === 'none'
+			&& $('recToggle').textContent.includes('开始录音'))
+
+		$('recToggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(60)
+		check('开录后按钮变「停止」，状态写明正在录（别锁屏/别切走）',
+			$('recToggle').textContent.includes('停止') && $('recState').textContent.includes('正在录音'),
+			$('recState').textContent)
+		check('录音时工具键上也有红点提示（切走了也知道还在录）', $('recBtn').classList.contains('rec'))
+		check('录的是 opus/webm（体积只有系统录音的三分之一）',
+			window.__recorders[0]?.mimeType === 'audio/webm;codecs=opus'
+			&& window.__recorders[0]?.audioBitsPerSecond === 24000,
+			`${window.__recorders[0]?.mimeType} @ ${window.__recorders[0]?.audioBitsPerSecond}`)
+
+		$('recToggle').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(80)
+		check('停止后给出预览 + 「发送这条录音」+「重录」',
+			window.getComputedStyle($('recSend')).display !== 'none'
+			&& window.getComputedStyle($('recRedo')).display !== 'none'
+			&& $('recPlay').src.startsWith('blob:'),
+			$('recState').textContent)
+		check('状态里报了时长与体积（用户据此估上传时间）',
+			/\d+ 秒、\d+ KB/.test($('recState').textContent), $('recState').textContent)
+		check('录完把麦克风关掉（不能一直占着）',
+			window.__recorders.length === 1, `${window.__recorders.length} 个 recorder`)
+
+		const beforeRec = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+		$('recSend').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(120)
+		check('录音挂成待发附件，面板收起',
+			window.getComputedStyle($('recopen')).display === 'none'
+			&& $('thumbs').textContent.includes('录音-'),
+			$('thumbs').textContent.trim().slice(0, 40))
+		$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(220)
+		const recBody = JSON.parse(requests.filter((entry) => entry.path.startsWith('/api/prompt')).pop().options.body)
+		check('录音按「文件」那条路分片上传，媒体类型是 audio/webm（电脑才知道是音频）',
+			requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === beforeRec + 1
+			&& uploaded.length >= 1
+			&& String(uploaded[0].name).startsWith('录音-')
+			&& String(uploaded[0].name).endsWith('.webm')
+			&& uploaded[0].mediaType === 'audio/webm'
+			&& recBody.fileRefs?.length === 1,
+			JSON.stringify({ 片: uploaded.length, 名: uploaded[0]?.name, 类型: uploaded[0]?.mediaType }))
+
+		// 浏览器不给录音（老浏览器 / http 地址）时，点了要**说清楚**，不能静默没反应。
+		$('recBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(40)
+		check('录音面板里写着"要用 https 打开、允许麦克风"（这两个是失败的唯一原因）',
+			$('recopen').textContent.includes('https') && $('recopen').textContent.includes('麦克风'))
+		$('recBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(40)
+	}
 
 	// 权限面板：三档、人话、当前档打勾、改权限要重新输 PIN。
 	$('permBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))

@@ -837,6 +837,41 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		check('转写消息里说明了花费（约 0.06 元/分钟）',
 			String(transcript?.text ?? '').includes('元/分钟'),
 			String(transcript?.text ?? '').slice(0, 60))
+
+		/*
+		 * 网页里现录的那段是 **opus/webm**，文件后缀 `.webm` —— 而 `.webm` 同时在
+		 * VIDEO_EXTENSIONS 里。只看扩展名就会把一段纯音频当视频：抽帧（抽不到）、
+		 * 还会给模型一句"这是视频"的错话。这条钉住"声明是 audio/* 就一律当音频"。
+		 */
+		const recorded = join(uploads, '录音-test.webm')
+		const madeWebm = spawnSync(ffmpegBin, [
+			'-hide_banner', '-loglevel', 'error', '-y',
+			'-f', 'lavfi', '-i', 'sine=frequency=520:duration=3',
+			'-c:a', 'libopus', '-b:a', '24k', recorded,
+		], { stdio: 'ignore' })
+		if (madeWebm.status !== 0 || existsSync(recorded) === false) {
+			console.log('  SKIP  ffmpeg 造不出 webm/opus，录音用例跳过')
+		} else {
+			ASR_CALLS.length = 0
+			const beforeRec = STATE.prompts.length
+			const sent = await fetch(`${base}/api/prompt`, {
+				method: 'POST',
+				headers: { cookie, 'content-type': 'application/json' },
+				body: JSON.stringify({
+					sessionId: 'session-test',
+					text: '这是我在网页里录的',
+					fileRefs: [{ name: '录音-test.webm', mediaType: 'audio/webm', path: recorded }],
+				}),
+			})
+			check('网页里录的 opus/webm 发得出去', sent.status === 200, String(sent.status))
+			const recContent = STATE.prompts[beforeRec]?.content ?? []
+			check('opus/webm 被当**音频**转写（不是当视频抽帧）',
+				recContent.some((entry) => String(entry.text ?? '').includes('语音转写'))
+				&& recContent.every((entry) => String(entry.text ?? '').includes('是视频') === false),
+				JSON.stringify(recContent.map((entry) => String(entry.text ?? entry.type).slice(0, 30))))
+			check('转写确实调了 ASR（带上了那段录音）', ASR_CALLS.length >= 1 && ASR_CALLS[0].hasFile === true,
+				`${ASR_CALLS.length} 次调用`)
+		}
 	}
 }
 

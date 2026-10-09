@@ -415,6 +415,16 @@
 	#composer[data-perm="read-only"] #permBtn::after { background: var(--err); }
 	#composer[data-perm="danger-full-access"] #permBtn::after { background: #ff6b3d; }
 
+	/* ------------------------------------------------------------- 录音 */
+	.rectop { text-align: center; padding: 6px 0 2px; }
+	.rectime { font-size: 40px; font-weight: 600; letter-spacing: 2px; font-variant-numeric: tabular-nums; }
+	/* 电平条：录音时它会跟着说话动 —— 这是"到底有没有在录"的唯一现场证据（计时器也可能是
+	   一个卡住的空转），所以不能省。 */
+	.recbar { height: 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--field-line); overflow: hidden; margin: 8px 14px; }
+	.recbar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 90ms linear; }
+	/* 录音键：和「图片」「文件」并排，是主要输入方式之一，不压成 muted。 */
+	#tools #recBtn.rec { background: linear-gradient(160deg, #ff5f6d, #d62b3a); color: #fff; border-color: transparent; }
+
 	/* ------------------------------------------------------------- 生图 */
 	/* 尺寸是一排可选键（不写下拉：iOS 上 select 会弹整屏滚轮），选中态和「原图」一致。 */
 	.genwrap { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -646,6 +656,7 @@
 				     掉行、把输入框挤成一条缝。分成两行后输入框拿回整行宽度。 -->
 				<div id="tools">
 					<button id="pick">图片</button>
+					<button id="recBtn" title="直接录一段声音发过去（电脑上会自动转成文字）">录音</button>
 					<button id="pickAny" title="上传任意文件到电脑（原样传，agent 拿到路径）">文件</button>
 					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
@@ -715,6 +726,7 @@
 					<p>输入框上面那排按键，从左到右：</p>
 					<ul>
 						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。</li>
+						<li><strong>录音</strong> —— <strong>直接在网页里录</strong>，不用去系统录音 App 里找文件：录完能先听一遍再发，电脑会自动转成文字给模型。录的是压缩格式（opus），一节课约 10 MB，比系统录音小三分之二。<strong>要用 https 地址打开</strong>浏览器才给麦克风，录的时候别锁屏、别切走。</li>
 						<li><strong>视频</strong> —— 选视频也走这个键：传到电脑后<strong>自动抽 6 帧</strong>给模型看（"视频里讲了什么"能直接答），**视频里的语音还会转成文字**；原片也留在电脑上，要看细节/听声音随时让它处理。</li>
 						<li><strong>语音 / 录音</strong> —— 语音备忘录、录音也走这个键：电脑会做<strong>语音转文字</strong>，模型直接"读"到内容（中文识别很准，一分钟约六分钱）。<strong>一节课的录音也行</strong>（上限 3 小时），只是要先传一会儿 —— 想快就先用「压缩」音质录，或者把文件拷到电脑上让我直接处理。</li>
 						<li><strong>文件</strong> —— 从手机里挑<strong>任意文件</strong>（文档、压缩包、代码…）传到电脑上；它拿到的是文件路径，能自己打开读内容。</li>
@@ -727,6 +739,34 @@
 					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。这一页想再看，点右上角「说明」。</p>
 				</div>
 				<button class="welcomego" id="welcomeGo">开始使用</button>
+			</div>
+		</section>
+
+		<!-- 录音：直接在网页里录一段声音发过去。
+		     为什么值得单开一个入口：手机上"录音 → 找文件 → 发给某个应用"这条路太难走，
+		     而且系统录音 App 的默认音质偏大（上行只有 20~70 KB/s，一节课要传半小时）。
+		     网页里录的是 opus（约 24 kbps），一节课约 10 MB —— 只有系统录音的三分之一。 -->
+		<section class="sheet" id="recopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="recBack">← 返回</button>
+				<span class="title">录音</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="rectop">
+					<div class="rectime" id="recTime">00:00</div>
+					<div class="recbar"><i id="recLevel"></i></div>
+					<div class="hint" id="recState">按下面的键开始录音。</div>
+				</div>
+				<audio id="recPlay" controls style="display:none;width:100%;margin:6px 0 10px"></audio>
+				<div class="actions">
+					<button class="go" id="recToggle">● 开始录音</button>
+					<button id="recSend" style="display:none">发送这条录音</button>
+					<button id="recRedo" style="display:none">重录</button>
+				</div>
+				<div class="hint">录的时候<strong>别锁屏、别切到别的 App</strong>（iOS 会掐掉网页录音）。录完点「停止」，可以先听一遍再发。</div>
+				<div class="hint">发出去之后，电脑会把这段录音<strong>自动转成文字</strong>交给模型（约 0.06 元/分钟）。录多久都行 —— 一节课也没问题。</div>
+				<div class="hint">⚠️ 浏览器只在<strong>安全地址</strong>下给麦克风：走 <code>https://…ts.net</code>（Funnel）可以；用 <code>http://100.x.x.x:3081</code>（局域网 IP）浏览器会直接拒绝。若弹出权限询问，请点允许。</div>
 			</div>
 		</section>
 
@@ -3252,6 +3292,212 @@
 		})
 	}
 
+	/* -------------------------------------------------------------- 录音 */
+	/*
+	 * 在网页里直接录，而不是"用系统录音 App 录完再找文件发过来"。两个理由：
+	 *   ① 手机上"录音 → 找到那个文件 → 分享给某个应用"这条路本身很难走；
+	 *   ② **体积**：系统录音默认音质一节课 20~40 MB，而这里录的是 opus 约 24 kbps
+	 *      —— 一节课约 10 MB，只有三分之一，在 20~70 KB/s 的上行下省十几分钟。
+	 *
+	 * 录完之后走的是**和「文件」完全一样**的路：进 state.files → 分片上传 → 电脑上自动转写。
+	 * 不另开一条上传路径，免得以后修了一处漏一处。
+	 */
+	const rec = { on: false, recorder: null, chunks: [], stream: null, blob: null, startedAt: 0, tick: 0, raf: 0, audio: null, wake: null }
+
+	/** 挑一个浏览器支持的录音格式：优先 opus/webm（小），Safari 上退到 mp4/aac。 */
+	function recMime() {
+		const wanted = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/mpeg']
+		if (typeof window.MediaRecorder?.isTypeSupported !== 'function') return ''
+		for (const type of wanted) {
+			try { if (window.MediaRecorder.isTypeSupported(type)) return type } catch { /* 继续试下一个 */ }
+		}
+		return ''
+	}
+
+	function recSupported() {
+		return typeof window.MediaRecorder === 'function'
+			&& navigator.mediaDevices !== undefined
+			&& typeof navigator.mediaDevices.getUserMedia === 'function'
+	}
+
+	/** 计时器 + 电平条。电平是"真的在录"的唯一现场证据（计时器可能只是空转）。 */
+	function recPaint() {
+		if (rec.on) {
+			const seconds = Math.floor((Date.now() - rec.startedAt) / 1000)
+			$('recTime').textContent = String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0')
+		}
+		rec.raf = window.requestAnimationFrame(recPaint)
+	}
+
+	function recSetLevel(percent) {
+		// 说话时电平在 8%~100% 之间动；静音时留一点点宽度，让人看出"录着但没有声音"。
+		$('recLevel').style.width = Math.max(2, Math.min(100, percent)) + '%'
+	}
+
+	async function recStart() {
+		if (!recSupported()) {
+			flash('这个浏览器不给网页录音（或者地址不是 https）。用 Safari/Chrome 打开 https://…ts.net 再试，或者用「文件」发录音。', 9000)
+			return
+		}
+		try {
+			rec.stream = await navigator.mediaDevices.getUserMedia({
+				audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+			})
+		} catch (error) {
+			const name = String(error?.name ?? '')
+			flash(name === 'NotAllowedError'
+				? '麦克风权限被拒了：点浏览器地址栏那个锁/图标，把「麦克风」改成允许，再点一次开始。'
+				: `开不了麦克风（${name || String(error?.message ?? error)}）。换个 https 地址试试。`, 9000)
+			return
+		}
+		const type = recMime()
+		try {
+			rec.recorder = new window.MediaRecorder(rec.stream, {
+				...(type === '' ? {} : { mimeType: type }),
+				// 24 kbps 单声道：中文讲课够清楚，体积只有系统录音的三分之一左右。
+				audioBitsPerSecond: 24000,
+			})
+		} catch (error) {
+			recStopTracks()
+			flash(`这台设备的录音格式不支持（${String(error?.message ?? error)}）。`, 8000)
+			return
+		}
+		rec.chunks = []
+		rec.recorder.addEventListener('dataavailable', (event) => {
+			if (event.data !== null && event.data.size > 0) rec.chunks.push(event.data)
+		})
+		rec.recorder.addEventListener('error', (event) => {
+			flash(`录音出错：${String(event?.error?.name ?? '未知')}`, 8000)
+		})
+		rec.recorder.start(1000)
+		rec.on = true
+		rec.startedAt = Date.now()
+		$('recTime').textContent = '00:00'
+		$('recState').textContent = '正在录音…（别锁屏、别切走）'
+		$('recToggle').textContent = '■ 停止录音'
+		$('recToggle').classList.add('rec')
+		$('recBtn').classList.add('rec')
+		$('recPlay').style.display = 'none'
+		$('recSend').style.display = 'none'
+		$('recRedo').style.display = 'none'
+		recPaint()
+		// 电平表：AnalyserNode 取时域均方根，够用又便宜。
+		try {
+			const AudioCtx = window.AudioContext ?? window.webkitAudioContext
+			rec.audio = new AudioCtx()
+			const source = rec.audio.createMediaStreamSource(rec.stream)
+			const analyser = rec.audio.createAnalyser()
+			analyser.fftSize = 512
+			source.connect(analyser)
+			const buffer = new Uint8Array(analyser.fftSize)
+			const pump = () => {
+				if (!rec.on) return
+				analyser.getByteTimeDomainData(buffer)
+				let sum = 0
+				for (const value of buffer) { const centered = (value - 128) / 128; sum += centered * centered }
+				recSetLevel(Math.sqrt(sum / buffer.length) * 320)
+				window.requestAnimationFrame(pump)
+			}
+			pump()
+		} catch { /* 电平表只是装饰，拿不到就算了 */ }
+		// iOS 上锁屏会掐断网页录音；能要到唤醒锁就要一个（拿不到不影响录音本身）。
+		try { rec.wake = await navigator.wakeLock?.request('screen') } catch { /* 没有就没有 */ }
+	}
+
+	function recStopTracks() {
+		for (const track of rec.stream?.getTracks() ?? []) {
+			try { track.stop() } catch { /* 已经停了 */ }
+		}
+		rec.stream = null
+		try { rec.audio?.close() } catch { /* 已经关了 */ }
+		rec.audio = null
+		try { rec.wake?.release() } catch { /* 没拿到 */ }
+		rec.wake = null
+	}
+
+	/** 停止录音 → 合成一个 Blob → 给出可听的预览。 */
+	function recStop() {
+		const recorder = rec.recorder
+		rec.on = false
+		window.cancelAnimationFrame(rec.raf)
+		recSetLevel(0)
+		recStopTracks()
+		$('recToggle').textContent = '● 重新录音'
+		$('recToggle').classList.remove('rec')
+		$('recBtn').classList.remove('rec')
+		if (recorder === null) return
+		const finish = () => {
+			const mime = String(recorder.mimeType ?? '') || recMime() || 'audio/webm'
+			rec.blob = new Blob(rec.chunks, { type: mime })
+			const seconds = Math.max(1, Math.round((Date.now() - rec.startedAt) / 1000))
+			if (rec.blob.size < 1024) {
+				rec.blob = null
+				$('recState').textContent = '这段没录到声音，重录一次吧。'
+				$('recSend').style.display = 'none'
+				$('recRedo').style.display = ''
+				return
+			}
+			$('recPlay').src = URL.createObjectURL(rec.blob)
+			$('recPlay').style.display = ''
+			$('recSend').style.display = ''
+			$('recRedo').style.display = ''
+			const kb = Math.round(rec.blob.size / 1024)
+			$('recState').textContent = `录好了：${seconds} 秒、${kb} KB（${mime.includes('opus') ? 'opus' : mime.split('/')[1] ?? mime}）。听一遍，满意就发。`
+		}
+		// stop() 之后还会补最后一个 dataavailable，所以要等它落地再合成。
+		recorder.addEventListener('stop', finish, { once: true })
+		try { recorder.stop() } catch { finish() }
+		rec.recorder = null
+	}
+
+	/** 把录好的这段塞进"待发文件"，然后走普通发送（分片上传 + 电脑转写都是现成的）。 */
+	async function recSendNow() {
+		if (rec.blob === null) { flash('先录一段。'); return }
+		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
+		if (state.files.length >= MAX_FILES_PER_MESSAGE) { flash(`一条消息最多带 ${MAX_FILES_PER_MESSAGE} 个文件。`, 5000); return }
+		const mime = rec.blob.type || 'audio/webm'
+		const ext = mime.includes('mp4') ? 'm4a' : mime.includes('mpeg') ? 'mp3' : 'webm'
+		const stamp = new Date()
+		const pad = (value) => String(value).padStart(2, '0')
+		const name = `录音-${stamp.getFullYear()}${pad(stamp.getMonth() + 1)}${pad(stamp.getDate())}-${pad(stamp.getHours())}${pad(stamp.getMinutes())}.${ext}`
+		state.files.push({ name, mediaType: mime.split(';')[0], data: await readBase64(rec.blob) })
+		renderThumbs()
+		recReset()
+		hide($('recopen'))
+		flash('录音已挂上，点「发送」就发出去（电脑会自动转成文字）。', 6000)
+	}
+
+	function recReset() {
+		if (rec.on) recStop()
+		rec.blob = null
+		rec.chunks = []
+		$('recPlay').style.display = 'none'
+		$('recSend').style.display = 'none'
+		$('recRedo').style.display = 'none'
+		$('recTime').textContent = '00:00'
+		$('recState').textContent = '按下面的键开始录音。'
+		$('recToggle').textContent = '● 开始录音'
+		$('recToggle').classList.remove('rec')
+	}
+
+	$('recBtn').addEventListener('click', () => {
+		if (!recSupported()) {
+			flash('这个浏览器不给网页录音（或地址不是 https）。用 https://…ts.net 打开再试，或者用「文件」发录音。', 9000)
+			return
+		}
+		show($('recopen'))
+		recReset()
+	})
+	$('recBack').addEventListener('click', () => {
+		if (rec.on) { flash('正在录音 —— 先点「停止录音」。', 4000); return }
+		if (rec.blob !== null && !window.confirm('放弃这段录音？')) return
+		recReset()
+		hide($('recopen'))
+	})
+	$('recToggle').addEventListener('click', () => { if (rec.on) recStop(); else recStart() })
+	$('recRedo').addEventListener('click', recReset)
+	$('recSend').addEventListener('click', () => { recSendNow() })
+
 	/** 用画布把"宿主不认的图片"转成 PNG（HEIC / BMP / TIFF / AVIF…）。 */
 	async function toPngBlob(file) {
 		let source = null
@@ -4333,7 +4579,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '6'
+	const WELCOME_VERSION = '7'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
