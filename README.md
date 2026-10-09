@@ -79,6 +79,15 @@ node tools/make-icons.mjs
 
 ### 1. 装插件
 
+> **两个会直接卡住你的坑**（同学那边实测踩到，都写在这里）：
+>
+> 1. **这条命令需要 Git。** pnpm 对 `github:` / `git+https:` 一律走 git 解析，**不会**自动改走
+>    tarball；没装 Git 就是 `ERR_PNPM_GIT_RESOLVE_FAILED`。装一次
+>    [Git for Windows](https://git-scm.com/download/win) 再重跑；不想装 Git 就用下面的 tar.gz 地址。
+> 2. **必须是 1.8.2 及以上。** 1.8.0 / 1.8.1 的包里**缺 `lib/addresses.js`**（`files` 漏列），
+>    装上去插件一加载就报找不到模块 —— 症状是**手机页面打不开、一直转圈**。
+>    判断办法：看 `<profile>\node_modules\dsh-plugin-mobile-bridge\lib` 里有没有 `addresses.js`。
+
 ```bash
 # 从 GitHub 安装（`link:` 只接受本地路径，网址要用 git+https 或 github: 简写）
 dsh plugin --profile web add git+https://github.com/jxboop/dsh-plugin-mobile-bridge.git
@@ -86,9 +95,20 @@ dsh plugin --profile web add git+https://github.com/jxboop/dsh-plugin-mobile-bri
 # 等价写法
 dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 
+# 没有 Git？用 codeload 的 tar.gz 地址（这条路不需要 git）
+dsh plugin --profile web add "https://codeload.github.com/jxboop/dsh-plugin-mobile-bridge/tar.gz/refs/heads/main"
+
 # 从本地目录（改代码时用）
 dsh plugin --profile web add link:/path/to/dsh-plugin-mobile-bridge
 ```
+
+> **tar.gz 地址不会自己更新到最新提交**：它的版本串是"分支"而不是提交号，`add` 时 pnpm
+> 会跳过已装的那一份。要更新得**先 remove 再 add**：
+> ```bash
+> dsh plugin --profile web remove dsh-plugin-mobile-bridge
+> dsh plugin --profile web add "https://codeload.github.com/jxboop/dsh-plugin-mobile-bridge/tar.gz/refs/heads/main"
+> ```
+> （用 `github:` 那条则可以直接重跑 `add` 更新 —— pnpm 会重新解析到最新提交。）
 
 装完**重启 DSH**，日志里会出现：
 
