@@ -4782,7 +4782,16 @@
 	const WATCHDOG_PULL_MS = 60000
 	/** 半死时最多多久主动重开一条流（别让"断开"挂太久）。 */
 	const WATCHDOG_RECONNECT_MS = 90000
-		setTimeout(() => {
+	/*
+	 * ⚠️ 这里必须是 **setInterval**，不能是 setTimeout（2026-10-09 修，独立排查发现的）。
+	 *
+	 * 原来写的是 `setTimeout(() => {…}, 2000)`，块内没有任何自我重排，而块首那句
+	 * `if (state.source === null …) return` 会在 SSE 建立之前就把它消耗掉 ——
+	 * 于是这套"电脑睡眠后 45 秒报警、90 秒主动重连"的机制**一次都没跑过**：
+	 * 电脑睡过去时 EventSource 不报错，页面就一直显示绿灯"一切正常"，一个字都不再更新，
+	 * 也永远不重连。注释里写着"这个 tick 是 5 秒一次"，那就 5 秒。
+	 */
+		window.setInterval(() => {
 			if (state.source === null || state.sessionId === null) return
 			// 手机锁屏 / 切到别的 App 时页面在后台，这时候探活纯属烧电烧流量；回到前台会补一次。
 			if (window.document.visibilityState === 'hidden') return
@@ -4798,7 +4807,7 @@
 				state.lastReconnectAt = Date.now()
 				connect()
 			}
-		}, 2000)
+		}, 5000)
 
 	// 回到前台补一次：锁屏期间可能已经错过了推送。
 	window.document.addEventListener('visibilitychange', () => {

@@ -2729,6 +2729,27 @@ check('说明指向了下拉框或读取状态',
 	click($('newBack'))
 	await wait(60)
 
+	/* --- 哨兵必须是 setInterval（2026-10-09 独立排查抓到的真 bug）-------------------
+	 * 原来写成 `setTimeout(() => {…}, 2000)` 且块内没有自我重排，块首那句
+	 * `if (state.source === null …) return` 会在 SSE 建立前就把它消耗掉 —— 于是
+	 * "电脑睡眠后 45 秒报警 + 90 秒重连"**一次都没跑过**：页面绿灯长亮、一个字不再更新。
+	 * 这条只能查源码形状（行为要等 5 秒才有 tick，测试里等不值当），但它恰好是"手滑写成
+	 * setTimeout"这一类，源码断言正是对症的工具。
+	 */
+	{
+		const raw = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+		// 先剥注释：说明文字里就写着"原来是 setTimeout(…, 2000)"，不剥会匹配到那句话本身。
+		const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+		const block = /const WATCHDOG_PULL_MS[\s\S]{0,900}?\},\s*(\d+)\)/.exec(source)
+		const slice = block?.[0] ?? ''
+		check('哨兵是 setInterval（不是只跑一次的 setTimeout）',
+			slice.includes('setInterval(') && slice.includes('setTimeout(') === false,
+			block === null ? '没找到哨兵块' : (slice.includes('setInterval(') ? 'setInterval ✓' : 'setTimeout ✗'))
+		check('哨兵周期是 5 秒（和注释里写的一致）', block?.[1] === '5000', String(block?.[1]))
+		check('哨兵里仍然有 45 秒报警与 90 秒重连这两道闸',
+			slice.includes('quiet > 45000') && slice.includes('WATCHDOG_RECONNECT_MS'))
+	}
+
 	/* --- 开始页的版本说明（1.8.0）---------------------------------------------
 	 * 用户要求「开始页加入版本说明」。两处：还没进去时的 PIN 登录页，和进来后的说明页。
 	 * 数据由服务端从 package.json / CHANGELOG.md 现读后注入（JSON），客户端用 textContent 建节点。
