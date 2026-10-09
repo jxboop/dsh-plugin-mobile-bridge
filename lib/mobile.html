@@ -229,6 +229,12 @@
 	}
 	#tabs button .glyph { font-size: 19px; line-height: 1; }
 	#tabs button.active { color: var(--accent); }
+	/* 录音键住在页签栏里，但它**不是页签**（点了是开录音面板，不换页）：
+	   所以它不带 data-tab，样式上也不吃 .active 那套，只在自己"正在录"时变红。 */
+	#tabs #recBtn { color: var(--muted); }
+	#tabs #recBtn .glyph { transition: transform 120ms ease; }
+	#tabs #recBtn.rec { color: #ff5b6a; }
+	#tabs #recBtn.rec .glyph { transform: scale(1.18); }
 
 	/* ------------------------------------------------------------- task */
 	.sessionbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge); }
@@ -422,8 +428,7 @@
 	   一个卡住的空转），所以不能省。 */
 	.recbar { height: 8px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--field-line); overflow: hidden; margin: 8px 14px; }
 	.recbar > i { display: block; height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); transition: width 90ms linear; }
-	/* 录音键：和「图片」「文件」并排，是主要输入方式之一，不压成 muted。 */
-	#tools #recBtn.rec { background: linear-gradient(160deg, #ff5f6d, #d62b3a); color: #fff; border-color: transparent; }
+	/* 原来录音键在工具键那一排时的红点样式 —— 已经搬到页签栏（见 #tabs #recBtn）。 */
 
 	/* ------------------------------------------------------------- 生图 */
 	/* 尺寸是一排可选键（不写下拉：iOS 上 select 会弹整屏滚轮），选中态和「原图」一致。 */
@@ -703,7 +708,6 @@
 				     掉行、把输入框挤成一条缝。分成两行后输入框拿回整行宽度。 -->
 				<div id="tools">
 					<button id="pick">图片</button>
-					<button id="recBtn" title="直接录一段声音发过去（电脑上会自动转成文字）">录音</button>
 					<button id="pickAny" title="上传任意文件到电脑（原样传，agent 拿到路径）">文件</button>
 					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
@@ -773,7 +777,7 @@
 					<p>输入框上面那排按键，从左到右：</p>
 					<ul>
 						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。</li>
-						<li><strong>录音</strong> —— <strong>直接在网页里录</strong>，不用去系统录音 App 里找文件：录完能先听一遍再发，电脑会自动转成文字给模型。录的是压缩格式（opus），一节课约 10 MB，比系统录音小三分之二。<strong>要用 https 地址打开</strong>浏览器才给麦克风，录的时候别锁屏、别切走。</li>
+						<li><strong>录音</strong>（<strong>最底下那一栏的 🎤</strong>）—— <strong>直接在网页里录</strong>，不用去系统录音 App 里找文件：录完能先听一遍再发，电脑会自动转成文字给模型。录的是压缩格式（opus），一节课约 10 MB，比系统录音小三分之二。<strong>要用 https 地址打开</strong>浏览器才给麦克风，录的时候别锁屏、别切走。</li>
 						<li><strong>视频</strong> —— 选视频也走这个键：传到电脑后<strong>自动抽 6 帧</strong>给模型看（"视频里讲了什么"能直接答），**视频里的语音还会转成文字**；原片也留在电脑上，要看细节/听声音随时让它处理。</li>
 						<li><strong>语音 / 录音</strong> —— 语音备忘录、录音也走这个键：电脑会做<strong>语音转文字</strong>，模型直接"读"到内容（中文识别很准，一分钟约六分钱）。<strong>一节课的录音也行</strong>（上限 3 小时），只是要先传一会儿 —— 想快就先用「压缩」音质录，或者把文件拷到电脑上让我直接处理。</li>
 						<li><strong>文件</strong> —— 从手机里挑<strong>任意文件</strong>（文档、压缩包、代码…）传到电脑上；它拿到的是文件路径，能自己打开读内容。</li>
@@ -937,6 +941,9 @@
 	<nav id="tabs">
 		<button data-tab="task" class="active"><span class="glyph">💬</span>任务</button>
 		<button data-tab="new"><span class="glyph">➕</span>新建</button>
+		<!-- 录音：用户要求把它放到最底下这一栏（原来挤在工具键那一排）。它**没有 data-tab**，
+		     所以不会被当成页签；点它是开录音面板，不换页。 -->
+		<button id="recBtn" title="直接录一段声音发过去（电脑上会自动转成文字）"><span class="glyph">🎤</span>录音</button>
 		<button data-tab="bill"><span class="glyph">💰</span>余额</button>
 	</nav>
 	<div id="toast" role="status" aria-live="polite"></div>
@@ -956,7 +963,9 @@
 	const sheet = $('view-new')
 	const genSheet = $('genopen')
 	const permSheet = $('permopen')
-	const tabButtons = Array.from(document.querySelectorAll('#tabs button'))
+	// 页签按钮：**只认带 data-tab 的**。录音键也在这一栏里（用户要求放到最底下），
+	// 但它不是页签 —— 不筛掉的话它会被当成"第 4 个页签"，点一下就把 active 抢过去。
+	const tabButtons = Array.from(document.querySelectorAll('#tabs button[data-tab]'))
 	const HEADINGS = { task: '会话', bill: '账户余额' }
 
 	const state = {
@@ -4809,7 +4818,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '8'
+	const WELCOME_VERSION = '9'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

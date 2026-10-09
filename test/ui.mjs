@@ -998,7 +998,14 @@ const sheet = $('view-new')
 const tabButton = (name) => window.document.querySelector(`#tabs button[data-tab="${name}"]`)
 const click = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 
-check('three tabs are rendered', window.document.querySelectorAll('#tabs button').length === 3)
+// 页签栏里有 **3 个真页签 + 1 个录音键**（1.6.1：录音从工具键那排搬到最底下这一栏）。
+// 录音键不带 data-tab，所以 tabButtons 只认那三个 —— 否则点它会把 active 抢过去。
+check('three tabs are rendered', window.document.querySelectorAll('#tabs button[data-tab]').length === 3,
+	`data-tab=${window.document.querySelectorAll('#tabs button[data-tab]').length} / 按钮=${window.document.querySelectorAll('#tabs button').length}`)
+check('录音键就在页签栏里，且不是页签', $('recBtn') !== null
+	&& $('tabs').contains($('recBtn'))
+	&& $('recBtn').dataset.tab === undefined
+	&& $('tools').contains($('recBtn')) === false)
 check('the panel starts closed', window.getComputedStyle(sheet).display === 'none')
 
 click(tabButton('new'))
@@ -2446,8 +2453,14 @@ check('说明指向了下拉框或读取状态',
 	 */
 	{
 		uploaded.length = 0
+		check('录音键在底部那一栏（不当页签，点了不换页）',
+			$('tabs').contains($('recBtn')) && $('recBtn').dataset.tab === undefined)
+		const activeBefore = window.document.querySelector('#tabs button.active')?.dataset.tab
 		$('recBtn').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 		check('点「录音」弹出录音面板', window.getComputedStyle($('recopen')).display !== 'none')
+		check('点它不会把页签切走（它不是页签）',
+			window.document.querySelector('#tabs button.active')?.dataset.tab === activeBefore,
+			`${activeBefore} → ${window.document.querySelector('#tabs button.active')?.dataset.tab}`)
 		check('还没录时：只有「开始录音」，没有发送/重录',
 			window.getComputedStyle($('recSend')).display === 'none'
 			&& window.getComputedStyle($('recRedo')).display === 'none'
