@@ -396,10 +396,18 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 		&& typeof sections[0].version === 'string'
 		&& Array.isArray(sections[0].lines) && sections[0].lines.length > 0,
 		JSON.stringify(sections[0] ?? null).slice(0, 90))
-	check('"最近更新"只挑用户能感知的那几类（加/改/修…），不带"测试""实现细节"',
-		Array.isArray(sections) && sections.every((section) => (section.lines ?? [])
-			.every((line) => /^(加|新增|改|修改|修|修复|变更|优化|调整)/.test(String(line)))),
-		JSON.stringify((sections[0]?.lines ?? [])).slice(0, 90))
+	/*
+	 * 过滤规则从**白名单**改成了**黑名单**（2026-10-09）：白名单太脆 —— 标题换个写法就被静默丢掉，
+	 * 现场是 32 个版本只剩 15 个出现在手机的历史里。现在只要求"不带维护者向的标题"，
+	 * 并且**覆盖到足够多的版本**（这条能抓住"过滤又变脆"的回归）。
+	 */
+	// 一个版本都不许少（用户要求看到 1.0 → 2.0 全量）：CHANGELOG 里有 30+ 节，注入的也得是同一量级。
+	check('更新历史覆盖全部版本（不筛标题，一节都不许丢）',
+		Array.isArray(sections) && sections.length >= 25 && sections[0].version === pkgVersion,
+		`共 ${sections.length} 版，最新 ${sections[0]?.version}`)
+	check('每一节都有可读内容（没有小标题的用正文兜底）',
+		Array.isArray(sections) && sections.every((section) => Array.isArray(section.lines) && section.lines.length > 0),
+		JSON.stringify(sections.filter((s) => (s.lines ?? []).length === 0).map((s) => s.version)))
 }
 
 const guarded = await fetch(`${base}/api/bootstrap`)
