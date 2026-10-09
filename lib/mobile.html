@@ -716,7 +716,7 @@
 					<ul>
 						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。</li>
 						<li><strong>视频</strong> —— 选视频也走这个键：传到电脑后<strong>自动抽 6 帧</strong>给模型看（"视频里讲了什么"能直接答），**视频里的语音还会转成文字**；原片也留在电脑上，要看细节/听声音随时让它处理。</li>
-						<li><strong>语音 / 录音</strong> —— 语音备忘录、录音也走这个键：电脑会做<strong>语音转文字</strong>，模型直接"读"到内容（中文识别很准，一分钟约六分钱）。</li>
+						<li><strong>语音 / 录音</strong> —— 语音备忘录、录音也走这个键：电脑会做<strong>语音转文字</strong>，模型直接"读"到内容（中文识别很准，一分钟约六分钱）。<strong>一节课的录音也行</strong>（上限 3 小时），只是要先传一会儿 —— 想快就先用「压缩」音质录，或者把文件拷到电脑上让我直接处理。</li>
 						<li><strong>文件</strong> —— 从手机里挑<strong>任意文件</strong>（文档、压缩包、代码…）传到电脑上；它拿到的是文件路径，能自己打开读内容。</li>
 						<li><strong>原图</strong> —— 点亮后按原始画质发，不压缩（大图会慢一些，费流量）。</li>
 						<li><strong>生图</strong> —— 用一句话让它画一张图<strong>或出一段视频</strong>（面板上有 🖼 图片 / 🎬 视频 切换）。两者都靠<strong>电脑上的生图插件</strong>：电脑没装、或者没配好 key，它只会回「没有生图模型」。提示词越具体越准（主体 / 动作 / 风格 / 光线 / 镜头）；<strong>视频是分钟级的</strong>（免费模型约 1 分钟），出好会直接变成能播的视频。</li>
@@ -3228,6 +3228,11 @@
 	/** 视频/其它文件上限（原文件字节）。 */
 	const MAX_FILE_BYTES = 28 * 1024 * 1024
 	/**
+	 * 音频单独放宽到 80 MB：一节课（45~90 分钟）的录音是几十兆，按 28 MB 卡会把整节课挡住。
+	 * 服务端上限 120 MB 且走分片上传，所以这里放宽是安全的；代价只是传得慢（上行 20~70 KB/s）。
+	 */
+	const MAX_AUDIO_BYTES = 80 * 1024 * 1024
+	/**
 	 * 一次最多几个文件。宿主那边 `fileRefs` 是 `slice(0, MAX_FILES_PER_PROMPT)`（=3）：
 	 * 多发不会报错，只会**静默丢掉**后面的 —— 那正是用户最怕的"我明明发了啊"。
 	 * 所以手机上先把闸拉住，并说清楚为什么。
@@ -3521,8 +3526,13 @@
 			renderThumbs()
 			return
 		}
-		if (file.size > MAX_FILE_BYTES) {
-			flash(`${file.name || '文件'} 太大（上限 ${Math.round(MAX_FILE_BYTES / 1024 / 1024)} MB）`)
+		// 音频（上课录音、语音备忘录）单独放宽：录音动辄几十兆，28 MB 会把一整节课挡在门外。
+		// 服务端上限是 120 MB，而且走分片上传，所以放宽是安全的 —— 慢是慢（上行 20~70 KB/s），
+		// 但"能发出去"比"发得快"重要；下面的提示会把大概要传多久说清楚。
+		const isAudio = type.startsWith('audio/')
+		const limitBytes = isAudio ? MAX_AUDIO_BYTES : MAX_FILE_BYTES
+		if (file.size > limitBytes) {
+			flash(`${file.name || '文件'} 太大（上限 ${Math.round(limitBytes / 1024 / 1024)} MB）`)
 			return
 		}
 		state.files.push({
@@ -3534,8 +3544,13 @@
 		// 视频：桥会自动抽几帧当图片给模型看（2026-10-09 加），所以"发视频 = 模型能看懂"。
 		if (type.startsWith('video/')) {
 			flash('视频会切片上传；电脑那边会抽几帧 + 把里面的语音转成文字给模型看。', 4500)
-		} else if (type.startsWith('audio/')) {
-			flash('音频会传上去做语音转文字，模型就能"读"这段录音了。', 4500)
+		} else if (isAudio) {
+			// 录音通常很长：把"要传多久 / 转写要多少钱"先说清楚，别让人对着进度条猜。
+			const mb = file.size / 1024 / 1024
+			const wait = Math.max(1, Math.round(mb * 1024 / 40 / 60))
+			const cost = Math.round(mb * 1024 / 48 * 0.06 * 10) / 10  // 48 KB/s ≈ 一分钟录音 ≈ 0.5 MB（压缩录音）
+			flash(`录音 ${mb.toFixed(1)} MB：大约要传 ${wait} 分钟（慢慢等，传完会自动转成文字，`
+				+ `转写约 ${cost} 元）。想更快就先用「压缩」音质录，或把文件拷到电脑上让我直接处理。`, 8000)
 		}
 	}
 
@@ -4318,7 +4333,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '5'
+	const WELCOME_VERSION = '6'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

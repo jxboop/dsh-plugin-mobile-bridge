@@ -824,6 +824,19 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 			String(transcript?.text ?? '(没有)').slice(0, 80))
 		check('转写用的是配置的模型名', ASR_CALLS.every((call) => call.model === 'glm-asr-2512'),
 			ASR_CALLS.map((call) => call.model).join(','))
+
+		/*
+		 * 上限与花费：用户 2026-10-09 问「上课录音再发给你你能识别吗」——
+		 * 原来 10 分钟的闸会把一整节课（45~90 分钟）直接挡在门外，所以钉住这两件事：
+		 * ① 默认上限足够长；② 转写消息里把**花的钱**说清楚（0.06 元/分钟，一节课约 2.7 元）。
+		 */
+		const asrSource = await readFile(join(import.meta.dirname, '..', 'lib', 'index.js'), 'utf8')
+		const maxMinutes = Number((/const ASR_MAX_MINUTES = (\d+)/.exec(asrSource) ?? [])[1] ?? 0)
+		check('自动转写的上限已放开到 3 小时（一节课 45~90 分钟不会被挡）',
+			maxMinutes >= 180, `ASR_MAX_MINUTES = ${maxMinutes}`)
+		check('转写消息里说明了花费（约 0.06 元/分钟）',
+			String(transcript?.text ?? '').includes('元/分钟'),
+			String(transcript?.text ?? '').slice(0, 60))
 	}
 }
 
