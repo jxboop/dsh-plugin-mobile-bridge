@@ -558,6 +558,56 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('uploadId 里带路径分隔符直接拒', badId.status === 400, String(badId.status))
 }
 
+/* --- 输对 PIN 不该把自己打成 429（自动重试会撞限流）----------------------- */
+/*
+ * 现场（2026-10-09 真机）：手机开机/隧道抖动时页面自动重试登录，十分钟内十几次——
+ * 而限流器把**成功**的登录也照记，于是第 13 次回 429，密码明明是对的却进不去。
+ * 现在：PIN 对了就把该 IP 的计数清零；限流只对"真输错"生效（失败另有全局窗口兜底）。
+ */
+{
+	let allOk = true
+	const statuses = []
+	let lastCookie = ''
+	for (let index = 0; index < 15; index += 1) {
+		const res = await fetch(`${base}/api/login`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ pin: config.pin }),
+		})
+		statuses.push(res.status)
+		if (res.status !== 200) allOk = false
+		lastCookie = (res.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ') || lastCookie
+	}
+	check('连登 15 次（PIN 都对）一次也不许被限流',
+		allOk, statuses.join(','))
+	// ⚠️ 每次成功登录都会轮换 cookie，旧的那份随即失效 —— 后面所有用例都靠它。
+	// （第一版忘了这一步，后面 60 多项全变成 401，看起来像"改坏了"。）
+	if (lastCookie !== '') { cookie = lastCookie; authed.headers.cookie = lastCookie }
+	// 但真输错仍然会被拦：错到上限就该 429（限流没被这次修改废掉）。
+	let sawReject = false
+	let sawLimit = false
+	for (let index = 0; index < 20; index += 1) {
+		const res = await fetch(`${base}/api/login`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json' },
+			body: JSON.stringify({ pin: '000000' }),
+		})
+		if (res.status === 401) sawReject = true
+		if (res.status === 429) sawLimit = true
+	}
+	check('反复输错 PIN 仍然会被拦下（401 → 429）', sawReject && sawLimit,
+		`401=${sawReject} 429=${sawLimit}`)
+	// 输对一次就该把计数清掉，恢复可用（限流只在 PIN 错时生效，所以这里必然 200）。
+	const after = await fetch(`${base}/api/login`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ pin: config.pin }),
+	})
+	check('输错到被拦之后，输对一次立刻恢复', after.status === 200, String(after.status))
+	const afterCookie = (after.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ')
+	if (afterCookie !== '') { cookie = afterCookie; authed.headers.cookie = afterCookie }
+}
+
 /* --- 分片传上来的大图必须仍然当"图片"给模型，而不是一个文件路径 ------------ */
 /*
  * 现场（2026-10-09 用户报"我手机界面发送图片发不出去"）：图一大（或 iPhone 的 HEIC 转出来的

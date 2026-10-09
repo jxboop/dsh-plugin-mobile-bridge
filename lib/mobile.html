@@ -3021,9 +3021,12 @@
 		 * 内联预算从 3 MB 降到 1 MB（2026-10-09）：用户报"手机发图发不出去"，而日志里
 		 * 一行失败都没有 —— 因为**失败发生在隧道边缘**（手机上行的慢请求会被入口掐断，
 		 * 服务端根本没收到，自然没日志）。3 MB 的 base64 ≈ 4 MB 的 body，在手机上行下
-		 * 很容易被掐；1 MB 以内基本秒到。超出的走分片上传（384 KB/片，慢但不失败）。
+		 * 很容易被掐；1 MB 以内基本秒到。超出的走分片上传（512 KB/片，并发发）。
+		 *
+		 * 再多张时进一步收紧到 512 KB：body 越小，慢上行下被边缘掐断的概率越低，
+		 * 而分片那条路现在是**并发**的，本来就不慢（实测 10 张时每张只 1 片）。
 		 */
-		let budget = 1024 * 1024
+		let budget = state.images.length > 2 ? 512 * 1024 : 1024 * 1024
 		for (const image of state.images) {
 			if (image.data.length <= budget) { images.push(image); budget -= image.data.length; continue }
 			overflow.push({ name: image.name || 'image', mediaType: image.mediaType, data: image.data })
@@ -3382,14 +3385,28 @@
 	}
 
 	/**
+	 * 压图档位：**一次挑得越多压得越狠**。
+	 *
+	 * 依据是实测的隧道上行速度：手机 272 KB 用了 4 秒、301 KB 用了 14 秒 —— 约 20~70 KB/s。
+	 * 10 张各 300 KB 就是 3 MB，光传输一分多钟，用户看到的就是"还没发出去"。
+	 * 压到长边 900~1100 之后每张只要 100~150 KB，10 张约 1.2 MB（约 30 秒），手机上照样看得清。
+	 */
+	function photoLevel(count) {
+		if (count >= 10) return { edge: 900, quality: 0.66, minBytes: 200 * 1024 }
+		if (count >= 5) return { edge: 1100, quality: 0.72, minBytes: 300 * 1024 }
+		if (count >= 2) return { edge: 1280, quality: 0.78, minBytes: 400 * 1024 }
+		return { edge: 1600, quality: 0.82, minBytes: 900 * 1024 }
+	}
+
+	/**
 	 * 挑进来的东西：该缩的缩、该当文件的当文件，一个都不许静默丢掉。
 	 *
 	 * @param asFile 「文件」键挑的：**一律原样当文件**传到电脑，agent 拿到路径。
 	 *   （照片从这条路走就是原图：不压缩、不转格式。）
-	 * @param compact 一次挑了好几张时的"打包档"：压得更小（长边 1280 / q0.78），
-	 *   好让整批**塞进一个请求**发出去 —— 那是最快的一条路（不用分片、不用来回）。
+	 * @param level 压缩档位（见 photoLevel）：一次挑得越多压得越狠 —— 手机上行只有
+	 *   20~70 KB/s，压不下去就永远是"发不出去"。
 	 */
-	async function addAttachment(file, asFile = false, compact = false) {
+	async function addAttachment(file, asFile = false, level = photoLevel(1)) {
 		const type = String(file.type || '')
 		// 「文件」键：原样上传（不压缩、不转格式），电脑那边存盘、把路径交给 agent。
 		if (asFile === true) {
@@ -3433,11 +3450,11 @@
 				if (!HOST_IMAGE_TYPES.has(type)) {
 					blob = await toPngBlob(file)
 					mediaType = 'image/png'
-				} else if (!animated && file.size > (compact ? 400 * 1024 : 900 * 1024)) {
+				} else if (!animated && file.size > level.minBytes) {
 					// 手机照片动辄 3-8 MB，base64 再涨三分之一 —— 隧道那头会掐断。
-					// 单张：长边 1600 / q0.82；**一次挑好几张**时压得更狠（1280 / 0.78），
-					// 因为"整批一个请求"比"分片传"快得多（用户的要求就是别干等）。
-					blob = await shrinkImage(file, compact ? 1280 : 1600, compact ? 0.78 : 0.82)
+					// **一次挑得越多压得越狠**：实测手机上行只有 20~70 KB/s（272 KB 用了 4 秒），
+					// 10 张各 300 KB 就是 3 MB、光传输一分多钟 —— 用户看到的就是"还没发出去"。
+					blob = await shrinkImage(file, level.edge, level.quality)
 					mediaType = 'image/jpeg'
 				}
 			} catch (error) {
@@ -3493,14 +3510,36 @@
 		const picked = Array.from(fileInput.files || [])
 		fileInput.value = ''
 		if (picked.length === 0) reportToBridge('pick-empty', '选择器返回了 0 个文件（用户取消，或系统没给文件）', 0)
-		// 一次挑多张：全部走"打包档"压缩，好让整批塞进**一个请求**（比分片快得多）。
-		const compact = picked.length > 1
-		for (const file of picked) {
-			addAttachment(file, false, compact).catch((error) => {
-				reportToBridge('attach-fail', `${file.name || 'file'} ${file.type || '(无类型)'} ${file.size}B → ${String(error?.message ?? error)}`, file.size)
-				flash('读取失败：' + error.message)
-			})
+		const queued = picked.length + state.images.length + state.files.length
+		const level = photoLevel(queued)
+		if (picked.length > 1) {
+			reportToBridge('pick-many', `一次挑了 ${picked.length} 张（压缩档 长边${level.edge}/q${level.quality}）`, 0)
 		}
+		/*
+		 * 一次挑很多张时**不能全部并发处理**：每张都要解码一次（12 MP 的照片解出来是几十 MB），
+		 * 10 张同时解足以把手机 Safari 拖死或者被系统杀掉 —— 页面看起来就是"卡住/没反应"。
+		 * 这里限 3 路，并且把进度说出来（否则用戶只觉得界面死了）。
+		 */
+		let done = 0
+		let nextFile = 0
+		const worker = async () => {
+			while (nextFile < picked.length) {
+				const index = nextFile
+				nextFile += 1
+				const file = picked[index]
+				try {
+					await addAttachment(file, false, level)
+				} catch (error) {
+					reportToBridge('attach-fail', `${file.name || 'file'} ${file.type || '(无类型)'} ${file.size}B → ${String(error?.message ?? error)}`, file.size)
+					flash('读取失败：' + error.message, 5000)
+				}
+				done += 1
+				if (picked.length > 1) flash(`正在处理照片 … ${done}/${picked.length} 张（手机上行慢，发之前会先压一遍）`, 0)
+			}
+		}
+		void Promise.all(Array.from({ length: Math.min(3, picked.length) }, worker)).then(() => {
+			if (picked.length > 1) flash(`已备好 ${picked.length} 张，点「发送」就整批发出去`, 4000)
+		})
 	})
 
 	// 「文件」键：同一个上传管线，只是**不限制类型**（PDF / 文档 / 压缩包 / 代码…）。

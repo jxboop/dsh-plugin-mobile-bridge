@@ -1953,6 +1953,38 @@ check('说明指向了下拉框或读取状态',
 	await wait(60)
 }
 
+/* --- 一次挑十张（真机上"还没发出去"的那个场景）-------------------------- */
+/*
+ * 现场：用户一次挑十张，四分钟只看到上传在跑、消息始终没发出去。
+ * 两个原因都在这里钉住：① 十张处理时必须有进度提示（否则界面像死了）；
+ * ② 十张一起挑不许丢任何一张，而且**整批发出去**（不要十趟来回）。
+ * 真机上还有"手机上行只有 20~70 KB/s"这层原因（压得更狠 + 并发分片已在别处覆盖）。
+ */
+{
+	uploaded.length = 0
+	const promptsBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	const many = Array.from({ length: 10 }, (_, index) =>
+		new window.File([new window.Uint8Array([137, 80, 78, 71, index])], `p${index}.png`, { type: 'image/png' }))
+	Object.defineProperty($('file'), 'files', { value: many, configurable: true })
+	$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(600)
+	check('一次挑十张：十张一张不少地挂上',
+		$('thumbs').querySelectorAll('img').length === 10,
+		`thumbs img=${$('thumbs').querySelectorAll('img').length}`)
+	check('处理十张时有进度提示（界面不做"像死了一样"的沉默）',
+		$('banner').textContent.includes('/10 张') || $('banner').textContent.includes('已备好 10 张'),
+		$('banner').textContent)
+	$('text').value = '十张一起看'
+	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(600)
+	const sent = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
+	const batch = JSON.parse(sent[sent.length - 1].options.body)
+	check('十张打包在同一批里发出去（不是十趟来回）',
+		sent.length === promptsBefore + 1 && (batch.images.length + batch.fileRefs.length) === 10,
+		JSON.stringify({ prompts: sent.length - promptsBefore, images: batch.images.length, refs: batch.fileRefs.length }))
+	check('整批发完缩略图清空', $('thumbs').children.length === 0, `thumbs=${$('thumbs').children.length}`)
+}
+
 /* --- 「发送」在没内容时要说人话（以前是静默无反应）------------------------ */
 {
 	const before = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
