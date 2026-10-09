@@ -562,6 +562,36 @@
 	#linkbar .acts button.primary { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; }
 	#linkbar code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
 
+	/* ---- 连接失败：整屏接管（不透明、压在最上面）----
+	   为什么必须不透明 + 高 z-index：用户报的"黑屏"就是背景那层（#backdrop，z-index:0）
+	   取不到素材时露出的深色底；"白屏"是连不上之后没有任何内容可渲染的空壳。
+	   这一屏盖住两者，并且第一句就把事情说明白。 */
+	#offline {
+		position: fixed; inset: 0; z-index: 95; display: flex; align-items: center; justify-content: center;
+		padding: 22px; background: var(--bg);
+		/* 有背景图时也别透出来：这一屏的意义就是"不看背景、看说明" */
+		background-image: linear-gradient(180deg, var(--bg), var(--bg));
+		-webkit-overflow-scrolling: touch; overflow-y: auto;
+	}
+	.offbox { width: 100%; max-width: 460px; text-align: center; }
+	.officon { font-size: 44px; line-height: 1; margin-bottom: 10px; }
+	.offtitle { font-size: 21px; font-weight: 700; margin-bottom: 8px; }
+	.offwhy { font-size: 14px; line-height: 1.7; color: var(--muted); margin-bottom: 6px; }
+	.offauto { font-size: 13px; color: var(--muted); min-height: 18px; margin-bottom: 14px; font-variant-numeric: tabular-nums; }
+	.offacts { display: flex; flex-direction: column; gap: 9px; margin-bottom: 16px; }
+	.offacts button {
+		padding: 13px 14px; border-radius: 14px; border: 1px solid var(--field-line);
+		background: var(--panel); color: var(--text); font: inherit; font-size: 15px; box-shadow: var(--glass-edge);
+	}
+	.offacts button.primary { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
+	.offhelp {
+		text-align: left; font-size: 13px; line-height: 1.8; color: var(--muted);
+		background: var(--panel); border: 1px solid var(--field-line); border-radius: 14px; padding: 12px 14px;
+	}
+	.offhelp b { color: var(--text); font-weight: 600; }
+	.offhelp code { font-family: var(--mono); font-size: 12px; word-break: break-all; }
+	.offhelp ul { margin: 6px 0 0; padding-left: 18px; }
+
 	/* ---- 首次进入的「开始使用」说明页 ---- */
 	.welcometip { font-size: 14px; line-height: 1.75; }
 	.welcometip p { margin: 0 0 10px; }
@@ -642,6 +672,23 @@
 	     用户只能自己发现"怎么不动了"。现在它站在所有页签上方，直接讲清楚
 	     发生了什么、以及能怎么办。 -->
 	<div id="linkbar" style="display:none"></div>
+
+	<!-- 连接失败：整屏接管。
+	     用户 2026-10-09 报「连接不上时不是黑屏就是白屏」—— 那两种情况分别是：
+	     ① 设了背景图/视频时，取不到素材 → 深色底上什么都不显示（黑屏）；
+	     ② 连不上、又没内容可渲染 → 只剩空壳（白屏/一片空）。
+	     所以这一屏要**不透明、压在最上面、并且第一句就说清是什么事**，
+	     再给三条出路：重试（自动重试带倒计时）、换个地址、先看上次的对话。 -->
+	<div id="offline" data-display="flex" style="display:none">
+		<div class="offbox">
+			<div class="officon">📴</div>
+			<div class="offtitle" id="offlineTitle">连不上电脑</div>
+			<div class="offwhy" id="offlineWhy">正在确认…</div>
+			<div class="offauto" id="offlineAuto"></div>
+			<div class="offacts" id="offlineActs"></div>
+			<div class="offhelp" id="offlineHelp"></div>
+		</div>
+	</div>
 
 	<main>
 		<section class="view" id="view-task" data-display="flex" style="display:none">
@@ -735,7 +782,7 @@
 						<li><strong>背景</strong> —— 给这个手机界面换一张图 / 动图（GIF）/ 视频当壁纸。背景是配在<strong>电脑</strong>上的，连上来的手机看到的都一样。</li>
 						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。</li>
 					</ul>
-					<p>连不上时页面顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了 —— 照着上面写的做就行。</p>
+					<p>连不上时屏幕顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了 —— 照着上面写的做就行。<strong>彻底连不上时会有一整屏提示</strong>（不会只留个黑屏/白屏）：上面写着是哪一类故障、10 秒后自动重试，还有「立即重试」「先看上次的对话（离线能读）」「换个地址」。</p>
 					<p class="hint">建议用浏览器菜单里的「添加到主屏幕」，以后点图标直接进。这一页想再看，点右上角「说明」。</p>
 				</div>
 				<button class="welcomego" id="welcomeGo">开始使用</button>
@@ -1192,11 +1239,194 @@
 	 * 只能自己刷新撞运气。现在明确写出来，并给出两条能点的出路。
 	 */
 	function setLink(kind) {
-		if (state.link === kind) return
-		state.link = kind
-		setStatus(kind === 'down' ? 'down' : (state.running ? 'busy' : 'live'))
-		renderLink()
+		/*
+		 * ⚠️ 断线的**整屏**判定必须放在 `state.link === kind` 的提前返回**之前**。
+		 *
+		 * 这里踩过一个真坑（2026-10-09 写"连接失败整屏"时被测出来）：页面启动会同时发
+		 * 好几个请求，任何一个先失败都会把 link 置成 down；等 boot 也失败、再调
+		 * setLink('down') 时，因为 kind 没变就提前 return —— 于是**那一屏永远不亮**，
+		 * 用户看到的还是黑屏/白屏。链接状态可以"没变化"，但"要不要整屏接管"必须每次重新判。
+		 */
+		if (state.link !== kind) {
+			state.link = kind
+			setStatus(kind === 'down' ? 'down' : (state.running ? 'busy' : 'live'))
+			renderLink()
+		}
+		/*
+		 * 断线要不要**整屏接管**：
+		 *   · 从没连上过（加载页就失败）→ 立刻接管：这时候屏幕上本来就没内容，
+		 *     留着就是用户说的"白屏"，不如把原因和出路摆出来。
+		 *   · 用着用着断了 → 先只出提示条（用户可能正在读对话，别一把盖掉），
+		 *     但**断超过 20 秒**还连不上，就整屏接管 —— 那时候用户已经不知道该干什么了。
+		 */
+		if (kind === 'live') {
+			offlineHide()
+			return
+		}
+		if (state.booted !== true) offlineShow(offlineReason('cold'))
+		else offlineArm()
 	}
+
+	/* ------------------------------------------------------- 连接失败整屏 */
+	/**
+	 * 用户 2026-10-09：「连接不上时不是黑屏就是白屏」。
+	 *
+	 * 两种成因：① 设了背景素材又取不到 → 深色底上什么都没有（黑屏）；
+	 * ② 连不上、没有内容可渲染 → 空壳（白屏）。所以失败时**把背景也一起收掉**，
+	 * 换成这一屏：一句人话 + 自动重试倒计时 + 三条出路 + 一份排查清单。
+	 */
+	const offline = { shown: false, timer: 0, countdown: 0, armed: 0, reason: '' }
+
+	/** 失败原因：手机自己没网 / 从没连上过 / 用着用着断了 —— 三种的说法和出路都不同。 */
+	function offlineReason(kind) {
+		if (navigator.onLine === false) return 'nophone'
+		if (kind === 'cold') return 'cold'
+		return 'lost'
+	}
+
+	function offlineAutoRetry() {
+		/*
+		 * 连上过 → 重开长连接（便宜，能立刻恢复）。
+		 * 从没连上 → **原地重跑一次 boot**，而不是 location.reload()：
+		 * 整页重来会把用户正在读的东西全刷掉，也要重新下载一遍页面（慢链路上就是几秒空白）；
+		 * 而 boot 本来就是"读缓存快照 + 连电脑"这一件事，重跑一次正是我们要的重试。
+		 */
+		if (state.booted === true) { connect(); return }
+		void bootRun()
+	}
+
+	/** 倒计时那行字：**亮屏那一刻就要写上**，不能等 1 秒后的第一次 tick —— 否则用户
+	 *  看到的是一个"什么都不说"的屏幕，而这一屏存在的意义正是"把话说清楚"。 */
+	function offlinePaintAuto() {
+		const label = $('offlineAuto')
+		if (label === null) return
+		label.textContent = offline.countdown > 0
+			? `${offline.countdown} 秒后自动重试（也可以现在就点上面那颗键）`
+			: ''
+	}
+
+	function offlineTick() {
+		offline.countdown -= 1
+		if (offline.countdown <= 0) {
+			// 倒计时到了：自动试一次。别太勤 —— 一整页刷新会把用户正在读的东西刷掉，
+			// 所以重试是"原地重跑 boot"，间隔 10 秒。
+			offline.countdown = 10
+			offlineAutoRetry()
+		}
+		offlinePaintAuto()
+	}
+
+	function offlineShow(reason) {
+		if (reason === '401') {
+			// PIN 过期不是"连不上"：把登录页摆出来，让用户重新输一次就行。
+			offlineHide()
+			hide(app)
+			show(gate)
+			return
+		}
+		offline.reason = reason
+		// 背景素材这时候多半也取不到 —— 留着它就是"黑屏"本身，先收掉。
+		document.body.classList.remove('hasbg')
+		if (offline.shown === false) {
+			offline.shown = true
+			show($('offline'))
+			offline.countdown = 10
+			offline.timer = window.setInterval(offlineTick, 1000)
+		}
+		offlineRender()
+		offlinePaintAuto()
+	}
+
+	function offlineHide() {
+		window.clearTimeout(offline.armed)
+		offline.armed = 0
+		if (offline.shown === false) return
+		offline.shown = false
+		window.clearInterval(offline.timer)
+		offline.timer = 0
+		hide($('offline'))
+	}
+
+	/** 用着用着断了：先等 20 秒，还连不上再整屏接管（别在用户读对话时一把盖掉）。 */
+	function offlineArm() {
+		if (offline.shown || offline.armed !== 0) return
+		offline.armed = window.setTimeout(() => {
+			offline.armed = 0
+			if (state.link !== 'live') offlineShow(offlineReason('lost'))
+		}, 20000)
+	}
+
+	function offlineRender() {
+		const reason = offline.reason
+		const titles = { nophone: '手机自己没网', cold: '连不上电脑', lost: '和电脑断开了' }
+		const whys = {
+			nophone: '这台手机的网断了（飞行模式 / WiFi 掉了 / 流量关了），所以到不了电脑。先让手机能上网，这一屏会自己消失。',
+			cold: '页面是手机本地缓存的那一份，所以还打得开；但连电脑的请求没成功。最常见的是：电脑睡了或合盖了、电脑上 DSH 没在跑、或者 Tailscale 断了。',
+			lost: '刚才还连着，现在收不到电脑的消息了。多半是电脑休眠 / 网络切换 / 隧道重连。',
+		}
+		const title = $('offlineTitle')
+		const why = $('offlineWhy')
+		if (title !== null) title.textContent = titles[reason] ?? '连不上电脑'
+		if (why !== null) why.textContent = whys[reason] ?? whys.cold
+
+		const acts = $('offlineActs')
+		if (acts === null) return
+		acts.textContent = ''
+		const retry = mk('button', 'primary', state.booted === true ? '立即重试连接' : '立即重试（重新加载）')
+		retry.id = 'offlineRetry'
+		retry.addEventListener('click', () => { offline.countdown = 10; offlineAutoRetry() })
+		acts.appendChild(retry)
+
+		// 上次那份对话还在手机上：连不上也能读（这是"白屏"最好的替代品）。
+		if (state.items.length > 0) {
+			const read = mk('button', undefined, '先看上次的对话（离线可读）')
+			read.id = 'offlineRead'
+			read.addEventListener('click', () => {
+				offlineHide()
+				hide(gate)
+				show(app)
+				switchTab('task')
+				flash('离线：这是手机上缓存的对话，发送要等连上电脑。', 6000)
+			})
+			acts.appendChild(read)
+		}
+		// 地址兜底：停在失效的旧地址上时，切到当前地址是唯一能自救的动作。
+		let canonical = state.canonical !== '' ? state.canonical : readLocal('dshm.canonical')
+		if (canonical !== '' && canonical.startsWith(location.origin) === false) {
+			const jump = mk('button', undefined, '切到当前地址')
+			jump.addEventListener('click', () => { location.href = canonical })
+			acts.appendChild(jump)
+		}
+		const lan = state.addresses.find((entry) => entry && typeof entry.url === 'string' && entry.url !== '' && isUsableLanUrl(entry.url))
+		if (lan !== undefined && lan.url.startsWith(location.origin) === false) {
+			const go = mk('button', undefined, '改用局域网地址' + (lan.label ? '（' + lan.label + '）' : ''))
+			go.addEventListener('click', () => { location.href = lan.url })
+			acts.appendChild(go)
+		}
+
+		const help = $('offlineHelp')
+		if (help === null) return
+		help.textContent = ''
+		help.appendChild(mk('div', undefined, '照着这几条看一眼，通常第一条就中了：'))
+		const list = document.createElement('ul')
+		for (const line of [
+			'电脑是不是睡了 / 合盖了？碰一下键盘把它叫醒。',
+			'电脑上的 DSH 还在跑吗？（关了窗口就是关了）',
+			'Tailscale 两端都还连着吗？（手机和电脑）',
+			'你打开的这个地址是不是旧的？上面若有「切到当前地址」，点它。',
+			'都不是的话：在电脑上跑 tools\\tunnel-status.ps1，它会告诉你隧道是死是活。',
+		]) list.appendChild(mk('li', undefined, line))
+		help.appendChild(list)
+		const addr = mk('div', undefined, '')
+		addr.style.marginTop = '8px'
+		addr.appendChild(mk('b', undefined, '当前地址：'))
+		addr.appendChild(mk('code', undefined, location.href))
+		help.appendChild(addr)
+	}
+
+	// 手机自己断网/恢复：立刻反映到这一屏上，不用等下一次请求失败。
+	window.addEventListener('offline', () => { offlineShow('nophone') })
+	window.addEventListener('online', () => { offline.countdown = 1; offlineTick() })
 
 	/**
 	 * 这个地址手机真的能用吗。
@@ -4579,7 +4809,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '7'
+	const WELCOME_VERSION = '8'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -4630,7 +4860,10 @@
 		if (Array.isArray(savedAddresses)) state.addresses = savedAddresses
 	} catch { /* 存坏了就当没有 */ }
 	// 读本地那份缓存是异步的，所以这段包在异步块里；其余代码照旧同步执行。
-	void (async () => {
+	//
+	// 抽成具名函数是为了**原地重试**：连不上时"重试"按钮和自动重试都会再调一次它，
+	// 而不是 location.reload()（整页重来会刷掉用户正在读的东西，还要重新下载页面）。
+	async function bootRun() {
 		let restored = null
 		if (remembered !== '') {
 			bootStep(6, '正在启动')
@@ -4677,19 +4910,38 @@
 			bootStep(70, '已连上电脑')
 			hide(gate); show(app); switchTab('task')
 			state.booted = true
+			// 这一次是真的答话了：把"连不上"整屏收掉、状态点改回 live。
+			// （原地重试成功时就是靠这一行让那一屏自己消失的。）
+			setLink('live')
 			maybeWelcome()
 			return loadSessions(body)
 		})
 			.then(() => { bootDone() })
-			.catch(() => {
+			.catch((error) => {
 				// 连不上 / 没登录成功：**别让加载页挡着**（以前请求被黑洞时会永远卡在那儿，
 				// 一个字都不说），也别让屏幕上一个字都没有 —— 把断线提示条摆出来，
 				// 里面就有"重试""改用局域网地址""切到当前地址"三条出路。
 				bootDone()
 				state.booted = false
+				const status = Number(error?.status ?? 0)
+				if (status === 401) {
+					/*
+					 * 401 不是"连不上"：服务端明明答话了，只是没登录（PIN 过期 / 换过 cookie）。
+					 * 这时候弹"连不上电脑"会把用户引去查网络，而真正要做的是输一次 PIN。
+					 * （api() 里 401 会自己 showGate，这里只是别再盖一层"连不上"。）
+					 */
+					offlineHide()
+					hide(app)
+					show(gate)
+					return
+				}
+				// 其余（网络不通 / 超时 / 5xx）→ setLink('down')。
+				// 从没连上过时它会**整屏接管**（原因 + 自动重试 + 三条出路 + 排查清单），
+				// 这正是用户报的"黑屏/白屏"该有的替代品。
 				setLink('down')
 			})
-	})()
+	}
+	void bootRun()
 })()
 </script>
 </body>
