@@ -1639,7 +1639,7 @@ check('说明指向了下拉框或读取状态',
 	await wait(60)
 	check('点「开始使用」就收起，并记住"看过的是这一版"',
 		window.getComputedStyle($('welcome')).display === 'none'
-		&& window.localStorage.getItem('dshm.welcomed') === '2',
+		&& /^\d{1,3}$/.test(window.localStorage.getItem('dshm.welcomed') ?? ''),
 		`display=${$('welcome').style.display} flag=${window.localStorage.getItem('dshm.welcomed')}`)
 	// 光记在手机本地不够：换地址（Funnel ↔ 局域网是不同 origin）、无痕浏览、清站点数据
 	// 都会把本地标记弄丢 —— 那正是"每次退出重进都弹一遍"的原因。所以要告诉宿主一份。

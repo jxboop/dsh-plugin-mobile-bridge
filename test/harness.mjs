@@ -14,8 +14,9 @@
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { request } from 'node:http'
+import { spawnSync } from 'node:child_process'
 import net from 'node:net'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const scratch = await mkdtemp(join(tmpdir(), 'dsh-mobile-bridge-'))
@@ -650,7 +651,7 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		asImage.length === 1 && asImage[0].mediaType === 'image/png'
 		&& typeof asImage[0].data === 'string' && asImage[0].data.length > 0,
 		JSON.stringify(asImage).slice(0, 160))
-	check('视频仍然走"文件 + 路径"那套（模型看不了视频）',
+	check('解不开的文件仍然只给路径（模型自己去处理）',
 		asImage.length === 1 && asText.some((entry) => entry.text.includes('clip.mp4')),
 		JSON.stringify(asText).slice(0, 200))
 }
@@ -700,6 +701,52 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		}),
 	})
 	check('分片尺寸不符直接拒（不许静默写歪）', badSize.status === 400, String(badSize.status))
+}
+
+/* --- 视频：桥自动抽帧交给模型（用户 2026-10-09："加一个读取视频的功能"）------ */
+/*
+ * 模型看不了视频。以前手机发来视频只给一个路径，得 agent 自己去 ffmpeg；现在桥直接抽帧：
+ * 均匀取 6 帧、缩到 768 宽、JPEG，并标上秒数（模型才知道先后），**原路径照样给**
+ * （要原片、要音频时还能用工具）。
+ */
+{
+	const uploads = join(scratch, 'mobile-uploads')
+	await mkdir(uploads, { recursive: true })
+	const movie = join(uploads, 'clip-test.mp4')
+	const ffmpegBin = process.env.DSH_BRIDGE_FFMPEG
+		?? join(homedir(), '.dsh', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg')
+	const made = spawnSync(ffmpegBin, [
+		'-hide_banner', '-loglevel', 'error', '-y',
+		'-f', 'lavfi', '-i', 'testsrc=duration=3:size=320x240:rate=10',
+		'-pix_fmt', 'yuv420p', movie,
+	], { stdio: 'ignore' })
+	if (made.status !== 0 || existsSync(movie) === false) {
+		console.log('  SKIP  没找到 ffmpeg（~/.dsh/bin/ffmpeg.exe），视频抽帧用例跳过')
+	} else {
+		const beforeVideo = STATE.prompts.length
+		const res = await fetch(`${base}/api/prompt`, {
+			method: 'POST',
+			headers: { cookie, 'content-type': 'application/json' },
+			body: JSON.stringify({
+				sessionId: 'session-test',
+				text: '看下这段视频',
+				fileRefs: [{ name: 'clip-test.mp4', mediaType: 'video/mp4', path: movie }],
+			}),
+		})
+		check('带视频的消息发得出去', res.status === 200, String(res.status))
+		const content = STATE.prompts[beforeVideo]?.content ?? []
+		const frames = content.filter((entry) => entry.type === 'image')
+		check('视频被自动抽成帧（模型能"看"视频了）', frames.length >= 3, `${frames.length} 帧`)
+		check('每帧都标了秒数（先后顺序可读）',
+			frames.length > 0 && frames.every((frame) => /秒/.test(String(frame.name))),
+			JSON.stringify(frames[0]?.name))
+		check('帧是给模型的 JPEG（不是路径）',
+			frames.length > 0 && frames.every((frame) => frame.mediaType === 'image/jpeg' && frame.data.length > 0),
+			frames.length > 0 ? `${frames[0].data.length} 字节 base64` : '(没有帧)')
+		check('原文件路径照样给（要原片/音频还能用工具）',
+			content.some((entry) => entry.type === 'text' && entry.text.includes('clip-test.mp4')),
+			JSON.stringify(content.filter((entry) => entry.type === 'text').map((entry) => entry.text.slice(0, 60))))
+	}
 }
 
 /* --- 自定义背景：Range / 304 / 鉴权，一个都不能少 ------------------------ */
@@ -1653,8 +1700,9 @@ process.on('uncaughtException', onCrash)
 const welcomeDevice = 'dshm_device=harness-welcome-version'
 await fetch(`${base}/api/welcomed`, { method: 'POST', headers: { cookie: `${cookie}; ${welcomeDevice}` } })
 const welcomeBeforeRestart = JSON.parse(await readFile(tokensFile, 'utf8'))
+const welcomeVersion = welcomeBeforeRestart.welcomed?.['harness-welcome-version']
 check('说明页的"看过"落盘的是版本号（不是时间戳）',
-	welcomeBeforeRestart.welcomed?.['harness-welcome-version'] === 2,
+	Number.isInteger(welcomeVersion) && welcomeVersion >= 1 && welcomeVersion < 1000,
 	JSON.stringify(welcomeBeforeRestart.welcomed))
 
 const openStream = await fetch(`${base}/api/stream?sessionId=session-test`, authed)

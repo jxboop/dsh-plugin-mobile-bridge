@@ -391,6 +391,33 @@ npm run test:all  # 再加上 ui 的 116 项，共 281 项
 
 ---
 
+## 视频：手机发的视频，模型直接"看"得懂
+
+模型本身**看不了视频**。桥会在电脑上自动**抽 6 帧**（均匀分布、每帧缩到 768 宽、JPEG），
+连同一句"这是第几秒"的说明一起交给模型 —— 于是"这段视频里讲了什么"能直接答。
+实测：一支 66 秒的 iPhone HEVC `.MOV`，抽帧 **0.9 秒**、6 帧合计 **约 100 KB**（比原片小三个数量级，
+手机上行也扛得住）。原片照样留在 `~/.dsh/mobile-uploads/`，路径也一并给模型，
+要看细节/听声音时它自己用 ffmpeg 处理。
+
+抽帧靠 **ffmpeg**。插件本身不打包它（80 MB 的二进制不该塞进插件），按下面的顺序找：
+
+1. 配置里的 `ffmpegPath`（`~/.dsh/mobile-bridge.json`，可选）；
+2. `~/.dsh/bin/ffmpeg.exe`；
+3. `PATH` 里的 `ffmpeg`。
+
+**装一个（Windows，不用管理员，国内镜像几秒钟）**：
+
+```powershell
+New-Item -ItemType Directory -Force "$env:USERPROFILE\.dsh\bin" | Out-Null
+Invoke-WebRequest 'https://registry.npmmirror.com/-/binary/ffmpeg-static/b6.0/ffmpeg-win32-x64' `
+  -OutFile "$env:USERPROFILE\.dsh\bin\ffmpeg.exe"
+& "$env:USERPROFILE\.dsh\bin\ffmpeg.exe" -version
+```
+
+没装也能用：视频会像以前那样只把**路径**交给模型（它自己想办法），不影响发送。
+
+---
+
 ## HEIC 素材（iPhone 照片）
 
 iPhone 拍的照片是 HEIC，而且**扩展名经常骗人**（名字叫 `..jpeg`，内容却是 `ftypheic`）。
