@@ -248,6 +248,7 @@
 	#tabs #recBtn.rec .glyph { transform: scale(1.18); }
 
 	/* ------------------------------------------------------------- task */
+	#modelNow { max-width: 42%; flex: none; font-size: 12px; opacity: .92; }
 	.sessionbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge); }
 	.sessionbar select {
 		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
@@ -800,7 +801,7 @@
 
 	<main>
 		<section class="view" id="view-task" data-display="flex" style="display:none">
-			<div class="sessionbar"><select id="session"></select></div>
+			<div class="sessionbar"><select id="session"></select><select id="modelNow" title="当前模型（点开就能换）"></select></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
 			<button id="tonew" style="display:none" title="回到最新" aria-label="回到最新">↓</button>
@@ -1132,6 +1133,8 @@
 		presets: [],
 		/** 模型目录（2.4.0）：宿主的 modelCatalog() 透传，按 provider 分组。 */
 		models: [],
+		/** 当前会话用的模型（2.4.1 起，手机侧记着；显示在任务页顶部）。 */
+		modelNow: (() => { try { return String(window.localStorage.getItem('dshm.model') ?? '') } catch { return '' } })(),
 		pickedWorkspace: null,
 		balance: null,
 		balanceBusy: false,
@@ -4798,6 +4801,24 @@
 		const [provider, model] = raw.split('|')
 		node.textContent = '已选 ' + provider + ' · ' + model + ' —— 当前会话立刻切，新建的会话也用它 ✓'
 	}
+	$('modelNow').addEventListener('change', async (event) => {
+		const raw = String(event.target.value ?? '')
+		if (raw === '') { writeLocal('dshm.model', ''); state.modelNow = ''; toast('已改回默认模型（下一个会话生效）', 2200); return }
+		const [provider, model] = raw.split('|')
+		state.modelNow = raw
+		writeLocal('dshm.model', raw)
+		if (state.sessionId === null || state.sessionId === '') { toast('已记下 ' + model + '，新建会话时用它', 2200); return }
+		try {
+			await api('api/model', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: state.sessionId, provider, model }),
+			})
+			toast('已切到 ' + model + '（这个会话以后就用它）', 2200)
+		} catch (error) {
+			toast('切换失败：' + error.message, 2600)
+		}
+	})
 	$('modelPick').addEventListener('change', () => {
 		renderModelHint()
 		// 用户 2026-10-11：「然后可以切的也做」——**当前会话立刻切**（不用等新建）✓。
@@ -4822,6 +4843,26 @@
 		}
 	}
 
+	/**
+	 * 任务页顶部那个"当前模型"（用户 2026-10-11：「任务界面顶部加一个当前模型的显示」）。
+	 *
+	 * 值来自手机自己记的 `dshm.model`（切过就有 ✓）；没切过就显示"默认"✓。
+	 * 用 `<select>` 而不是纯文字：**顺便就能换** ✓，和「新建」里那份目录是同一份 ✓。
+	 */
+	function renderModelNow() {
+		const pick = $('modelNow')
+		if (pick === null) return
+		const chosen = state.modelNow
+		if (pick.dataset.filled !== 'yes' || pick.options.length === 0) {
+			pick.innerHTML = '<option value="">模型：默认</option>' + state.models.flatMap((group) =>
+				group.models.map((model) => '<option value="' + escapeHtml(group.provider + '|' + model.id) + '">'
+					+ escapeHtml('模型：' + model.label) + '</option>')).join('')
+			pick.dataset.filled = 'yes'
+		}
+		pick.value = chosen
+		if (chosen === '') pick.options[0].textContent = '模型：默认'
+	}
+
 	async function loadModels() {
 		if (state.models.length > 0) return
 		try {
@@ -4841,6 +4882,7 @@
 				.filter((group) => group.models.length > 0)
 		} catch { /* 拿不到就只剩"用默认"，不影响新建 ✓ */ }
 		renderModels()
+		renderModelNow()
 	}
 
 	/**
