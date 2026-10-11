@@ -179,6 +179,16 @@ function jsonResponse(body, status = 200) {
 	})
 }
 
+/** 纯文本响应（文档预览用：`/api/file?path=…md` 要把原文给页面）。 */
+function textResponse(body, status = 200) {
+	return Promise.resolve({
+		ok: status >= 200 && status < 300,
+		status,
+		json: () => Promise.resolve({}),
+		text: () => Promise.resolve(body),
+	})
+}
+
 /**
  * 像浏览器那样解析请求地址：相对地址以页面地址（含密钥段）为基准。
  * 记录两份 —— `url` 是解析后的完整路径（用来断言"没跑出密钥段"），
@@ -279,6 +289,10 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
+	// 文档预览（2.1.0）：页面会把文档取回来渲染，桩里给一段 Markdown 原文。
+	if (path.startsWith('/api/file')) {
+		return textResponse('# 文案草稿\n\n这是正文第一段。\n\n- 要点一\n- 要点二\n')
+	}
 	// 路径素材的真实像素尺寸：故意给一个"非 4:3"的比例，才能区分"补上了真尺寸"和"一直用占位"。
 	if (path.startsWith('/api/size')) {
 		const wanted = /path=([^&]+)/.exec(path)
@@ -795,6 +809,49 @@ check('history image element is present', window.document.querySelectorAll('#log
 	check('交付物里的文字文件也给一行说明（至少知道电脑上有什么）',
 		box !== null && box.textContent.includes('发布素材.md') && box.textContent.includes('文案草稿'),
 		box?.textContent?.trim().slice(0, 60))
+
+	/*
+	 * 2.1.0（用户要求「让手机能读取和打开电脑的文档文件」，范围选最小：只开"会话里给你的文件"）：
+	 * 交付物里的**文档**以前只是一行灰字 ✗ —— 点了没反应，手机上等于看不到内容。
+	 * 现在带 data-doc-path 可点 → 开预览面板：Markdown/文本直接渲染、PDF 走 iframe、
+	 * Office 这类浏览器渲染不了的**明说 + 指引下载**（不假装能看）。
+	 */
+	const mdRow = box?.querySelector('[data-doc-path]')
+	check('交付物里的文档条目可点开（带 data-doc-path）',
+		mdRow !== null && mdRow !== undefined && String(mdRow.getAttribute('data-doc-path')).endsWith('.md'),
+		mdRow?.getAttribute('data-doc-path'))
+	mdRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('点它打开文档预览面板，标题是文件名',
+		window.getComputedStyle($('docopen')).display !== 'none' && $('docTitle').textContent.endsWith('发布素材.md'),
+		`${window.getComputedStyle($('docopen')).display} / ${$('docTitle').textContent}`)
+	check('Markdown 在手机上是**渲染过的**（标题变 h1，不是一坨原文）',
+		$('docBody').querySelector('h1') !== null && $('docBody').textContent.includes('这是正文第一段'),
+		$('docBody').innerHTML.slice(0, 80))
+	check('给了「下载」入口（手机上看不了的也能拿走）',
+		String($('docDownload').getAttribute('href')).startsWith('api/file?path='))
+	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(40)
+	check('返回就收起预览面板', window.getComputedStyle($('docopen')).display === 'none')
+
+	// Office 这类：浏览器渲染不了 → 必须**说清楚**并指向下载，而不是给一个空白页。
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'deliverables/presented', seq: 42, time: 42,
+			data: { turn: 4, callId: 'c42', files: [{ description: '期末报表', path: 'D:\\自媒体\\报表.xlsx' }] },
+		},
+	})
+	await wait(120)
+	const xlsxRow = window.document.querySelector('#log [data-doc-path$=".xlsx"]')
+	check('Excel 这类也给了可点条目', xlsxRow !== null, xlsxRow === null ? '没有找到 .xlsx 条目' : 'ok')
+	xlsxRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(80)
+	check('点开 Excel：明说"浏览器看不了"+ 指引下载（不假装能看）',
+		$('docBody').textContent.includes('看不了') && $('docBody').textContent.includes('下载'),
+		$('docBody').textContent.trim().slice(0, 60))
+	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(40)
 }
 
 /* --- live streaming ------------------------------------------------------ */

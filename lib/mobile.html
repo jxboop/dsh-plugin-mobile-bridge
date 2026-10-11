@@ -572,6 +572,20 @@
 		opacity: 0; transition: opacity .18s, transform .18s; pointer-events: none; z-index: 120; max-width: 80vw; text-align: center;
 	}
 	#toast.on { opacity: .95; transform: translateX(-50%) translateY(0); }
+	/* ---- 文档预览（2.1.0）---- */
+	.doclink { color: var(--text); }
+	.docgo { float: right; color: var(--accent); font-size: 12px; }
+	.drow[data-doc-path] { cursor: pointer; }
+	.drow[data-doc-path]:active { background: var(--panel-2); }
+	#docBody { font-size: 13px; line-height: 1.7; word-break: break-word; }
+	#docBody pre { white-space: pre-wrap; margin: 0; font-size: 12.5px; line-height: 1.65;
+		font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+	#docBody h1, #docBody h2, #docBody h3 { margin: 12px 0 6px; line-height: 1.35; }
+	#docBody h1 { font-size: 17px; } #docBody h2 { font-size: 15px; } #docBody h3 { font-size: 14px; }
+	#docBody code { background: var(--panel-2); border-radius: 4px; padding: 1px 4px; font-size: 12.5px; }
+	#docBody iframe { width: 100%; height: 76vh; border: 0; border-radius: 10px; background: #fff; }
+	#docBody img, #docBody video { max-width: 100%; border-radius: 10px; }
+	#docNote { color: var(--muted); }
 	/* ---- 断线提示条：站在所有页签上方，讲清楚出了什么事 ---- */
 	#linkbar {
 		flex: none; padding: 9px 12px; background: var(--banner-bg); color: var(--banner-ink);
@@ -836,6 +850,7 @@
 						<li><strong>录音、生图、背景、权限这些面板上也照样能滑</strong> —— 划走时那个面板自己关掉、直接翻到下一页。（<strong>正在录音</strong>时会拦一下并告诉你先按「停止」：面板上就是停止键，划走了你够不着它。）</li>
 						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
 						<li>「新建」/「生图」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。<strong>只有说明页和提问卡片会让滑动整个失效</strong>（那两处得先处理掉）。</li>
+						<li><strong>电脑上给你的文档，手机上能直接打开</strong>（2.1.0 起）：会话里出现的文稿会多一个「打开 ›」—— Markdown / 文本 / 代码直接渲染，PDF 能翻，Word/Excel/PPT 这类浏览器渲染不了的会给「下载」（用手机上的 WPS/Office 打开）。</li>
 					</ul>
 					<p>输入框上面那排按键，从左到右：</p>
 					<ul>
@@ -862,6 +877,18 @@
 				</div>
 				<button class="welcomego" id="welcomeGo">开始使用</button>
 			</div>
+		</section>
+
+		<!-- 文档预览（2.1.0）：点会话里出现的文档条目打开。
+		     范围按用户选的 C 方案：**只服务会话里给你的文件**，不做目录浏览。 -->
+		<section class="sheet" id="docopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="docBack">← 返回</button>
+				<span class="title" id="docTitle">文档</span>
+				<span class="spacer"></span>
+				<a class="iconbtn" id="docDownload" href="#" download>下载</a>
+			</div>
+			<div class="scroll pad" id="docBody"></div>
 		</section>
 
 		<!-- 录音：直接在网页里录一段声音发过去。
@@ -1938,6 +1965,12 @@
 			seen.add(raw)
 			const src = 'api/file?path=' + encodeURIComponent(raw)
 			const name = raw.split(/[\\/]/).pop() ?? raw
+			// 2.1.0：文档（md/txt/pdf/代码/Office…）不塞进 <img> ✗，给一个可点的条目 → 预览面板。
+			if (/\.(md|markdown|txt|log|csv|tsv|json|ya?ml|xml|ini|sql|py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|pdf|docx?|xlsx?|pptx?|zip)$/i.test(raw)) {
+				html += '<div class="drow" data-doc-path="' + escapeHtml(raw) + '" data-doc-name="' + escapeHtml(name) + '">'
+					+ '📄 <span class="doclink">' + escapeHtml(name) + '</span><span class="docgo">打开 ›</span></div>'
+				continue
+			}
 			if (/\.(mp4|mov|webm|m4v)$/i.test(raw)) {
 				html += '<div class="shotwrap"><video class="shot" src="' + src + '" controls playsinline preload="metadata" style="aspect-ratio:16 / 9"></video>' +
 					'<div class="shothint">长按视频可存到相册</div></div>'
@@ -2052,7 +2085,13 @@
 						return media + (description === '' ? '' : '<div class="shothint">' + escapeHtml(description) + '</div>')
 					}
 					const name = path.split(/[\\/]/).pop() ?? path
-					return '<div class="drow">📄 ' + escapeHtml(description === '' ? name : description + ' · ' + name) + '</div>'
+					/*
+					 * 2.1.0：**文档可点开**（用户要求"手机能读取和打开电脑的文档文件"）。
+					 * 交付物以前只是一行灰字 ✗ —— 点了没反应，手机上等于看不到内容。
+					 */
+					return '<div class="drow" data-doc-path="' + escapeHtml(path) + '" data-doc-name="' + escapeHtml(name) + '">'
+						+ '📄 <span class="doclink">' + escapeHtml(description === '' ? name : description + ' · ' + name) + '</span>'
+						+ '<span class="docgo">打开 ›</span></div>'
 				}).join('')
 				entries.push({ key: 'd' + index, html: '<div class="deliver"><div class="dtitle">📦 素材 / 交付物</div>' + rows + '</div>' })
 			}
@@ -2279,6 +2318,13 @@
 	}
 
 	log.addEventListener('click', (event) => {
+		// 文档条目（交付物、工具结果里的文稿路径）→ 打开预览面板（2.1.0）。
+		// 必须排在最前面：这些条目里可能也带别的标记，别被后面的分支先吃掉。
+		const docRow = event.target.closest && event.target.closest('[data-doc-path]')
+		if (docRow) {
+			void openDoc(docRow.getAttribute('data-doc-path') ?? '', docRow.getAttribute('data-doc-name') ?? '')
+			return
+		}
 		// 「复制」按钮：看得见的复制入口（长按那条也在，但它藏得深）。
 		// 必须排在图片/工具分支前面 —— 按钮就贴在气泡外侧，别被后面的分支吃掉。
 		const copyBtn = event.target.closest && event.target.closest('button[data-copy]')
@@ -5141,7 +5187,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '15'
+	const WELCOME_VERSION = '16'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -5176,6 +5222,84 @@
 	// 它是**给人重看的入口**，所以不动"已看过"的标记 —— 首访只讲一次这件事仍然成立，
 	// 但"我当时没看清 / 要教同学怎么用"时得有个地方点。
 	$('help').addEventListener('click', () => { show(welcome) })
+
+	/* ------------------------------------------------- 文档预览（2.1.0） */
+	/**
+	 * 用户要求：「让手机能读取和打开电脑的文档文件」；范围按他选的**最小方案**：
+	 * 只有**会话里出现过的文件**能打开（不做目录浏览 ✗）。
+	 *
+	 * 按类型决定怎么呈现：
+	 *   - 文本/Markdown/CSV/代码 → 取回来直接渲染（Markdown 做一个很小的格式化）；
+	 *   - PDF → iframe（手机浏览器自己会渲染，带 `?inline=1` 让服务端给 inline 头）；
+	 *   - 图片/音视频 → 直接放播放器/图；
+	 *   - Word/Excel/PPT/压缩包 → 浏览器**渲染不了**，明确说清 + 指引右上角「下载」用别的 App 打开
+	 *     （不假装能看 ✗，也不给一个空白页）。
+	 */
+	function docKindOf(name) {
+		const lower = String(name).toLowerCase()
+		if (/\.(md|markdown)$/.test(lower)) return 'markdown'
+		if (/\.(txt|log|ini|ya?ml|xml)$/.test(lower)) return 'text'
+		if (/\.(csv|tsv)$/.test(lower)) return 'csv'
+		if (/\.(json)$/.test(lower)) return 'json'
+		if (/\.(py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|sql)$/.test(lower)) return 'code'
+		if (/\.pdf$/.test(lower)) return 'pdf'
+		if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
+		if (/\.(mp3|m4a|wav|ogg|opus|aac|flac|mp4|mov|webm|m4v)$/.test(lower)) return 'av'
+		return 'binary'
+	}
+
+	/** 极简 Markdown → HTML（先整体转义，只认标题/加粗/代码/无序列表）。 */
+	function tinyMarkdown(raw) {
+		const lines = escapeHtml(raw).split(/\r?\n/)
+		let html = ''
+		let inCode = false
+		for (const line of lines) {
+			if (/^```/.test(line)) { html += inCode ? '</code></pre>' : '<pre><code>'; inCode = !inCode; continue }
+			if (inCode) { html += line + '\n'; continue }
+			const heading = /^(#{1,3})\s+(.*)$/.exec(line)
+			if (heading !== null) { const level = heading[1].length; html += `<h${level}>${heading[2]}</h${level}>`; continue }
+			const item = /^\s*[-*]\s+(.*)$/.exec(line)
+			if (item !== null) { html += '• ' + item[1].replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>') + '<br>'; continue }
+			html += line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>') + '<br>'
+		}
+		if (inCode) html += '</code></pre>'
+		return html
+	}
+
+	async function openDoc(path, name) {
+		const body = $('docBody')
+		const src = 'api/file?path=' + encodeURIComponent(path)
+		$('docTitle').textContent = name === '' ? '文档' : name
+		$('docDownload').setAttribute('href', src)
+		$('docDownload').setAttribute('download', name === '' ? 'file' : name)
+		body.textContent = '正在打开…'
+		show($('docopen'))
+		const kind = docKindOf(name === '' ? path : name)
+		if (kind === 'image') { body.innerHTML = '<img src="' + src + '" alt="">'; return }
+		if (kind === 'av') {
+			body.innerHTML = /\.(mp4|mov|webm|m4v)$/.test(String(name).toLowerCase())
+				? '<video src="' + src + '" controls playsinline style="width:100%"></video>'
+				: '<audio src="' + src + '" controls style="width:100%"></audio>'
+			return
+		}
+		if (kind === 'pdf') { body.innerHTML = '<iframe src="' + src + '&inline=1" title="PDF"></iframe>'; return }
+		if (kind === 'binary') {
+			body.innerHTML = '<div id="docNote">这类文件（Word / Excel / PPT / 压缩包）浏览器看不了 —— '
+				+ '点右上角「下载」，用手机上的 WPS / Office 打开。</div>'
+			return
+		}
+		try {
+			const response = await fetch(src)
+			if (response.ok !== true) throw new Error('HTTP ' + response.status)
+			const raw = await response.text()
+			body.innerHTML = kind === 'markdown' ? tinyMarkdown(raw) : '<pre>' + escapeHtml(raw) + '</pre>'
+		} catch (error) {
+			body.innerHTML = '<div id="docNote">打不开（' + escapeHtml(String(error?.message ?? error))
+				+ '）—— 可以点右上角「下载」试试。</div>'
+		}
+	}
+
+	$('docBack').addEventListener('click', () => { hide($('docopen')); $('docBody').textContent = '' })
 
 	/* ------------------------------------------------- 开始页的版本说明 */
 	/**

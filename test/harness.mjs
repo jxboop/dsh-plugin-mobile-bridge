@@ -1151,9 +1151,34 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	const sneaky = await fetch(`${base}/api/file?path=${encodeURIComponent('C:\\Windows\\..\\Windows\\secret.png')}`, authed)
 	check('带 .. 绕一圈也还是被拒', sneaky.status === 403, String(sneaky.status))
 
-	// 目录内但不是媒体：拒绝
-	const notMedia = await fetch(`${base}/api/file?path=${encodeURIComponent(join(scratch, 'mobile-bridge.json'))}`, authed)
-	check('只发图片/视频，配置文件不给（415）', notMedia.status === 415, String(notMedia.status))
+	// 2.1.0：**文档可以发给手机**（用户要的就是"能打开 agent 给我的文档"）。
+	const docPath = join(scratch, 'mobile-uploads', 'note.md')
+	await writeFile(docPath, '# 标题\n\n正文一段。\n', 'utf8')
+	const doc = await fetch(`${base}/api/file?path=${encodeURIComponent(docPath)}&inline=1`, authed)
+	const docType = doc.headers.get('content-type') ?? ''
+	check('Markdown 文档能发给手机，类型对、且能内联渲染',
+		doc.status === 200 && docType.startsWith('text/markdown'), `${doc.status} ${docType}`)
+	check('内联渲染时带 inline 的 content-disposition（浏览器直接在页面里显示）',
+		(doc.headers.get('content-disposition') ?? '').startsWith('inline'), String(doc.headers.get('content-disposition')))
+	const pdfPath = join(scratch, 'mobile-uploads', 'mini.pdf')
+	await writeFile(pdfPath, '%PDF-1.4\n%%EOF\n', 'utf8')
+	const pdf = await fetch(`${base}/api/file?path=${encodeURIComponent(pdfPath)}`, authed)
+	check('PDF 也能发（手机浏览器能直接看）', pdf.status === 200 && (pdf.headers.get('content-type') ?? '') === 'application/pdf',
+		`${pdf.status} ${pdf.headers.get('content-type')}`)
+	// 但**密钥类文件永远不给**：加了文档类型之后 mobile-bridge.json（PIN 明文）会落进 .json 这一档，
+	// 不拦就是"把钥匙挂在门上"。
+	const secretJson = await fetch(`${base}/api/file?path=${encodeURIComponent(join(scratch, 'mobile-bridge.json'))}`, authed)
+	check('密钥类文件不给（配置文件 403，不是 415 也不是 200）',
+		secretJson.status === 403, String(secretJson.status))
+	const credPath = join(scratch, '.credentials.yaml')
+	await writeFile(credPath, 'version: 1\n', 'utf8')
+	const cred = await fetch(`${base}/api/file?path=${encodeURIComponent(credPath)}`, authed)
+	check('凭据文件也不给（403）', cred.status === 403, String(cred.status))
+	// 真正不认识的类型（.bin）还是 415。
+	const binPath = join(scratch, 'mobile-uploads', 'blob.bin')
+	await writeFile(binPath, 'not a document', 'utf8')
+	const bin = await fetch(`${base}/api/file?path=${encodeURIComponent(binPath)}`, authed)
+	check('不认识的类型仍然 415（不变成通用文件下载器）', bin.status === 415, String(bin.status))
 }
 
 /* --- /api/size：页面对着它预留位置，不然图到货时会把内容顶走（"错位"）---- */
