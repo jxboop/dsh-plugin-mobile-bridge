@@ -877,6 +877,29 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-image-gen
 - 支持 `.gif/.webp/.png/.jpg` 和 `.mp4/.mov/.webm`；**扩展名会骗人**，服务端按内容认类型。
 - 手工改 `~/.dsh/mobile-bridge.json` 的 `backgroundFile` 仍然有效（老办法），但现在没必要了。
 
+## 跑测试（改了代码之后必跑）
+
+```powershell
+cd <这个插件目录>
+node test/package.mjs     # 打包清单、文本编码自检（乱码/BOM）
+node test/harness.mjs     # 宿主接口与闸门（最多）
+node test/qr.mjs          # 二维码编码器（含**往返解码**）
+node test/ui.mjs          # 手机页面（jsdom）
+node test/security.mjs
+node test/crashprobe.mjs
+node test/addresses.mjs
+node test/offline.mjs
+```
+
+- 有两条需要**仅测试**依赖（`jsdom` 给界面测试 ✓、`jsqr` 给二维码往返解码 ✓）——
+  它们放在 `..\_verify` 里，**和插件运行时无关**：插件本身**零运行时依赖** ✓。
+- **缺 `jsqr` 时 `test/qr.mjs` 会显眼地 SKIP 那条往返解码** ✓（打印一行 `SKIP` + 写明怎么装 ✓），
+  结果是「11 通过 + 1 跳过」、**exit 0** ✓ —— 既是"不是失败"，也**不算验过** ✓。
+  **发版前请在装了 jsqr 的地方跑一次**，确认往返解码那行是 `PASS` ✓（不然等于没验编码器 ✗）：
+  `npm i --no-save jsqr`。
+- **发布目录（`publish/`）里没有那个 `_verify`** ✓，所以在那里跑会走 SKIP ✓ ——
+  要真验二维码就回**源码目录**跑 ✓。
+
 ## License
 
 MIT

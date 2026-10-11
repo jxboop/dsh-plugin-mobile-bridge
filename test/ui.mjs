@@ -130,6 +130,8 @@ const powerRequests = []
 const clipboardWrites = []
 /** 2.7.0 ★6：定时任务的请求体。 */
 const scheduleWrites = []
+/** 2.7.0 ★10：只读链接（生成 / 撤销）的请求体。 */
+const shareWrites = []
 
 const requests = []
 const opened = []
@@ -345,6 +347,32 @@ async function stubFetch(input, options = {}) {
 		})
 	}
 	// ⚠️ 用 startsWith：请求带着 `?sessionId=…` ✓（写成精确匹配 = 桩永远不命中 ✗）
+	// ③ 审批记录（2.5.0 遗留）：状态盘底部那段"最近批过什么" ✓
+	if (path.startsWith('/api/approvals')) {
+		return jsonResponse({
+			count: 1, total: 7,
+			records: [{ at: 1791761053959, kind: 'approval', sessionId: 'session-live', tool: 'pwsh', outcome: 'allowed-once', ip: '100.122.188.30', via: 'phone' }],
+		})
+	}
+	// ★10 受限只读链接：生成 / 撤销（都要登录 ✓；生成还要现输 PIN ✓）
+	if (path === '/api/share') {
+		if (options.method === 'POST') {
+			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+			shareWrites.push(body)
+			if (String(body.pin ?? '') !== CORRECT_PIN) return jsonResponse({ error: 'PIN 不正确 —— 没有生成任何链接' })
+			return jsonResponse({
+				created: true, token: 'a'.repeat(32), expiresAt: Date.now() + 3600000,
+				url: 'https://example.ts.net/0123456789abcdef/share?t=' + 'a'.repeat(32),
+				message: '只读链接已生成（24 小时后失效 ✓，随时可以撤销 ✓）',
+			})
+		}
+		return jsonResponse({ enabled: true, links: [] })
+	}
+	if (path === '/api/share/revoke') {
+		const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+		shareWrites.push({ action: 'revoke', token: body.token })
+		return jsonResponse({ revoked: true })
+	}
 	if (path.startsWith('/api/schedule')) {
 		if (options.method === 'POST') {
 			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
@@ -3550,6 +3578,13 @@ await wait(40)
 		String($('sysBody').textContent.includes('绝不能杀')))
 	check('默认关时面板上写着怎么开（processControl）',
 		$('sysBody').textContent.includes('processControl'))
+	// ③ 审批记录（2.5.0 遗留）：状态盘底部那段要真把账画出来 ✓（不是"读不到"分支 ✗）。
+	const approvalsText = $('sysBody').textContent.replace(/\s+/g, ' ')
+	check('📊 底部画出「最近批过什么」：结果 + 工具 + 来源 IP + 总数 ✓',
+		approvalsText.includes('最近批过什么') && approvalsText.includes('允许一次')
+		&& approvalsText.includes('pwsh') && approvalsText.includes('100.122.188.30')
+		&& approvalsText.includes('共 7 条'),
+		approvalsText.slice(Math.max(0, approvalsText.indexOf('最近批过什么')), 120))
 	check('一键动作那段在：锁屏 + 关机/重启 都在状态盘上',
 		$('sysBody').textContent.includes('锁屏')
 		&& $('sysBody').querySelector('[data-power="shutdown"]') !== null
@@ -3756,6 +3791,47 @@ await wait(40)
 	const rejected = (() => { try { return JSON.parse(window.localStorage.getItem('dshm.outbox') ?? '[]') } catch { return [] } })()
 	check('服务端明确拒绝（400/403）**不进箱** ✗（那是"发不出去"，进箱只会一直卡着 ✓）',
 		Array.isArray(rejected) && rejected.length === 0, JSON.stringify(rejected))
+}
+
+/* --- 2.7.0 ★10：只读链接（生成要现输 PIN ✓、撤销一发就生效 ✓）----------------- */
+{
+	openSessions()
+	await wait(30)
+	const rows = sessionRows()
+	if (rows.length > 0) {
+		click($('sessList').querySelector(`[data-session="${rows[0]}"]`))
+		await wait(80)
+		click($('expBtn'))
+		await wait(120)
+		const pinBox = $('sharePin')
+		const goBtn = $('shareGo')
+		if (pinBox !== null && goBtn !== null) {
+			pinBox.value = '000000'
+			click(goBtn)
+			await wait(150)
+			check('PIN 不对：不发请求去要链接（服务端也会拒，但手机上先说清 ✓）',
+				$('shareUrl').value === '' || String($('shareError').textContent).length > 0,
+				String($('shareError').textContent).slice(0, 40))
+			pinBox.value = CORRECT_PIN
+			click(goBtn)
+			await wait(180)
+			const sent = shareWrites.at(-1) ?? null
+			check('生成只读链接：请求里带 PIN + 当前会话 ✓（默认 24 小时 ✓）',
+				sent?.pin === CORRECT_PIN && typeof sent?.sessionId === 'string' && sent.sessionId !== '' && sent?.hours === 24,
+				JSON.stringify(sent))
+			check('生成的链接显示在只读框里（能直接复制发给家人 ✓）',
+				String($('shareUrl').value).includes('/share?t='), String($('shareUrl').value).slice(0, 50))
+			check('生成后出现「撤销这条」按钮（不然链接就只能等它过期 ✗）',
+				window.getComputedStyle($('shareRevoke')).display !== 'none')
+			click($('shareRevoke'))
+			await wait(180)
+			check('撤销：请求里带的就是刚生成的那个 token ✓（不是让用户自己填 ✗）',
+				shareWrites.at(-1)?.action === 'revoke' && shareWrites.at(-1)?.token === 'a'.repeat(32),
+				JSON.stringify(shareWrites.at(-1) ?? null))
+		}
+		click($('expBack'))
+		await wait(60)
+	}
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

@@ -6397,6 +6397,27 @@
 				+ '</div>')
 		}
 		html.push('<div class="hint">读不到的数据我不会编：显示"（再刷一次）"就是还没有第二次采样。</div>')
+
+		/*
+		 * ③ 审批记录（2.5.0 遗留）：手机上点过的每一次"允许/拒绝"都在这儿留账 ✓。
+		 * 放在状态盘里而不是新开一页：它本来就是"这台电脑上发生过什么"的一部分 ✓。
+		 */
+		const approvals = sysPanel.approvals
+		html.push('<div class="sessgroup">最近批过什么（审批记录）</div>')
+		if (approvals === null || approvals === undefined) {
+			html.push('<div class="hint">读不到审批记录（接口没通？）—— 不影响别的功能 ✓</div>')
+		} else if ((approvals.records ?? []).length === 0) {
+			html.push('<div class="hint">还没有人批过任何东西 ✓（以后每次「允许一次 / 拒绝」都会记一行 ✓）</div>')
+		} else {
+			for (const item of approvals.records) {
+				const when = new Date(Number(item.at ?? 0)).toLocaleString()
+				const verdict = item.outcome === 'allowed-once' ? '允许一次' : (item.outcome === 'rejected' ? '拒绝' : String(item.outcome ?? ''))
+				html.push('<div class="sysrow"><span class="k">' + escapeHtml(verdict) + '</span>'
+					+ '<span class="v">' + escapeHtml(String(item.tool ?? '（未知工具）')) + '</span>'
+					+ '<span class="n">' + escapeHtml(when + '  ·  来自 ' + String(item.ip ?? '?')) + '</span></div>')
+			}
+			html.push('<div class="hint">共 ' + (approvals.total ?? approvals.records.length) + ' 条（只显示最近 5 条 ✓）</div>')
+		}
 		box.innerHTML = html.join('')
 	}
 
@@ -6409,6 +6430,8 @@
 			sysPanel.data = await api('api/system')
 			// 关机/重启那块（含"关机前自检"）顺便一起拿 ✓ —— 同一个面板里，分开取只会多一次往返 ✓。
 			try { sysPanel.power = await api('api/power') } catch { sysPanel.power = null }
+			// ③ 审批记录（2.5.0 遗留）：顺手拿最近 5 条 ✓ —— "谁在什么设备上批了什么" ✓。
+			try { sysPanel.approvals = await api('api/approvals?limit=5') } catch { sysPanel.approvals = null }
 			renderSystem()
 		} catch (error) {
 			if (box !== null) box.innerHTML = '<div class="err-box">读不到电脑状态：' + escapeHtml(error.message) + '</div>'
