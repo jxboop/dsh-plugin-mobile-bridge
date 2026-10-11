@@ -2887,6 +2887,17 @@ check('说明指向了下拉框或读取状态',
 	 */
 	// 用户 2026-10-11：「说明也要改一下，最底下还有录音界面啊」—— 说明页必须写清**四页**，
 	// 并且点明"划到录音就是打开录音面板"（以前写的是"三个页面"，早就不对了 ✗）。
+	// 用户 2026-10-11：「给说明加一个背景，贴合我们手机桥的氛围」—— 说明页有自己的深色渐变底
+	// （手机 ←→ 电脑 的"桥"隐喻），不再只是那层透明纱 ✓。别的面板和壁纸逻辑不受影响 ✓。
+	// jsdom 不解析 background 简写（getComputedStyle 返回空），所以查样式源码 —— 和哨兵那条一个路子。
+	{
+		const css = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+		const rule = /#welcome \{[^}]*\}/.exec(css)?.[0] ?? ''
+		check('说明页有自己的背景（渐变 + 桥的网格），不是一层素纱',
+			rule.includes('radial-gradient') && css.includes('#welcome::before'),
+			rule.slice(0, 80))
+	}
+
 	check('说明页写的是四页（任务 · 新建 · 🎤录音 · 余额），不是旧的"三个页面"',
 		$('welcome').textContent.includes('一共四页') && $('welcome').textContent.includes('录音也是一页')
 		&& $('welcome').textContent.includes('三个页面') === false,

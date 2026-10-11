@@ -501,6 +501,28 @@
 		/* 半透明 + blur：背景视频还在后面，但盖一层足够厚的纱，读长文不费眼。 */
 		background: color-mix(in srgb, var(--bg) 88%, transparent);
 	}
+	/*
+	 * 说明页自己的背景（用户 2026-10-11：「给说明加一个背景，贴合我们手机桥的氛围」）：
+	 * 深色渐变打底 + 一点点"连线/桥"的网格（两端点 + 中间那条线，就是这个插件的隐喻：
+	 * 手机 ←→ 电脑）。只加在 #welcome 上，别的面板和你的壁纸逻辑一个字都不动 ✓。
+	 * 用 ::before 画、pointer-events:none，不挡点击；reduced-motion 的人看到静止版 ✓。
+	 */
+	#welcome {
+		background:
+			radial-gradient(120% 70% at 50% -10%, rgba(70, 150, 235, .22), transparent 62%),
+			radial-gradient(90% 60% at 85% 105%, rgba(120, 90, 235, .18), transparent 60%),
+			linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, #0b1220), color-mix(in srgb, var(--bg) 96%, #000));
+	}
+	#welcome::before {
+		content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .5;
+		background-image:
+			radial-gradient(circle at 12% 22%, rgba(140, 200, 255, .55) 0 2px, transparent 3px),
+			radial-gradient(circle at 86% 74%, rgba(140, 200, 255, .55) 0 2px, transparent 3px),
+			linear-gradient(180deg, transparent 0 21.4%, rgba(140, 200, 255, .20) 21.4% 21.9%, transparent 21.9%),
+			repeating-linear-gradient(90deg, rgba(140, 200, 255, .07) 0 1px, transparent 1px 34px),
+			repeating-linear-gradient(0deg, rgba(140, 200, 255, .06) 0 1px, transparent 1px 34px);
+	}
+	#welcome .sheetbar, #welcome .scroll { position: relative; z-index: 1; }
 	.sheetbar {
 		flex: none; display: flex; align-items: center; gap: 8px;
 		padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top));
