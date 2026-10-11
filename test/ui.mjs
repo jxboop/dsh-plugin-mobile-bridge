@@ -94,12 +94,34 @@ const check = (name, ok, detail = '') => {
 
 const SESSION = 'session-ui-test'
 const SESSIONS = [
-	{ sessionId: SESSION, title: '手机界面测试', cwd: 'D:\\learn\\deepseek学习', running: false, blank: false, updatedAt: 2000 },
+	{
+		sessionId: SESSION,
+		title: '手机界面测试',
+		cwd: 'D:\\learn\\deepseek学习',
+		running: false,
+		blank: false,
+		updatedAt: 2000,
+		// 2.6.0：宿主给每一行都带着**真值模型**（modelSelection 投影）。手机上顶端那一行
+		// 显示的就是它 —— 而不是手机自己记的 `dshm.model`。
+		model: { provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: '' },
+	},
 	{ sessionId: 'session-older', title: '旧会话', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 1000 },
 	// 第三个会话专门留给"从没打开过"的场景：缓存测试要验证"没缓存的会话照旧拉整段"，
 	// 而任何被切走过的会话都会被记进缓存（这正是那个功能的定义），所以需要一个新的。
 	{ sessionId: 'session-fresh', title: '没打开过的会话', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 500 },
+	// 2.6.0 新增两类：**agent 子会话**（origin/parentSessionId 判定）和 **cwd 就在桥自己目录里**
+	// 的自检会话。它们默认**不出现在手机列表里**（用户：「占位置」），但可以勾「显示全部会话」看回来。
+	{ sessionId: 'session-sub', title: '你是事实核查员。任务：独立核对', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 400, subagent: true },
+	{ sessionId: 'session-self', title: '输出数字 1 到 1200', cwd: 'D:\\dsh\\dsh-home\\plugin-src\\dsh-plugin-mobile-bridge', running: false, blank: false, updatedAt: 300, ownDir: true },
+	// 删除用例专用：删"正在看的那个"时，页面上必须有**另一个**会话可落脚。
+	{ sessionId: 'session-live', title: '正在看的会话', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 1500 },
 ]
+/** 删除接口要的 PIN（桩认这一个）。 */
+const CORRECT_PIN = '123456'
+/** 2.6.0：已经被"删除"（归档）掉的会话 —— bootstrap 不再把它们报回来。 */
+const archiveRemoved = new Set()
+/** 删除请求的请求体（断言带没带 sessionId / PIN / stop）。 */
+const archiveRequests = []
 
 const requests = []
 const opened = []
@@ -207,7 +229,7 @@ function resolveRequest(input) {
 /** bootstrap / boot 共用的那部分（真宿主也是同一个 buildBootstrap）。 */
 function bootstrapBody() {
 	return {
-		sessions: SESSIONS,
+		sessions: SESSIONS.filter((item) => archiveRemoved.has(item.sessionId) === false),
 		failure: null,
 		background: backdropInfo,
 		// 宿主记着"这台手机看过说明页"没有（换地址/无痕时本地标记会丢，靠它兜底）。
@@ -293,6 +315,23 @@ async function stubFetch(input, options = {}) {
 	if (path === '/api/model') {
 		pickedModelRequests.push({ body: (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })() })
 		return jsonResponse({ selected: { provider: 'deepseek-official', model: 'deepseek-chat' } })
+	}
+	/*
+	 * 2.6.0：删除会话（POST /api/session/archive）。桩要能演三种答案：
+	 *   ① PIN 不对 → 403（**不是 401** —— 401 在页面上会弹登录门，把整个界面盖掉）；
+	 *   ② 会话正在跑且没带 stop → 409，用户得再点一次才"停掉并删除"；
+	 *   ③ 正常 → 记进 archiveRemoved，之后的 bootstrap 就不再报它（= 真的从列表里消失）。
+	 */
+	if (path === '/api/session/archive') {
+		const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+		archiveRequests.push(body)
+		if (body.pin !== CORRECT_PIN) return jsonResponse({ error: 'PIN 不正确 —— 会话没有删除' }, 403)
+		const target = SESSIONS.find((item) => item.sessionId === body.sessionId)
+		if (body.stop !== true && target?.running === true) {
+			return jsonResponse({ error: '这个会话正在跑 —— 要先把它停掉才能删' }, 409)
+		}
+		archiveRemoved.add(String(body.sessionId ?? ''))
+		return jsonResponse({ archived: true, sessionId: body.sessionId })
 	}
 	if (path.startsWith('/api/models')) {
 		return jsonResponse({ groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }] }] })
@@ -487,6 +526,9 @@ const dom = new JSDOM(html, {
 		// 按"老用户"来：手机本地记着上次那个会话。真手机每次进来都是这个状态，
 		// 而首装那趟（没有这个标记）另有一条用例专门查。
 		try { window.localStorage.setItem('dshm.session', SESSION) } catch { /* jsdom 里不该失败，失败就按首装算 */ }
+		// 2.6.0：手机自己记着一个"别的"模型（用户在新建面板里选过、或者上一条会话用过的）。
+		// 顶端那一行必须显示**宿主的真值**、而不是这个 —— 这正是要钉住的那件事。
+		try { window.localStorage.setItem('dshm.model', 'zhipu|glm-4-plus') } catch { /* 同上 */ }
 		// 而且手机上还留着上次那份对话（切到别的 App 再点回来就是这个状态）：
 		// 页面应该**先把这份铺上**，再去后台补新的 —— 不用等整段重新下载。
 		try {
@@ -608,8 +650,8 @@ check('bootstrap shows the app and hides the PIN gate',
 // 2.5.0：会话选择不再是原生下拉，而是"一行摘要 + 点开的分组列表"。
 openSessions()
 await wait(20)
-check('会话列表里三个会话都在（喂给自绘列表，不再是原生下拉的 option）',
-	sessionRows().length === 3, sessionRows().join(', '))
+check('会话列表里该有的会话都在（喂给自绘列表，不再是原生下拉的 option）',
+	sessionRows().length === 4, sessionRows().join(', '))
 check('the most recent session is selected and streamed',
 	$('sessBtn').textContent.includes('手机界面测试') && source !== null && source.url.includes(SESSION),
 	`bar=${$('sessBtn').textContent} url=${source?.url}`)
@@ -3015,6 +3057,145 @@ check('说明指向了下拉框或读取状态',
 		window.localStorage.removeItem('dshm.pins')
 		window.localStorage.removeItem('dshm.stars')
 		window.localStorage.removeItem('dshm.usage')
+	}
+
+	/* --- 2.6.0：顶端显示真值模型 + 列表不摆子会话/自检 + 删除（要输 PIN）---------
+	 * 用户 2026-10-11 三句话，对应下面三块：
+	 *   ①「在网页顶端加一个当前模型的显示」—— 值必须是**宿主的真值**（2.4.2 那个
+	 *     "电脑端换的、手机还显示默认"的限制在这一版修掉）；
+	 *   ②「agent 子对话以及测试对话就不要显示在对话框里了，占位置」——默认藏、能看回来；
+	 *   ③「再加一个删除对话按钮，并且要输入 pin 才能删除对话」——删除必须先输 PIN，
+	 *     而且**正在跑的会话不会被悄悄删掉**。
+	 */
+	click(tabButton('task'))
+	await wait(40)
+	{
+		const topOption = () => $('modelNow').options[$('modelNow').selectedIndex]?.textContent ?? ''
+		const openList = async () => { openSessions(); await wait(30) }
+		const archiveBefore = () => archiveRequests.length
+
+		// ① 顶端那一行
+		check('当前模型显示在网页顶端（标题栏里的第二行）',
+			$('modelRow') !== null && $('modelRow').closest('header') !== null
+			&& $('modelLabel') !== null && $('modelLabel').textContent.includes('当前模型'),
+			$('modelRow') === null ? 'no #modelRow' : String($('modelRow').parentElement?.tagName))
+		check('顶端显示的是宿主真值，不是手机自己记的 dshm.model（zhipu|glm-4-plus）',
+			$('modelNow').value === 'deepseek-official|deepseek-chat' && topOption().includes('deepseek-chat'),
+			`value=${$('modelNow').value} 显示=${topOption()}`)
+		// 宿主在流里换模型 → 不用重开页面，顶端跟着变。
+		source.emit({ t: 'event', event: { type: 'model/selection', seq: 210, time: Date.now(), data: { provider: 'zhipu', model: 'glm-4-plus' } } })
+		await wait(60)
+		check('宿主那边换了模型：顶端那一行跟着变（流里的 model/selection）',
+			$('modelNow').value === 'zhipu|glm-4-plus', `value=${$('modelNow').value} 显示=${topOption()}`)
+		/*
+		 * 宿主报的模型**不在目录里**（provider 被停用/目录没拉到）时也必须看得见 ——
+		 * 否则 `<select>` 会静默跳到第一项，用户看到的模型是错的，而这个功能的全部意义
+		 * 就是"看到正在用的到底是哪个"。
+		 */
+		check('宿主报的模型不在目录里时也照样显示（不静默跳到第一项）',
+			topOption().includes('glm-4-plus'), topOption())
+		source.emit({ t: 'event', event: { type: 'request/header', seq: 211, time: Date.now(), data: { header: { config: { provider: 'deepseek-official', model: 'deepseek-chat' } }, reason: 'change' } } })
+		await wait(60)
+		check('"下一次请求真用哪个"也认（request/header）—— 电脑端换模型手机马上跟上',
+			$('modelNow').value === 'deepseek-official|deepseek-chat', `value=${$('modelNow').value}`)
+
+		// ② 默认不摆 agent 子会话 / 自检会话
+		await openList()
+		check('列表默认不摆 agent 子会话 / 自检会话（用户：「占位置」）',
+			sessionRows().includes('session-sub') === false && sessionRows().includes('session-self') === false
+			&& sessionRows().length === 4, sessionRows().join(', '))
+		check('藏了几个要说明白，并给出出口（不是静默消失）',
+			$('sessHidden').textContent.includes('2') && $('sessHidden').textContent.includes('子会话'),
+			$('sessHidden').textContent)
+		$('sessAll').checked = true
+		$('sessAll').dispatchEvent(new window.Event('change', { bubbles: true }))
+		await wait(40)
+		check('勾「显示全部会话」→ agent 子会话 / 自检会话都回来了',
+			sessionRows().includes('session-sub') === true && sessionRows().includes('session-self') === true,
+			sessionRows().join(', '))
+		check('这个开关记在手机本地（下次打开还是你的选择）',
+			window.localStorage.getItem('dshm.sessAll') === '1', String(window.localStorage.getItem('dshm.sessAll')))
+		$('sessAll').checked = false
+		$('sessAll').dispatchEvent(new window.Event('change', { bubbles: true }))
+		await wait(40)
+		check('取消勾选 → 又藏起来（开关两个方向都生效）',
+			sessionRows().includes('session-sub') === false && sessionRows().includes('session-self') === false)
+
+		// ③ 删除：先开"输 PIN 确认"那张纸
+		await openList()
+		const beforeOpen = archiveBefore()
+		click($('sessList').querySelector('[data-del="session-fresh"]'))
+		await wait(40)
+		check('点 🗑 打开的是"输 PIN 确认"那张纸，**不是直接删**',
+			window.getComputedStyle($('delopen')).display !== 'none'
+			&& window.getComputedStyle($('sessopen')).display === 'none'
+			&& archiveBefore() === beforeOpen,
+			`删除纸=${window.getComputedStyle($('delopen')).display} 列表=${window.getComputedStyle($('sessopen')).display} 请求=${archiveBefore() - beforeOpen}`)
+		check('纸里写明删的是哪一个，也说明它去哪（归档、电脑端能找回）',
+			$('delTitle').textContent === '没打开过的会话' && $('delopen').textContent.includes('已归档'),
+			`${$('delTitle').textContent} / ${$('delopen').textContent.replace(/\s+/g, ' ').slice(0, 40)}`)
+		$('delGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(40)
+		check('PIN 空着就不发请求，只在原地说明',
+			archiveBefore() === beforeOpen && $('delError').textContent.includes('PIN'),
+			`请求=${archiveBefore() - beforeOpen} 提示=${$('delError').textContent}`)
+
+		// PIN 错：403（**不是 401**）→ 原地报错、纸不关、不弹登录门
+		$('delPin').value = '000000'
+		$('delGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(90)
+		check('PIN 不对：不弹登录门、就在删除纸里说清楚，会话还在',
+			archiveBefore() === beforeOpen + 1
+			&& $('delError').textContent.includes('PIN 不正确')
+			&& window.getComputedStyle($('delopen')).display !== 'none'
+			&& window.getComputedStyle($('gate')).display === 'none',
+			`${$('delError').textContent} / gate=${window.getComputedStyle($('gate')).display}`)
+
+		// PIN 对：带上 sessionId + PIN 发出去，删完纸自己关、列表刷新
+		$('delPin').value = CORRECT_PIN
+		$('delGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(220)
+		check('PIN 对：请求里带着 sessionId 与 PIN，删完那张纸自己关掉',
+			archiveRequests.at(-1)?.sessionId === 'session-fresh' && archiveRequests.at(-1)?.pin === CORRECT_PIN
+			&& window.getComputedStyle($('delopen')).display === 'none',
+			JSON.stringify(archiveRequests.at(-1) ?? null))
+		check('删完列表里真的少了一条（服务端列表缓存也作废了）',
+			sessionRows().includes('session-fresh') === false, sessionRows().join(', '))
+
+		// 正在跑的会话：先 409，再点一次才"停掉并删除"
+		SESSIONS.find((item) => item.sessionId === 'session-older').running = true
+		await openList()
+		click($('sessList').querySelector('[data-del="session-older"]'))
+		await wait(40)
+		$('delPin').value = CORRECT_PIN
+		$('delGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(90)
+		check('正在跑的会话不会被悄悄删掉：说清楚 + 按钮换成「停掉它并删除」',
+			$('delGo').textContent.includes('停掉') && $('delError').textContent.includes('正在跑')
+			&& archiveRequests.at(-1)?.stop !== true,
+			`${$('delGo').textContent} / ${$('delError').textContent}`)
+		$('delGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(220)
+		check('再点一次才真的"停掉并删除"（请求里 stop=true）',
+			archiveRequests.at(-1)?.stop === true && archiveRequests.at(-1)?.sessionId === 'session-older'
+			&& sessionRows().includes('session-older') === false,
+			JSON.stringify(archiveRequests.at(-1) ?? null))
+
+		// 删掉的正好是"正在看的那个"：不能把用户留在死会话上
+		await switchTo('session-live')
+		check('（前置）切到了一个独立会话上', $('sessBtn').textContent.includes('正在看的会话'), $('sessBtn').textContent)
+		await openList()
+		click($('sessList').querySelector('[data-del="session-live"]'))
+		await wait(40)
+		$('delPin').value = CORRECT_PIN
+		$('delGo').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+		await wait(260)
+		check('删的正好是"正在看的那个"：自动让到另一个会话，不把用户留在死页面上',
+			sessionRows().includes('session-live') === false && $('sessBtn').textContent.includes('手机界面测试'),
+			`bar=${$('sessBtn').textContent} rows=${sessionRows().join(', ')}`)
+
+		// 收尾：把这一版加的那个开关状态清掉，后面的用例按默认（藏）走。
+		window.localStorage.removeItem('dshm.sessAll')
 	}
 
 	/* --- 哨兵必须是 setInterval（2026-10-09 独立排查抓到的真 bug）-------------------

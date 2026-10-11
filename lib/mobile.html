@@ -202,8 +202,19 @@
 		background: var(--panel); border-bottom: 1px solid var(--line);
 		box-shadow: var(--glass-edge);
 		padding-top: max(10px, env(safe-area-inset-top)); flex: none;
+		/* 当前模型单独占第二行（2.6.0）：标题那一行本来就挤（标题 + 说明/刷新/退出），
+		   再塞一个模型进去只会把标题压成省略号 —— 换行反而两行都看得清 ✓。 */
+		flex-wrap: wrap; row-gap: 7px;
 	}
 	header .grow { flex: 1; min-width: 0; font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	#modelRow { flex: 1 1 100%; order: 2; display: flex; align-items: center; gap: 7px; min-width: 0; }
+	#modelLabel { flex: none; font-size: 12px; color: var(--muted); }
+	#modelNow {
+		flex: 1 1 auto; min-width: 0; width: auto; max-width: 100%;
+		background: var(--panel-2); border: 1px solid var(--field-line);
+		border-radius: 10px; padding: 6px 9px; font-size: 12px; box-shadow: var(--glass-edge);
+		opacity: .95;
+	}
 	#dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
 	#dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
 	#dot.busy { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
@@ -249,14 +260,9 @@
 	#tabs #recBtn.rec .glyph { transform: scale(1.18); }
 
 	/* ------------------------------------------------------------- task */
-	#modelNow { max-width: 46%; flex: 0 1 auto; width: auto; font-size: 12px; opacity: .92; }
 	.sessionbar {
 		flex: none; display: flex; align-items: center; gap: 8px;
 		padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge);
-	}
-	.sessionbar select {
-		background: var(--panel-2); border: 1px solid var(--field-line);
-		border-radius: 12px; padding: 10px 11px; font-size: 14px; box-shadow: var(--glass-edge);
 	}
 	/*
 	 * 会话栏那一行（2.5.0）：**原生 <select> 里放不下 📌/⭐ 按钮，也没法分组排序** ——
@@ -286,6 +292,17 @@
 		background: var(--panel); border: 1px solid var(--line); box-shadow: var(--glass-edge); opacity: .5;
 	}
 	.sessbtn.on { opacity: 1; border-color: var(--accent); background: var(--panel-2); }
+	/* 删除按钮：比 📌/⭐ 更危险，所以只在按住/标出时才亮红边，平时和其它两个一样压暗。 */
+	.sessdel { color: var(--err); }
+	.sessdel:active { border-color: var(--err); background: var(--err-bg); }
+	/* 列表底部的「显示全部」开关：默认藏起来的那两类会话（agent 子会话 / 自检会话）
+	   能从这儿看回来 —— 藏了东西却不说、也没有出口，用户只会以为会话丢了。 */
+	#sessAllWrap {
+		display: flex; align-items: center; gap: 8px; margin-top: 2px;
+		font-size: 12px; color: var(--muted); line-height: 1.5;
+	}
+	#sessAllWrap input { width: 16px; height: 16px; flex: none; }
+	#delError { color: var(--err); min-height: 18px; }
 	#log { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 4px; }
 	/* 「回到最新」：往上翻着看历史时，新内容在下面长出来，给一个明确的回去入口。
 	   以前是自动把视线拽回底部（和用户抢滚动条），现在改成"用户说了算"。
@@ -807,6 +824,14 @@
 		<button class="iconbtn" id="help" title="怎么用（第一次连上时会自动讲一遍，这里随时能再看）">说明</button>
 		<button class="iconbtn" id="reload">刷新</button>
 		<button class="iconbtn" id="logout">退出</button>
+		<!-- 当前模型（2.6.0）：用户 2026-10-11「在网页顶端加一个当前模型的显示」。
+		     值来自**宿主的真值投影**（index.js 的 modelOf 读 modelSelection），所以
+		     **在电脑端换过的模型这里也立刻是对的** ✓ —— 2.4.2 那个"手机永远显示默认"
+		     的限制在这一版修掉了 ✓。它同时还是切换器（点开就能换，落在当前会话上）。 -->
+		<div id="modelRow">
+			<span id="modelLabel">当前模型</span>
+			<select id="modelNow" title="当前模型（点开就能换；电脑端换的这里也看得见）"></select>
+		</div>
 	</header>
 
 	<!-- 断线提示条。以前断线只是把一个 9 像素的圆点变红，一个字都不说 ——
@@ -833,7 +858,7 @@
 
 	<main>
 		<section class="view" id="view-task" data-display="flex" style="display:none">
-			<div class="sessionbar"><button id="sessBtn" title="切换会话（📌 置顶 / ⭐ 常用）"></button><select id="modelNow" title="当前模型（点开就能换）"></select></div>
+			<div class="sessionbar"><button id="sessBtn" title="切换会话（📌 置顶 / ⭐ 常用 / 🗑 删除）"></button></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
 			<button id="tonew" style="display:none" title="回到最新" aria-label="回到最新">↓</button>
@@ -927,6 +952,8 @@
 						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
 						<li>「新建」/「生图」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。<strong>只有说明页和提问卡片会让滑动整个失效</strong>（那两处得先处理掉）。</li>
 						<li><strong>电脑上给你的文档，手机上能直接打开</strong>（2.1.0 起）：会话里出现的文稿会多一个「打开 ›」—— Markdown / 文本 / 代码直接渲染，PDF 能翻，Word/Excel/PPT 这类浏览器渲染不了的会给「下载」（用手机上的 WPS/Office 打开）。</li>
+						<li><strong>会话列表就在顶上那一行</strong>（点它打开）：<strong>点一行</strong>切过去、<strong>📌</strong>钉到最上面、<strong>⭐</strong>标成常用、<strong>🗑</strong>删除。<strong>agent 子会话和自检会话默认不摆出来</strong>（不占位置），想看在列表底部勾「显示全部会话」。<strong>删除要输 PIN</strong>；删掉的会话在电脑端「已归档」里还能取消归档找回来。</li>
+						<li><strong>网页最顶上那一行写着"现在用的是哪个模型"</strong>（点开就能换，按会话生效）—— 在电脑上换过模型，这里也会跟着变 ✓。</li>
 					</ul>
 					<p>输入框上面那排按键，从左到右：</p>
 					<ul>
@@ -1034,7 +1061,35 @@
 			</div>
 			<div class="scroll pad">
 				<div id="sessList"></div>
-				<div class="hint">📌 钉到最上面（重启手机也还在）；⭐ 标成常用。点一行就切过去。</div>
+				<div class="hint" id="sessHidden"></div>
+				<label id="sessAllWrap"><input type="checkbox" id="sessAll"> 显示全部会话（连 agent 子会话 / 自检会话一起列出来）</label>
+				<div class="hint">📌 钉到最上面（重启手机也还在）；⭐ 标成常用；🗑 删除这个会话（要输 PIN）。点一行就切过去。</div>
+			</div>
+		</section>
+
+		<!-- 删除会话（2.6.0）：**必须现输一次 PIN** 才删得掉。
+		     为什么单开一张纸：用户要求「要输入 pin 才能删除对话」，而删会话是手机上唯一
+		     不可从手机撤销的操作 —— 所以不做"点一下就没了"，也不复用"15 分钟内提权过"。
+		     实际动作是宿主原生的**归档**（记录不丢，电脑端能找回来），文案里如实写明。 -->
+		<section class="sheet" id="delopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="delBack">← 返回</button>
+				<span class="title">删除会话</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="welcometip">
+					<p>要删除的是：<strong id="delTitle">（未选）</strong></p>
+					<p class="hint">删除后它<strong>不再出现在手机和电脑的会话列表里</strong>；会话内容仍留在电脑上，
+						在电脑端「已归档」里可以取消归档找回来。正在运行的会话会先被停止。</p>
+				</div>
+				<div class="field">
+					<label>输入 PIN 确认（就是登录手机桥那个 6 位 PIN）</label>
+					<input class="plain" id="delPin" type="password" inputmode="numeric" autocomplete="off"
+						autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="12" placeholder="PIN">
+					<div class="hint" id="delError"></div>
+				</div>
+				<button class="primary" id="delGo">删除这个会话</button>
 			</div>
 		</section>
 
@@ -1824,9 +1879,9 @@
 		return nodeShown($('welcome')) || nodeShown($('ask')) || nodeShown($('offline'))
 	}
 
-	/** 现在开着的是哪个"工具抽屉"（会话 / 录音 / 生图 / 背景 / 权限）；没有就 null。 */
+	/** 现在开着的是哪个"工具抽屉"（会话 / 删除 / 录音 / 生图 / 背景 / 权限）；没有就 null。 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
+		for (const id of ['sessopen', 'delopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -2706,6 +2761,21 @@
 				state.running = true
 				setStatus('busy')
 				break
+			/*
+			 * 2.6.0：宿主把"下一次请求用哪个模型"写在 `request/header` 里（桌面端换模型、
+			 * 或这条会话第一次真跑起来时都会来一条），"用户选了还没发出去"则走
+			 * `model/selection`。两个都认 → 网页顶端那一行跟着变，不用重开页面 ✓。
+			 */
+			case 'request/header': {
+				const picked = modelFromEvent(event.data?.header?.config)
+				if (picked !== null) applySessionModel(state.sessionId, picked)
+				break
+			}
+			case 'model/selection': {
+				const picked = modelFromEvent(event.data)
+				if (picked !== null) applySessionModel(state.sessionId, picked)
+				break
+			}
 			case 'turn/end':
 				state.running = false
 				state.live = null
@@ -3729,6 +3799,26 @@
 	 * 「常用」这顶帽子下面有两类：**自己打了星的** + **用得最多的前 3 个**（自动频率）✓。
 	 */
 	const SESS_USAGE_TOP = 3
+	/** 「显示全部会话」开关（默认关）：1 = 连 agent 子会话 / 自检会话一起列出来。 */
+	const SESS_ALL_KEY = 'dshm.sessAll'
+
+	/**
+	 * 这一行是不是"默认藏起来"的两类（用户 2026-10-11：「agent 子对话以及测试对话就不要
+	 * 显示在对话框里了，占位置」）：
+	 *   · `subagent` —— agent 自己派生的子会话：它们在手机上**打不开**（宿主只认父会话地址），
+	 *     摆出来只是占位置 ✓（判据由桥在服务端标好：`origin:'subagent'` 或带 parentSessionId）；
+	 *   · `ownDir`  —— cwd 就在**桥自己的目录**里：那是开发/自检跑出来的会话
+	 *     （"输出数字1到1200"这类），不是用户的工作区 ✓。
+	 * 只影响手机这一屏的显示：宿主的会话数据一个字不改，桌面上照旧全都能看到 ✓。
+	 */
+	const sessHiddenByDefault = (item) => item.subagent === true || item.ownDir === true
+	const sessShowAll = () => readLocal(SESS_ALL_KEY) === '1'
+
+	/** 列表里真正要摆出来的那些（默认过滤掉上面那两类）。 */
+	function visibleSessions() {
+		return sessShowAll() ? state.sessions : state.sessions.filter((item) => sessHiddenByDefault(item) === false)
+	}
+	const hiddenSessions = () => state.sessions.filter((item) => sessHiddenByDefault(item))
 
 	/** 读一份本地 JSON。坏数据、无痕模式都当成"没有"，绝不让页面死在这里。 */
 	function readJsonLocal(key, fallback) {
@@ -3791,12 +3881,14 @@
 	 */
 	function sessGroups() {
 		const prefs = sessPrefs()
-		const byId = new Map(state.sessions.map((item) => [item.sessionId, item]))
+		// 只对**看得见的那一批**分组排序（默认已经把 agent 子会话/自检会话滤掉了）。
+		const visible = visibleSessions()
+		const byId = new Map(visible.map((item) => [item.sessionId, item]))
 		// 置顶：按 pins 数组的顺序（先钉的在前）。已经不在列表里的钉留在 pins 里不删 ——
 		// 会话可能只是暂时没被宿主报出来，删了就再也回不来。
 		const pinned = prefs.pins.map((id) => byId.get(id)).filter((item) => item !== undefined)
 		const pinnedIds = new Set(pinned.map((item) => item.sessionId))
-		const rest = state.sessions.filter((item) => pinnedIds.has(item.sessionId) === false)
+		const rest = visible.filter((item) => pinnedIds.has(item.sessionId) === false)
 		const recency = (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
 		const frequency = (a, b) => sessUsage(prefs, b.sessionId) - sessUsage(prefs, a.sessionId) || recency(a, b)
 		const starred = rest.filter((item) => sessStarred(prefs, item.sessionId)).sort(frequency)
@@ -3836,6 +3928,7 @@
 			+ '" data-session="' + escapeHtml(id) + '"><span class="t">' + escapeHtml(sessTitle(item)) + '</span>' + marks + '</button>'
 			+ '<button class="sessbtn' + (sessPinned(prefs, id) ? ' on' : '') + '" data-pin="' + escapeHtml(id) + '" title="置顶" aria-label="置顶">📌</button>'
 			+ '<button class="sessbtn' + (sessStarred(prefs, id) ? ' on' : '') + '" data-star="' + escapeHtml(id) + '" title="常用" aria-label="常用">⭐</button>'
+			+ '<button class="sessbtn sessdel" data-del="' + escapeHtml(id) + '" title="删除这个会话（要输 PIN）" aria-label="删除">🗑</button>'
 			+ '</div>'
 	}
 
@@ -3845,8 +3938,21 @@
 		const group = (label, items) => items.length === 0 ? '' : '<div class="sessgroup">' + label + '</div>' + items.map((item) => sessRow(item, prefs)).join('')
 		const html = group('📌 置顶', pinned) + group('⭐ 常用', common) + group('🕘 最近', others)
 		sessList.innerHTML = html === ''
-			? '<div class="hint">这台电脑上还没有任何会话，去「新建」开一个。</div>'
+			? '<div class="hint">' + (sessShowAll() ? '这台电脑上还没有任何会话，去「新建」开一个。' : '没有可显示的会话 —— 想看看被藏起来的那几类，勾上下面「显示全部会话」。') + '</div>'
 			: html
+		/*
+		 * 「藏了几个」必须说出来，并且给一个出口 ✓：静默过滤会让用户以为会话丢了
+		 * （这是这一版最容易挨骂的地方，所以把数字和开关都摆在列表底下）。
+		 */
+		const hidden = hiddenSessions().length
+		const hiddenHint = $('sessHidden')
+		if (hiddenHint !== null) {
+			hiddenHint.textContent = sessShowAll()
+				? (hidden === 0 ? '' : `已列出全部：其中 ${hidden} 个是 agent 子会话 / 自检会话。`)
+				: (hidden === 0 ? '' : `已藏起 ${hidden} 个 agent 子会话 / 自检会话（不占位置；想看勾下面）。`)
+		}
+		const toggle = $('sessAll')
+		if (toggle !== null) toggle.checked = sessShowAll()
 	}
 
 	/** 切到某个会话。**和以前 <select> 的 change 是同一段逻辑**，只是入口换成了列表里的行。 */
@@ -3873,6 +3979,103 @@
 		refreshPermBadge()
 		renderSessBar()
 		renderSessList()
+		renderModelNow()
+	}
+
+	/* --------------------------------- 删除会话（2.6.0）：现输一次 PIN */
+	/*
+	 * 用户 2026-10-11：「再加一个删除对话按钮，并且要输入 pin 才能删除对话」。
+	 *
+	 * 两条硬规矩：
+	 *   ① **必须现输 PIN**（不复用"最近提权过"）——这是手机上唯一不可从手机撤销的操作，
+	 *      所以每次都要本人确认一次（服务端也只认请求体里这个 PIN，见 index.js）；
+	 *   ② 正在跑的会话**不会**被悄悄删掉：服务端先回 409，页面把按钮换成「停掉它并删除」，
+	 *      用户再点一次才真的"连正在跑的一起停"。不替用户做这个决定 ✓。
+	 */
+	const del = { sessionId: '', stop: false }
+
+	function setDelText(id, text) {
+		const node = $(id)
+		if (node !== null && node !== undefined) node.textContent = text
+	}
+
+	function openDelete(sessionId) {
+		const item = state.sessions.find((entry) => entry.sessionId === sessionId)
+		if (item === undefined) return
+		del.sessionId = sessionId
+		del.stop = false
+		setDelText('delTitle', sessTitle(item))
+		setDelText('delError', item.running === true ? '这个会话正在跑：点「删除」会先把它停掉，再删。' : '')
+		const button = $('delGo')
+		if (button !== null) button.textContent = '删除这个会话'
+		const pin = $('delPin')
+		if (pin !== null) pin.value = ''
+		hide($('sessopen'))
+		show($('delopen'))
+		try { pin?.focus?.() } catch { /* 聚焦只是为了少点一下，失败无所谓 */ }
+	}
+
+	/** 把它在本地的 📌/⭐/次数 一并清掉（留着只会在同 id 再出现时"复活"）。 */
+	function forgetSessionMarks(sessionId) {
+		const prefs = sessPrefs()
+		const keep = (list) => list.filter((id) => id !== sessionId)
+		writeLocal('dshm.pins', JSON.stringify(keep(prefs.pins)))
+		writeLocal('dshm.stars', JSON.stringify(keep(prefs.stars)))
+		const usage = { ...prefs.usage }
+		delete usage[sessionId]
+		writeLocal('dshm.usage', JSON.stringify(usage))
+	}
+
+	/** 删完重新拉一份列表；删的正好是"正在看的那个"时，自动让到另一个会话去。 */
+	async function refreshAfterDelete(sessionId) {
+		if (state.sessionId === sessionId) {
+			rememberSession(sessionId)
+			state.sessionId = null
+			writeLocal('dshm.session', '')
+		}
+		try {
+			await loadSessions()
+		} catch (error) {
+			flash('会话列表刷新失败：' + error.message)
+		}
+		renderSessList()
+	}
+
+	async function confirmDelete() {
+		if (del.sessionId === '') return
+		const pin = String($('delPin')?.value ?? '').trim()
+		if (pin === '') { setDelText('delError', '先输入 PIN —— 删除必须确认是本人。'); return }
+		const target = del.sessionId
+		const button = $('delGo')
+		if (button !== null) button.disabled = true
+		try {
+			await api('api/session/archive', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: target, pin, stop: del.stop }),
+			})
+			hide($('delopen'))
+			forgetSessionMarks(target)
+			toast('已删除：' + (state.sessions.find((entry) => entry.sessionId === target)?.title ?? target), 2600)
+			await refreshAfterDelete(target)
+		} catch (error) {
+			// 409 = 宿主说"它正在跑"。不假装成功，也不替用户停 —— 换一句话、换一个按钮。
+			if (error?.status === 409) {
+				del.stop = true
+				if (button !== null) button.textContent = '停掉它并删除'
+				setDelText('delError', error.message + ' —— 再点一次就是"停掉它并删除"。')
+			} else if (error?.status === 403) {
+				// 服务端对"PIN 不正确"回 403（不是 401）：401 会在页面上弹登录门，
+				// 而这里该做的是**就地把这句话显示出来**、让用户重输 ✓。
+				setDelText('delError', 'PIN 不正确 —— 会话没有删除，再试一次。')
+				const pinBox = $('delPin')
+				if (pinBox !== null) pinBox.value = ''
+			} else {
+				setDelText('delError', '删除失败：' + error.message)
+			}
+		} finally {
+			if (button !== null) button.disabled = false
+		}
 	}
 
 	async function loadSessions(prefetched) {
@@ -3913,7 +4116,9 @@
 			// 用户在这次页面里明确选过（state.sessionId 已有值）就尊重他的选择。
 			// 打不开的会话（子会话）不参与自动选择：否则每次打开手机都停在一个死页面上。
 			const stored = state.sessionId || readLocal('dshm.session')
-			const usable = state.sessions.filter((item) => state.unsupported.has(item.sessionId) === false)
+			// 打不开的（子会话）+ 默认藏起来的（子会话/自检）都不参与自动挑选：
+			// 否则手机每次打开都停在一个"列表里都看不见"的会话上。
+			const usable = state.sessions.filter((item) => state.unsupported.has(item.sessionId) === false && sessHiddenByDefault(item) === false)
 			const pool = state.sessionId === null && usable.length > 0 ? usable : state.sessions
 			let chosen = pool.find((item) => item.sessionId === stored)
 			if (chosen === undefined || chosen.blank === true) {
@@ -3944,6 +4149,8 @@
 			}
 			// 顶部那一行要等 state.sessionId 定下来之后再画（它就是画"现在在哪个会话"）。
 			renderSessBar()
+			// 顶部「当前模型」也要跟着当前会话走（真值来自宿主的 modelSelection 投影）。
+			renderModelNow()
 	}
 
 	function send() {
@@ -5016,6 +5223,10 @@
 		const [provider, model] = raw.split('|')
 		state.modelNow = raw
 		writeLocal('dshm.model', raw)
+		// 先按用户的选择把这一行画对（宿主的投影要等下一次请求才更新）；失败再回滚。
+		const entry = currentSessionEntry()
+		if (entry !== undefined) entry.model = { provider, model, reasoningEffort: '' }
+		renderModelNow()
 		if (state.sessionId === null || state.sessionId === '') { toast('已记下 ' + model + '，新建会话时用它', 2200); return }
 		try {
 			await api('api/model', {
@@ -5026,6 +5237,9 @@
 			toast('已切到 ' + model + '（这个会话以后就用它）', 2200)
 		} catch (error) {
 			toast('切换失败：' + error.message, 2600)
+			// 失败就别把顶端那一行留着错的：退回"手机记的那个"。
+			if (entry !== undefined) entry.model = null
+			renderModelNow()
 		}
 	})
 	$('modelPick').addEventListener('change', () => {
@@ -5046,30 +5260,89 @@
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ sessionId: state.sessionId, provider, model }),
 			})
+			// 顶端那一行也跟着变 —— 不然"刚在这儿切了、顶上还写着旧的"= 两个地方对不上。
+			const entry = currentSessionEntry()
+			if (entry !== undefined) entry.model = { provider, model, reasoningEffort: '' }
+			renderModelNow()
 			toast('已切到 ' + model + '（这个会话以后就用它）', 2200)
 		} catch (error) {
 			toast('切换失败：' + error.message, 2600)
 		}
 	}
 
+	/** 当前会话那一行（它身上带着宿主给的真值模型）。 */
+	function currentSessionEntry() {
+		return state.sessions.find((item) => item.sessionId === state.sessionId)
+	}
+
 	/**
-	 * 任务页顶部那个"当前模型"（用户 2026-10-11：「任务界面顶部加一个当前模型的显示」）。
+	 * 当前会话用的模型，值形如 `provider|model`（拼给那个 `<select>` 用）。
+	 * **优先宿主的真值**（每一行会话都带着 `modelSelection` 投影 ✓）；宿主没报过
+	 * （全新会话还没发过请求）才退回手机自己记的那个 ✓。
+	 */
+	function currentModelValue() {
+		const entry = currentSessionEntry()
+		const picked = entry?.model
+		if (picked !== null && picked !== undefined && typeof picked.provider === 'string' && typeof picked.model === 'string') {
+			return picked.provider + '|' + picked.model
+		}
+		return state.modelNow
+	}
+
+	/**
+	 * 网页顶端那一行「当前模型」（2.6.0）。
 	 *
-	 * 值来自手机自己记的 `dshm.model`（切过就有 ✓）；没切过就显示"默认"✓。
-	 * 用 `<select>` 而不是纯文字：**顺便就能换** ✓，和「新建」里那份目录是同一份 ✓。
+	 * 用户 2026-10-11：「在网页顶端加一个当前模型的显示」。**值的来源变了**：以前是手机
+	 * 自己记的 `dshm.model` ✗（所以在电脑端换过模型，手机仍然写着"默认" ✗ —— 2.4.2 的
+	 * 已知限制），现在读宿主每一行会话带的 `modelSelection` 投影 ✓，于是**电脑端一换，
+	 * 这儿跟着对** ✓（宿主还在流里推 `request/header` / `model/selection`，见 applyEvent）。
+	 * 它同时是切换器：点开就能换，落在当前会话上 ✓（目录和「新建」里那份是同一份）。
 	 */
 	function renderModelNow() {
 		const pick = $('modelNow')
 		if (pick === null) return
-		const chosen = state.modelNow
-		if (pick.dataset.filled !== 'yes' || pick.options.length === 0) {
-			pick.innerHTML = '<option value="">模型：默认</option>' + state.models.flatMap((group) =>
-				group.models.map((model) => '<option value="' + escapeHtml(group.provider + '|' + model.id) + '">'
-					+ escapeHtml('模型：' + model.label) + '</option>')).join('')
-			pick.dataset.filled = 'yes'
+		const catalog = state.models.flatMap((group) =>
+			group.models.map((model) => ({ value: group.provider + '|' + model.id, label: model.label + '（' + (group.label ?? group.provider) + '）' })))
+		const chosen = currentModelValue()
+		// 每画一次都重建：目录可能刚拉下来，当前模型也可能刚被电脑端换掉（选项要跟着变）。
+		pick.innerHTML = '<option value="">默认（跟随电脑）</option>' + catalog.map((entry) =>
+			'<option value="' + escapeHtml(entry.value) + '">' + escapeHtml(entry.label) + '</option>').join('')
+		/*
+		 * 当前模型**不在目录里**也要看得见（provider 被停用/目录没拉到时）：
+		 * 直接把它插成一项。不然 `<select>` 会静默跳到第一项，用户看到的模型是错的 ✗
+		 * —— 而这个功能的全部意义就是"看到正在用的到底是哪个"。
+		 */
+		if (chosen !== '' && catalog.some((entry) => entry.value === chosen) === false) {
+			const [provider, model] = chosen.split('|')
+			pick.insertAdjacentHTML('beforeend', '<option value="' + escapeHtml(chosen) + '">' + escapeHtml(model + '（' + provider + '）') + '</option>')
 		}
 		pick.value = chosen
-		if (chosen === '') pick.options[0].textContent = '模型：默认'
+		pick.title = chosen === '' ? '当前模型：跟随电脑的默认' : '当前模型：' + chosen.split('|')[1] + '（点开就能换）'
+	}
+
+	/**
+	 * 宿主那边换了模型（电脑端改的，或手机自己刚改的）→ 立刻更新顶端那一行。
+	 *
+	 * 两个来源都认：`request/header` 带的是**下一次请求真的会用的**配置 ✓；
+	 * `model/selection` 是"用户选了、还没发出去"的意图 ✓。所以电脑端一改，手机这一行
+	 * 不用重开页面就跟着变 ✓。
+	 */
+	function applySessionModel(sessionId, picked) {
+		if (typeof sessionId !== 'string' || sessionId === '') return
+		const entry = state.sessions.find((item) => item.sessionId === sessionId)
+		if (entry !== undefined) entry.model = picked
+		if (sessionId === state.sessionId) renderModelNow()
+	}
+
+	/** 事件里的模型字段（`request/header` 的 config / `model/selection` 的 data 同形）。 */
+	function modelFromEvent(data) {
+		if (data === null || data === undefined || typeof data !== 'object') return null
+		if (typeof data.provider !== 'string' || typeof data.model !== 'string') return null
+		return {
+			provider: data.provider,
+			model: data.model,
+			reasoningEffort: typeof data.reasoningEffort === 'string' ? data.reasoningEffort : '',
+		}
 	}
 
 	async function loadModels() {
@@ -5425,6 +5698,12 @@
 	sessList.addEventListener('click', (event) => {
 		const target = event.target
 		if (target === null || target === undefined || typeof target.closest !== 'function') return
+		// 🗑 删除：先开"输 PIN 确认"那张纸，**不直接删** ✓。
+		const delBtn = target.closest('[data-del]')
+		if (delBtn !== null) {
+			openDelete(delBtn.getAttribute('data-del') ?? '')
+			return
+		}
 		// 📌 / ⭐：只切换标记，**不切会话**（用户按的是"标一下"，不是"跳过去"）。
 		const mark = target.closest('[data-pin], [data-star]')
 		if (mark !== null) {
@@ -5444,6 +5723,17 @@
 			hide($('sessopen'))
 			switchSession(row.getAttribute('data-session') ?? '')
 		}
+	})
+	/* 「显示全部会话」：默认藏起来的那两类（agent 子会话 / 自检会话）从这儿看回来。
+	   开关记在手机本地（dshm.sessAll），换页/重开页面都记得用户的选择 ✓。 */
+	$('sessAll').addEventListener('change', () => {
+		writeLocal(SESS_ALL_KEY, $('sessAll').checked === true ? '1' : '0')
+		renderSessList()
+	})
+	$('delBack').addEventListener('click', () => hide($('delopen')))
+	$('delGo').addEventListener('click', () => { void confirmDelete() })
+	$('delPin').addEventListener('keydown', (event) => {
+		if (event.key === 'Enter') { event.preventDefault(); void confirmDelete() }
 	})
 
 	$('pick').addEventListener('click', () => fileInput.click())
@@ -5658,7 +5948,7 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '17'
+	const WELCOME_VERSION = '18'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

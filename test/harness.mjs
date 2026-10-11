@@ -247,6 +247,29 @@ const services = {
 		tapIndex: (transform) => { badgeTap = transform; return () => { badgeTap = null } },
 	},
 	workspaceRegistry: {
+		/** 2.6.0：手机上那个「删除」落到的就是宿主的**归档集合**。 */
+		archived: [],
+		/** 桩演三种结果：正在跑（不带 stop 就抛）／不存在的会话／正常归档。 */
+		busy: new Set(),
+		unknown: new Set(),
+		archiveCalls: [],
+		get archivedSessionIds() { return this.archived.slice() },
+		async archiveSession(sessionId, options) {
+			this.archiveCalls.push({ sessionId, options: options ?? {} })
+			if (this.unknown.has(sessionId)) {
+				const error = new Error(`unknown session ${sessionId}`)
+				error.name = 'WorkspaceUnknownSessionError'
+				throw error
+			}
+			if (this.busy.has(sessionId) && options?.stopActivity !== true) {
+				const error = new Error(`session ${sessionId} is active`)
+				error.name = 'WorkspaceActiveSessionError'
+				error.activity = [{ kind: 'turn' }]
+				throw error
+			}
+			this.busy.delete(sessionId)
+			if (this.archived.includes(sessionId) === false) this.archived.push(sessionId)
+		},
 		list: () => [
 			{ id: 'ws-1', title: 'deepseek学习', path: 'D:\\learn\\deepseek学习' },
 			{ id: 'ws-2', title: '皇室', path: 'D:\\tool\\皇室' },
@@ -1476,6 +1499,124 @@ check('预设的说明也带上（选了具体那个时显示它干什么用的�
 
 	const anon = await fetch(`${base}/api/models`)
 	check('没登录拿不到模型目录', anon.status === 401, String(anon.status))
+}
+
+/* --- 删除会话（2.6.0，用户：「加一个删除对话按钮，并且要输入 pin 才能删除」）----
+ * 这一版把「删除」落成宿主的**归档**（`workspaceRegistry.archiveSession`）：桌面端会话
+ * 菜单里那一项就是它，记录不丢、能取消归档找回来。真正需要钉住的是**门禁**：
+ * 没有 PIN、PIN 不对、没登录都必须**一个字节都不写**；正在跑的会话不许被悄悄删掉。
+ */
+{
+	const registry = services.workspaceRegistry
+	const doomed = { sessionId: 'session-doomed', updatedAt: Date.now() + 5, running: false, blank: false, cwd: 'D:\\tool', projections: { asOfSeq: 1, values: { title: '要被删掉的会话' } } }
+	listItems.push(doomed)
+	registry.archiveCalls.length = 0
+	registry.archived.length = 0
+	registry.busy.clear()
+	registry.unknown.clear()
+
+	const post = (body) => fetch(`${base}/api/session/archive`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+	})
+
+	// ① 没登录 → 401（和别的接口同一套规矩）
+	const anon = await fetch(`${base}/api/session/archive`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: doomed.sessionId, pin: config.pin }),
+	})
+	check('删除会话：没登录一律 401', anon.status === 401, `HTTP ${anon.status}`)
+
+	// ② 不带 PIN / PIN 不对 → 403（**不是 401**：401 会让页面弹出登录门，把界面盖掉），
+	//    而且**宿主侧一次都没被调用** —— 门禁必须在碰到会话之前就把人拦住。
+	const noPin = await post({ sessionId: doomed.sessionId })
+	const noPinBody = await noPin.json()
+	check('删除会话：不带 PIN → 403，且宿主一次都没被调用',
+		noPin.status === 403 && registry.archiveCalls.length === 0 && String(noPinBody.error).includes('PIN'),
+		`HTTP ${noPin.status} calls=${registry.archiveCalls.length}`)
+	const badPin = await post({ sessionId: doomed.sessionId, pin: '000000' })
+	check('删除会话：PIN 不对 → 403（不是 401 —— 401 会把登录门弹出来）',
+		badPin.status === 403, `HTTP ${badPin.status}`)
+	check('删除会话：PIN 不对时同样没有归档任何东西',
+		registry.archiveCalls.length === 0 && registry.archived.length === 0,
+		`calls=${registry.archiveCalls.length} archived=${JSON.stringify(registry.archived)}`)
+
+	// ③ 缺 sessionId → 400
+	const noId = await post({ pin: config.pin })
+	check('删除会话：缺 sessionId → 400（不许猜一个删掉）', noId.status === 400, `HTTP ${noId.status}`)
+
+	// ④ 正在跑 → 409，不归档；带上 stop 才真的停掉并归档
+	registry.busy.add(doomed.sessionId)
+	const busy = await post({ sessionId: doomed.sessionId, pin: config.pin })
+	check('删除会话：正在跑的会话先回 409、不当场删掉',
+		busy.status === 409 && registry.archived.length === 0, `HTTP ${busy.status} archived=${JSON.stringify(registry.archived)}`)
+	const stopped = await post({ sessionId: doomed.sessionId, pin: config.pin, stop: true })
+	check('删除会话：明确带 stop=true 才"停掉并删除"（stopActivity 传下去）',
+		stopped.status === 200 && registry.archiveCalls.at(-1)?.sessionId === doomed.sessionId
+		&& registry.archiveCalls.at(-1)?.options?.stopActivity === true,
+		JSON.stringify(registry.archiveCalls.at(-1) ?? null))
+
+	// ⑤ 归档之后**列表里不再有它**；同一份回包顺便验"列表带的真值模型"和两个"默认藏起来"的标记。
+	//    （这里能拿到新鲜列表，正是因为删除成功时把列表缓存作废了 —— 不然手机上删完刷新还是看得见。）
+	listItems.push({
+		sessionId: 'session-modelled',
+		updatedAt: Date.now() + 6,
+		running: false,
+		blank: false,
+		cwd: 'D:\\tool',
+		projections: { asOfSeq: 3, values: { title: '带模型的会话', modelSelection: { lastUsed: { provider: 'deepseek', model: 'deepseek-chat' }, next: { provider: 'zhipu', model: 'glm-4-flash' } } } },
+	})
+	listItems.push({
+		sessionId: 'session-child',
+		updatedAt: Date.now() + 7,
+		running: false,
+		blank: false,
+		cwd: 'D:\\tool',
+		origin: 'subagent',
+		projections: { asOfSeq: 1, values: { title: '子会话' } },
+	})
+	// cwd 就在桥自己目录里 —— 开发/自检跑出来的会话（"输出数字1到1200"这类）。
+	listItems.push({
+		sessionId: 'session-inplugin',
+		updatedAt: Date.now() + 8,
+		running: false,
+		blank: false,
+		cwd: join(import.meta.dirname, '..'),
+		projections: { asOfSeq: 1, values: { title: '输出数字 1 到 1200' } },
+	})
+	const listing = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	const listingIds = listing.sessions?.map((item) => item.sessionId) ?? []
+	check('删除后列表里不再有它（删完刷新不能还看得见）',
+		listingIds.includes('session-doomed') === false, JSON.stringify(listingIds))
+	const modelled = listing.sessions?.find((item) => item.sessionId === 'session-modelled')
+	check('列表里带着宿主的**真值模型**（取 next：下一次请求真会用的那个）',
+		modelled?.model?.provider === 'zhipu' && modelled?.model?.model === 'glm-4-flash',
+		JSON.stringify(modelled?.model ?? null))
+	const child = listing.sessions?.find((item) => item.sessionId === 'session-child')
+	check('agent 子会话被标出来（手机据此默认不摆它们）', child?.subagent === true, JSON.stringify(child ?? null))
+	const inPlugin = listing.sessions?.find((item) => item.sessionId === 'session-inplugin')
+	check('cwd 在桥自己目录里的会话被标出来（自检/测试留下的不占手机列表）',
+		inPlugin?.ownDir === true && modelled?.ownDir === false, JSON.stringify({ 自检: inPlugin?.ownDir, 普通: modelled?.ownDir }))
+
+	// ⑥ 不存在的会话 → 404，如实说
+	registry.unknown.add('session-ghost')
+	const ghost = await post({ sessionId: 'session-ghost', pin: config.pin })
+	check('删除会话：宿主说这个会话不存在 → 404（不假装删掉了）', ghost.status === 404, `HTTP ${ghost.status}`)
+
+	listItems.pop()
+	listItems.pop()
+	listItems.pop()
+	listItems.pop()   // doomed
+	/*
+	 * 会话列表有 5 秒缓存（真机上就是靠它省往返）。上面为了验"删完就看不见"拉过一份
+	 * 5 条的快照，而这份快照还在缓存里 —— 桩恢复成 2 条之后必须把服务端那份缓存作废，
+	 * 否则后面"列表里有 2 个会话"的用例会读到旧快照。作废的正规出口就是**再走一次归档**
+	 * （成功即作废），然后把桩的归档集合清空、把会话还回去。
+	 */
+	await post({ sessionId: 'session-blank', pin: config.pin })
+	registry.archived.length = 0
 }
 
 const createResponse = await fetch(`${base}/api/session`, {
