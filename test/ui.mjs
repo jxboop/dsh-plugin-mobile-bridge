@@ -2871,6 +2871,12 @@ check('说明指向了下拉框或读取状态',
 	 * 用户要求「开始页加入版本说明」。两处：还没进去时的 PIN 登录页，和进来后的说明页。
 	 * 数据由服务端从 package.json / CHANGELOG.md 现读后注入（JSON），客户端用 textContent 建节点。
 	 */
+	// 用户 2026-10-11：「说明也要改一下，最底下还有录音界面啊」—— 说明页必须写清**四页**，
+	// 并且点明"划到录音就是打开录音面板"（以前写的是"三个页面"，早就不对了 ✗）。
+	check('说明页写的是四页（任务 · 新建 · 🎤录音 · 余额），不是旧的"三个页面"',
+		$('welcome').textContent.includes('一共四页') && $('welcome').textContent.includes('录音也是一页')
+		&& $('welcome').textContent.includes('三个页面') === false,
+		($('welcome').textContent.match(/最底下那一栏[^。]*。/) ?? ['(没找到这句话)'])[0])
 	check('登录页(PIN)上就写着版本号（还没进去就知道连的是哪一版）',
 		$('gateVer').textContent.includes('v' + FIXTURE_VERSION),
 		$('gateVer').textContent)
