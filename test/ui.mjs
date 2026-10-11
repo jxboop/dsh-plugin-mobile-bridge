@@ -2690,6 +2690,7 @@ check('说明指向了下拉框或读取状态',
 	}
 	const activeTab = () => window.document.querySelector('#tabs button.active')?.dataset.tab
 	const newOpen = () => window.getComputedStyle($('view-new')).display !== 'none'
+	const recOpen = () => window.getComputedStyle($('recopen')).display !== 'none'
 
 	// 先回到"任务"这一页，作为出发点。
 	click(tabButton('task'))
@@ -2698,11 +2699,23 @@ check('说明指向了下拉框或读取状态',
 	check('在「任务」页左滑 → 到「新建」（新建是盖在上面的面板，也算一页）',
 		newOpen() === true && activeTab() === 'task', `new=${newOpen()} active=${activeTab()}`)
 	await swipe({ x: 300, y: 400 }, { x: 120, y: 398 })
-	check('在「新建」页左滑 → 到「余额」（用户举的就是这个例子）',
-		newOpen() === false && activeTab() === 'bill', `new=${newOpen()} active=${activeTab()}`)
+	/*
+	 * 用户 2026-10-11：「滑动时出现不了录音界面」—— 页签栏上是**四个**
+	 * （任务 · 新建 · 🎤录音 · 余额），滑动就得能一路划到四个 ✓。
+	 * 所以从「新建」左滑到的下一站是**录音**（1.7.0 我按三页排，把录音漏了 ✗）。
+	 */
+	check('在「新建」页左滑 → 到「录音」（页签栏上看得见的都要能划到）',
+		newOpen() === false && recOpen() === true && activeTab() === 'task',
+		`new=${newOpen()} rec=${recOpen()} active=${activeTab()}`)
+	await swipe({ x: 300, y: 400 }, { x: 120, y: 398 })
+	check('在「录音」页左滑 → 到「余额」', recOpen() === false && activeTab() === 'bill',
+		`rec=${recOpen()} active=${activeTab()}`)
 	await swipe({ x: 120, y: 400 }, { x: 300, y: 402 })
-	check('在「余额」页右滑 → 回到「新建」',
-		newOpen() === true && activeTab() === 'bill', `new=${newOpen()} active=${activeTab()}`)
+	check('在「余额」页右滑 → 回到「录音」',
+		recOpen() === true && activeTab() === 'bill', `rec=${recOpen()} active=${activeTab()}`)
+	await swipe({ x: 120, y: 400 }, { x: 300, y: 400 })
+	check('在「录音」页右滑 → 回到「新建」',
+		recOpen() === false && newOpen() === true, `rec=${recOpen()} new=${newOpen()}`)
 	await swipe({ x: 120, y: 400 }, { x: 300, y: 400 })
 	check('在「新建」页右滑 → 回到「任务」',
 		newOpen() === false && activeTab() === 'task', `new=${newOpen()} active=${activeTab()}`)
@@ -2749,7 +2762,7 @@ check('说明指向了下拉框或读取状态',
 		newOpen() === true, `new=${newOpen()}`)
 	window.confirm = () => { confirmAnswer = true; return confirmAnswer }
 	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
-	check('确认之后才真的划到「余额」', newOpen() === false && activeTab() === 'bill', `new=${newOpen()} active=${activeTab()}`)
+	check('确认之后才真的划走（下一站是「录音」）', newOpen() === false && recOpen() === true, `new=${newOpen()} rec=${recOpen()}`)
 	$('firstText').value = ''
 	click(tabButton('task'))
 	await wait(60)
@@ -2780,10 +2793,10 @@ check('说明指向了下拉框或读取状态',
 	check('（前置）录音面板开着、还没在录',
 		window.getComputedStyle($('recopen')).display !== 'none' && $('recToggle').textContent.includes('开始录音'))
 	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
-	// 从「任务」往左滑的下一页是「新建」（页面顺序：任务 → 新建 → 余额），所以断言的是新建打开。
-	check('录音面板上左滑 → 面板自己关掉、翻到下一页（用户就是在这儿卡住的）',
-		window.getComputedStyle($('recopen')).display === 'none' && newOpen() === true,
-		`rec=${window.getComputedStyle($('recopen')).display} new=${newOpen()}`)
+	// 页面顺序是 任务 → 新建 → 录音 → 余额：站在「录音」上左滑，下一站是「余额」。
+	check('录音面板上左滑 → 面板自己关掉、翻到下一页（「余额」）',
+		recOpen() === false && activeTab() === 'bill',
+		`rec=${recOpen()} active=${activeTab()}`)
 	click($('newBack'))
 	await wait(40)
 	click(tabButton('task'))

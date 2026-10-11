@@ -1693,14 +1693,15 @@
 	/**
 	 * 用户要求：「左滑右滑可以换页，比如左滑从新建到余额」。
 	 *
-	 * 页面顺序按**用户心里的顺序**：任务 → 新建 → 余额。
-	 * 「新建」其实不是一个 view，而是一个盖在当前页上的面板（历史原因：它当初是页签时，
-	 * 主按钮正好在页签栏上方，拇指瞄页签会误建会话并立刻产生一次计费回合）。
-	 * 但用户不关心这个实现细节：他心里就是三页，从"新建"往左滑就是"余额"。
-	 * 所以滑动走的是这个**逻辑顺序**，而不是 DOM 里那两个 view。
+	 * 页面顺序**跟着底下那个页签栏走**：任务 → 新建 → 🎤录音 → 余额。
+	 *
+	 * 「新建」和「录音」都不是 view，而是盖在当前页上的面板（新建当初是页签时，主按钮
+	 * 正好在页签栏上方，拇指瞄页签会误建会话并立刻产生一次计费回合）。但用户不关心这个
+	 * 实现细节：**页签栏上看得见四个，滑动就该能到四个** ✓。
+	 * （2026-10-11 用户报「滑动时出现不了录音界面」—— 1.7.0 我按"三页"排的，把录音漏了 ✗。）
 	 */
-	const PAGE_ORDER = ['task', 'new', 'bill']
-	const PAGE_LABEL = { task: '任务', new: '新建', bill: '余额' }
+	const PAGE_ORDER = ['task', 'new', 'rec', 'bill']
+	const PAGE_LABEL = { task: '任务', new: '新建', rec: '录音', bill: '余额' }
 
 	function nodeShown(node) {
 		return node !== null && node !== undefined && node.style.display !== 'none'
@@ -1732,9 +1733,11 @@
 		return null
 	}
 
-	/** 现在算"哪一页"。 */
+	/** 现在算"哪一页"（顺序：任务 → 新建 → 录音 → 余额）。 */
 	function currentPage() {
 		if (nodeShown(sheet)) return 'new'
+		// 「录音」也算一页（页签栏上有它，滑动就得能到它）—— 面板开着就是停在录音这一页。
+		if (nodeShown($('recopen'))) return 'rec'
 		return state.tab === 'bill' ? 'bill' : 'task'
 	}
 
@@ -1770,7 +1773,7 @@
 		if (panel !== null) {
 			// ① 正在录音：面板上就是停止键，划走就够不着了。不让走 —— 但**必须说明原因**，
 			//    否则用户看到的又是"滑动在这儿不灵"（这正是 1.9.0 要治的那个感受）。
-			if (panel === $('recopen') && rec.on === true) {
+			if (panel === $('recopen') && rec.on === true && name !== 'rec') {
 				toast('正在录音 —— 先按「停止」，再左右滑动换页', 2600)
 				return
 			}
@@ -1780,11 +1783,21 @@
 				if (draft !== '' && window.confirm('生图里写的还没发出去，确定离开？') === false) return
 			}
 			// 抽屉关掉再翻页：留着它盖在上面，用户会以为"翻了个寂寞"。
-			hide(panel)
+			// 但"翻到的就是这一个"时别关（下面紧接着会再打开）。
+			if (name === 'rec' && panel === $('recopen')) { /* 目标就是它，保持打开 */ }
+			else hide(panel)
 		}
-		if (name === 'new') openSheet()
-		else { closeSheet(); switchTab(name) }
-		const target = name === 'new' ? sheet : views[name]
+		/*
+		 * 「录音」也是一页（2026-10-11 用户报「滑动时出现不了录音界面」）：
+		 * 它和「新建」一样是个面板，但页签栏上看得见它，滑动就得能到它 ✓。
+		 * 只打开面板、**不自动开始录音** ✓（录音要用户自己按，别替人占麦克风）。
+		 */
+		if (name === 'rec') {
+			closeSheet()
+			show($('recopen'))
+		} else if (name === 'new') openSheet()
+		else { closeSheet(); hide($('recopen')); switchTab(name) }
+		const target = name === 'new' ? sheet : (name === 'rec' ? $('recopen') : views[name])
 		if (target === null || target === undefined) return
 		// 动画只是"我确实翻页了"的即时反馈，不参与布局（结束就摘掉类名）。
 		if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true) return
