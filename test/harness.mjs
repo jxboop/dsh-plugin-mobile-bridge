@@ -417,6 +417,17 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 	check('每一节都有可读内容（没有小标题的用正文兜底）',
 		Array.isArray(sections) && sections.every((section) => Array.isArray(section.lines) && section.lines.length > 0),
 		JSON.stringify(sections.filter((s) => (s.lines ?? []).length === 0).map((s) => s.version)))
+	/*
+	 * 用户 2026-10-11：「更新内容测试是什么意思，没有意义好吗」——版本一个不少（上一条），
+	 * 但"测试/实现细节/已知未修"这类**维护者向**的行不许摆到用户面前 ✓。
+	 */
+	{
+		const noisy = sections.flatMap((section) => (section.lines ?? [])
+			.filter((line) => /^(测试|实现|内部|文档|顺带|为什么|感谢|配置|注意|发布|值|彩蛋|教训|已知未修|发布前|自检|复核|口径)/.test(String(line)))
+			.map((line) => `${section.version}: ${line}`))
+		check('更新历史里没有"测试/实现细节"这类维护者向的行',
+			noisy.length === 0, noisy.slice(0, 3).join(' | '))
+	}
 }
 
 const guarded = await fetch(`${base}/api/bootstrap`)
