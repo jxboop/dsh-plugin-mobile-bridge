@@ -852,6 +852,34 @@ check('history image element is present', window.document.querySelectorAll('#log
 		$('docBody').textContent.trim().slice(0, 60))
 	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(40)
+
+	/*
+	 * 🔴 用户现场（2026-10-11）：「文件还是看不到」。
+	 * 根因不在"点开"，而在**认路径那一步** —— `PATH_RE` 只认图片/视频扩展名 ✗，
+	 * 于是 agent 说"我写好了 D:\…\报告.md"时，手机上既没缩略图也没有「打开」入口。
+	 * 这条把"文字里提到的文档也要变成可点条目"钉死。
+	 */
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'assistant/message', seq: 43, time: 43,
+			data: {
+				turn: 5, step: 1,
+				message: {
+					id: 'm43', role: 'assistant',
+					content: [{ type: 'text', text: '写好了：D:\\自媒体\\第5篇-提纲.md\n报表在 D:\\自媒体\\数据\\报表.xlsx' }],
+				},
+			},
+		},
+	})
+	await wait(150)
+	const textDocs = window.document.querySelectorAll('#log [data-doc-path]')
+	check('文字里提到的文档也变成可点条目（以前只认图片/视频扩展名 ✗）',
+		textDocs.length >= 2 && String(textDocs[0].getAttribute('data-doc-path')).endsWith('.md'),
+		`${textDocs.length} 个：` + Array.from(textDocs).map((node) => node.getAttribute('data-doc-name')).join(' / '))
+	check('同一段文字里的 Excel 也在（每种文档类型都认）',
+		Array.from(textDocs).some((node) => String(node.getAttribute('data-doc-path')).endsWith('.xlsx')),
+		Array.from(textDocs).map((node) => node.getAttribute('data-doc-name')).join(' / '))
 }
 
 /* --- live streaming ------------------------------------------------------ */

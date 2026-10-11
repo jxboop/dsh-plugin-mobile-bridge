@@ -1922,7 +1922,18 @@
 
 	/** 文字里出现的图片/视频路径，变成能看、能存的东西。 */
 	const MEDIA_EXT = /\.(png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)$/i
-	const PATH_RE = /[A-Za-z]:\\[^\s"'<>|?*]+?\.(?:png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v)/gi
+	/*
+	 * 从一段文字里认出"电脑上的文件路径"。
+	 *
+	 * ⚠️ 原来这里**只认图片和视频**（png/jpg/mp4…）✗ —— 于是 agent 说"我写好了 D:\…\报告.md"时，
+	 * 手机上既没有缩略图也没有「打开」入口，用户看到的就是一句干巴巴的路径 ✗
+	 * （用户现场：「文件还是看不到」）。2.1.0 加了文档预览，但**前提是先认出路径**，
+	 * 这一步当时漏了。现在把文档扩展名一起认。
+	 *
+	 * 已知限制：路径里带**空格**时只能认到空格前那截（所以匹配不上扩展名 → 不显示）。
+	 * 这是有意的取舍 —— 宁可少认，也不要把半条路径当成文件去请求 ✓。
+	 */
+	const PATH_RE = /[A-Za-z]:\\[^\s"'<>|?*]+?\.(?:png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v|md|markdown|txt|log|csv|tsv|json|ya?ml|xml|ini|sql|py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|pdf|docx?|xlsx?|pptx?|zip)/gi
 	/**
 	 * 路径图的**占位比例**：真实尺寸要问一次内桥（`api/size`，服务端只读文件头）。
 	 * 在答复之前先按这个比例占住位置 —— 不然图到货的瞬间会把下面的内容顶下去（错位）。
