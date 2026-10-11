@@ -521,6 +521,26 @@ const { window } = dom
 const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms))
 const $ = (id) => window.document.getElementById(id)
 const textOf = (id) => $(id).textContent.trim()
+const click = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+
+/*
+ * 切会话：**走真界面**（点会话栏 → 点列表里那一行）。
+ *
+ * 2.5.0 把 `<select id="session">` 换成了自绘的分组列表（📌 置顶 / ⭐ 常用 / 🕘 最近）——
+ * 原生下拉里放不下那两个按钮，也没法分组。所以这里不能再直接设 `value` 再派发 change：
+ * 那等于绕开新界面去测旧实现。改走点击之后，下面每一条"切会话"的用例都顺便覆盖了新列表。
+ */
+const openSessions = () => click($('sessBtn'))
+const sessionRows = () => [...$('sessList').querySelectorAll('[data-session]')]
+	.map((node) => node.getAttribute('data-session'))
+const switchTo = async (sessionId) => {
+	openSessions()
+	await wait(20)
+	const row = $('sessList').querySelector(`[data-session="${sessionId}"]`)
+	if (row === null) throw new Error(`会话列表里没有 ${sessionId}（现有：${sessionRows().join(', ')}）`)
+	click(row)
+	await wait(60)
+}
 
 /* --- 从别的窗口点回来：先铺上本地那份，不等下载 ---------------------------- */
 /*
@@ -585,10 +605,19 @@ await wait(150)
 check('bootstrap shows the app and hides the PIN gate',
 	window.getComputedStyle($('app')).display !== 'none' && window.getComputedStyle($('gate')).display === 'none',
 	`app=${window.getComputedStyle($('app')).display} gate=${window.getComputedStyle($('gate')).display}`)
-check('session picker is populated', $('session').options.length === 3, `${$('session').options.length} options`)
+// 2.5.0：会话选择不再是原生下拉，而是"一行摘要 + 点开的分组列表"。
+openSessions()
+await wait(20)
+check('会话列表里三个会话都在（喂给自绘列表，不再是原生下拉的 option）',
+	sessionRows().length === 3, sessionRows().join(', '))
 check('the most recent session is selected and streamed',
-	$('session').value === SESSION && source !== null && source.url.includes(SESSION),
-	`value=${$('session').value} url=${source?.url}`)
+	$('sessBtn').textContent.includes('手机界面测试') && source !== null && source.url.includes(SESSION),
+	`bar=${$('sessBtn').textContent} url=${source?.url}`)
+check('当前会话那一行在列表里是"选中"态（用户一眼看出在哪个会话）',
+	$('sessList').querySelector('[data-session="' + SESSION + '"]')?.classList.contains('on') === true,
+	$('sessList').querySelector('[data-session="' + SESSION + '"]')?.className)
+click($('sessBack'))
+await wait(20)
 // 第一次连上就把说明页弹出来（后面还有一整段专门查它的内容和"只看一次"）。
 // 这一条必须放在【任何提问/审批帧之前】：真有卡片进来时说明页要让位（见后文）。
 check('说明页在第一次连上后自动弹出',
@@ -627,16 +656,14 @@ check('EventSource 也在密钥段之内',
 	// 会话，而 loadSessions 可能选中另一个（记住的被删了/不在列表里）—— 那时如果不拉，
 	// 画面上就留着别的会话的对话，标题却是新的。
 	const switchBefore = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
-	$('session').value = 'session-older'
-	$('session').dispatchEvent(new window.Event('change'))
+	await switchTo('session-older')
 	await wait(120)
 	const switchAfter = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
 	check('刚开机就换会话时，照样去拉新会话的对话（跳过只对同一个会话生效）',
 		switchAfter === switchBefore + 1, `${switchBefore} -> ${switchAfter}`)
 
 	// 换回来，后面的用例接着在原来的会话上跑。
-	$('session').value = SESSION
-	$('session').dispatchEvent(new window.Event('change'))
+	await switchTo(SESSION)
 	await wait(120)
 }
 
@@ -1119,7 +1146,6 @@ check('stop cancels the running session',
 
 const sheet = $('view-new')
 const tabButton = (name) => window.document.querySelector(`#tabs button[data-tab="${name}"]`)
-const click = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 
 // 页签栏里有 **3 个真页签 + 1 个录音键**（1.6.1：录音从工具键那排搬到最底下这一栏）。
 // 录音键不带 data-tab，所以 tabButtons 只认那三个 —— 否则点它会把 active 抢过去。
@@ -1555,9 +1581,7 @@ check('收到宿主心跳后提示条自动收起',
  * 处理 —— 弹"和电脑断开了 / 你正在用的地址已经失效"，把用户引去换地址，而
  * 浏览器还会每三秒自动重连一次，连一整晚。
  */
-$('session').value = 'session-older'
-$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
-await wait(140)
+await switchTo('session-older')
 check('切到另一个会话会重开一条流', source !== null && source.url.includes('session-older'))
 
 // 会话在不在跑必须跟着会话走：以前 state.running 只由流事件写，换会话后不会重置，
@@ -1566,14 +1590,12 @@ check('切到另一个会话会重开一条流', source !== null && source.url.i
 source.emit({ t: 'event', event: { type: 'turn/start', seq: 90, time: Date.now(), data: { turn: 3 } } })
 await wait(80)
 check('（前置）运行中按钮是「插话」', $('send').textContent === '插话', $('send').textContent)
-$('session').value = SESSION
-$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await switchTo(SESSION)
 await wait(120)
 check('切到没在跑的会话后按钮回到「发送」、停止键收起',
 	$('send').textContent === '发送' && window.getComputedStyle($('stop')).display === 'none',
 	`label=${$('send').textContent} stop=${window.getComputedStyle($('stop')).display}`)
-$('session').value = 'session-older'
-$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await switchTo('session-older')
 await wait(140)
 
 source.emit({ t: 'error', unsupported: true, message: 'subagent Sessions require their durable parent address' })
@@ -1588,18 +1610,15 @@ check('会话区域给出下一步（换一个会话），而不是"正在读取
 
 // 再切回它一次：不许重新开流。
 const streamsBeforeRetry = sources.length
-$('session').value = SESSION
-$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await switchTo(SESSION)
 await wait(120)
-$('session').value = 'session-older'
-$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await switchTo('session-older')
 await wait(150)
 check('已经判过"打不开"的会话不会再被重连（每次都失败，白烧流量）',
 	sources.length === streamsBeforeRetry + 1, `${streamsBeforeRetry} -> ${sources.length}`)
 
 // 回到正常会话：后面还有一半检查要靠它。
-$('session').value = SESSION
-$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+await switchTo(SESSION)
 await wait(140)
 source.emit({ t: 'ping' })
 await wait(80)
@@ -1618,11 +1637,9 @@ check('换回正常会话后提示条收起',
 	}]
 	let release = null
 	transcriptHold = new Promise((resolve) => { release = resolve })
-	$('session').value = 'session-older'
-	$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await switchTo('session-older')
 	await wait(60)                                  // 这一条 transcript 被卡在路上
-	$('session').value = SESSION
-	$('session').dispatchEvent(new window.Event('change', { bubbles: true }))
+	await switchTo(SESSION)
 	await wait(60)
 	release()                                       // 旧回包现在才到
 	await wait(160)
@@ -2346,15 +2363,16 @@ check('说明指向了下拉框或读取状态',
 	check('缓存测试前对话里有内容', log.textContent.includes('缓存测试的消息一'))
 
 	const pullsBefore = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
-	const others = [...$('session').options].map((option) => option.value).filter((value) => value !== SESSION)
-	check('测试前提：下拉框里还有另一个会话可以切', others.length > 0, `${$('session').options.length} 个选项`)
+	openSessions()
+	await wait(20)
+	const others = sessionRows().filter((value) => value !== SESSION)
+	check('测试前提：会话列表里还有另一个会话可以切', others.length > 0, `${sessionRows().length} 个会话`)
 	// 用一个【从没打开过】的会话来验证"没缓存就照旧拉整段"（切走过的都会被缓存，
 	// 那正是这个功能的定义）。
 	const fresh = others.includes('session-fresh') ? 'session-fresh' : (others[0] ?? SESSION)
 
 	// 切到一个没打开过的会话：没有缓存 → 走老路（拉整段）。
-	$('session').value = fresh
-	$('session').dispatchEvent(new window.Event('change'))
+	await switchTo(fresh)
 	await wait(200)
 	const freshStream = sources[sources.length - 1]
 	const pullsAfterFresh = requests.filter((entry) => entry.path.startsWith('/api/transcript')).length
@@ -2363,9 +2381,11 @@ check('说明指向了下拉框或读取状态',
 	check('没有缓存的会话不带 since（手上没有内容，不能报序号）',
 		!freshStream.url.includes('since='), freshStream.url)
 
-	// 切回来：这一次必须"立刻"有内容 —— 同一句同步断言里都不出现空白。
-	$('session').value = SESSION
-	$('session').dispatchEvent(new window.Event('change'))
+	// 切回来：这一次必须"立刻"有内容 —— 点下去那一瞬（同一段同步代码里）就得铺上，
+	// 不能等下载。所以这里不走 switchTo（它自带 await），手动点行、马上读。
+	openSessions()
+	await wait(20)
+	click($('sessList').querySelector(`[data-session="${SESSION}"]`))
 	const instant = log.textContent
 	check('切回刚看过的会话：立刻就有内容（不再空白、也不用等下载）',
 		instant.includes('缓存测试的消息一') && instant.includes('缓存测试的回答二'),
@@ -2884,6 +2904,118 @@ check('说明指向了下拉框或读取状态',
 		$('view-new').className)
 	click($('newBack'))
 	await wait(60)
+
+	/* --- 2.5.0：置顶 + 常用（A 自动频率 / B 手动打星）-------------------------
+	 * 用户 2026-10-11：「置顶」「常用 A：用得多的靠前」「常用 B：手动打星」—— 两个都要 ✓。
+	 * 三份数据只存在**手机本地**（dshm.pins / dshm.stars / dshm.usage），不碰宿主的会话库，
+	 * 所以电脑端一点不受影响。这一块把这四件事钉住：分组顺序、两个开关、持久化、以及
+	 * **不许把左右滑动换页搞坏**（列表就住在任务页上，最容易误伤的就是它）。
+	 */
+	{
+		const writeJson = (key, value) => window.localStorage.setItem(key, JSON.stringify(value))
+		// 从**渲染出来的 DOM** 里把三组读回来（不是读内存里的排序函数）：测的才是用户看到的。
+		const groups = () => {
+			const out = { '📌 置顶': [], '⭐ 常用': [], '🕘 最近': [] }
+			let current = ''
+			for (const node of $('sessList').children) {
+				if (node.classList.contains('sessgroup') === true) { current = node.textContent.trim(); continue }
+				const row = node.querySelector('[data-session]')
+				if (current !== '' && row !== null) out[current].push(row.getAttribute('data-session'))
+			}
+			return out
+		}
+		const openList = async () => { openSessions(); await wait(30) }
+		/** 点某一行的 📌 / ⭐（which = pin | star）。点完面板**不关**，也不该切会话。 */
+		const mark = async (sessionId, which) => {
+			await openList()
+			const button = $('sessList').querySelector(`[data-${which}="${sessionId}"]`)
+			if (button === null) throw new Error(`没有 ${which} 按钮：${sessionId}`)
+			click(button)
+			await wait(30)
+		}
+		const stored = (key) => JSON.parse(window.localStorage.getItem(key) ?? '[]')
+
+		check('会话栏不再是原生下拉（原生里面放不下 📌/⭐，也没法分组）',
+			$('session') === null && $('sessBtn') !== null, `#session=${$('session')}`)
+
+		// ① 常用 A（自动频率）：一次没打过星，只用过 — 用得多的在前。
+		writeJson('dshm.pins', [])
+		writeJson('dshm.stars', [])
+		// 一次性覆盖整份 usage：前面发过好几条消息，不清掉就没法断言"谁在前"。
+		writeJson('dshm.usage', { 'session-fresh': 9, 'session-older': 1 })
+		await openList()
+		const freq = groups()
+		check('「常用 A」：没打星也按使用次数自动排（A=9 次排在 B=1 次前面）',
+			freq['⭐ 常用'].includes('session-fresh') && freq['⭐ 常用'].includes('session-older')
+			&& freq['⭐ 常用'].indexOf('session-fresh') < freq['⭐ 常用'].indexOf('session-older'),
+			JSON.stringify(freq))
+		check('用过 0 次的会话不进「常用」，留在「最近」',
+			freq['⭐ 常用'].includes(SESSION) === false && freq['🕘 最近'].includes(SESSION),
+			JSON.stringify(freq))
+
+		// ② 置顶：钉上去 → 第一组出现它，而且**排在所有会话最前面**。
+		const barBefore = $('sessBtn').textContent
+		await mark('session-older', 'pin')
+		const pinned = groups()
+		check('点 📌 → 这个会话进「📌 置顶」组，并排在最前',
+			pinned['📌 置顶'].includes('session-older') && sessionRows()[0] === 'session-older',
+			JSON.stringify(pinned))
+		check('置顶立刻写进手机本地（dshm.pins，重启后还在）',
+			stored('dshm.pins').includes('session-older'), JSON.stringify(stored('dshm.pins')))
+		check('点 📌 只是"标一下"，不会把用户切到那个会话去',
+			$('sessBtn').textContent === barBefore && $('sessList').querySelector(`[data-session="${SESSION}"]`).classList.contains('on'),
+			`${barBefore} -> ${$('sessBtn').textContent}`)
+
+		// ③ 常用 B：手动打星 —— 一次没用过也照样进「常用」。
+		await mark('session-fresh', 'star')
+		const starred = groups()
+		check('点 ⭐ → 这个会话进「⭐ 常用」组（和"用得多的"共用这一区）',
+			starred['⭐ 常用'].includes('session-fresh')
+			&& $('sessList').querySelector('[data-star="session-fresh"]').classList.contains('on'),
+			JSON.stringify(starred))
+		check('打星立刻写进手机本地（dshm.stars）',
+			stored('dshm.stars').includes('session-fresh'), JSON.stringify(stored('dshm.stars')))
+
+		// ④ 再点一下就是取消（两个开关都是"再点一下关掉"，不能只能加不能减）。
+		await mark('session-older', 'pin')
+		check('再点一次 📌 就取消置顶（「📌 置顶」这一组随之消失）',
+			stored('dshm.pins').includes('session-older') === false && groups()['📌 置顶'].length === 0,
+			JSON.stringify({ pins: stored('dshm.pins'), groups: groups() }))
+
+		// ⑤ 持久化：关掉再打开还是这个秩序（真机上就是"重启后还在"）。
+		await mark('session-older', 'star')
+		click($('sessBack'))
+		await wait(30)
+		await openList()
+		const reopened = groups()
+		check('关掉列表再打开：⭐ 那几条还在原处（本地存着，重启手机也在）',
+			reopened['⭐ 常用'].includes('session-fresh') && reopened['⭐ 常用'].includes('session-older'),
+			JSON.stringify(reopened))
+		check('当前选中那一行带选中态（用户一眼看出"现在在哪个会话"）',
+			$('sessList').querySelector(`[data-session="${SESSION}"]`).classList.contains('on'),
+			JSON.stringify({ rows: sessionRows(), bar: $('sessBtn').textContent }))
+
+		// ⑥ 关键回归：点这两个小按钮**不能被吃成翻页**，而列表上照样能左右滑换页。
+		//    按钮很小，手指按上去本来就容易带横向位移 —— 不挡就会"标一下却翻到别的页"。
+		click(tabButton('task'))
+		await wait(40)
+		await openList()
+		const atTask = activeTab()
+		await swipe({ x: 300, y: 400 }, { x: 120, y: 400 }, { target: $('sessList').querySelector('[data-pin="session-fresh"]') })
+		check('按着 📌 横向拖：不翻页、面板也不关（那个键是"标一下"，不是"换页"）',
+			activeTab() === atTask && window.getComputedStyle($('sessopen')).display !== 'none',
+			`active=${activeTab()} panel=${window.getComputedStyle($('sessopen')).display}`)
+		await swipe({ x: 300, y: 400 }, { x: 120, y: 400 }, { target: $('sessopen') })
+		check('列表上的空白处左右滑：照样换页（原本的滑动换页没被这一版搞坏）',
+			activeTab() === atTask && newOpen() === true && window.getComputedStyle($('sessopen')).display === 'none',
+			`active=${activeTab()} new=${newOpen()} panel=${window.getComputedStyle($('sessopen')).display}`)
+		click($('newBack'))
+		await wait(40)
+		// 收尾：把这一版加的三份本地数据清干净，免得影响后面的用例。
+		window.localStorage.removeItem('dshm.pins')
+		window.localStorage.removeItem('dshm.stars')
+		window.localStorage.removeItem('dshm.usage')
+	}
 
 	/* --- 哨兵必须是 setInterval（2026-10-09 独立排查抓到的真 bug）-------------------
 	 * 原来写成 `setTimeout(() => {…}, 2000)` 且块内没有自我重排，块首那句

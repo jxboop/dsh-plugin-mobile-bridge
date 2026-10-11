@@ -104,7 +104,8 @@
 	}
 	/* 统一给主要表面挂上毛玻璃：背景在下面流动，文字永远在上面。 */
 	header, #tabs, .sessionbar, #composer, .bubble, .tool, .chip, .pick, .card,
-	#gate input, #gate button, .actions button, .iconbtn, #linkbar, #banner, .sheet, .sheetbar {
+	#gate input, #gate button, .actions button, .iconbtn, #linkbar, #banner, .sheet, .sheetbar,
+	#sessBtn, .sessmain, .sessbtn {
 		-webkit-backdrop-filter: var(--glass-blur);
 		backdrop-filter: var(--glass-blur);
 	}
@@ -248,12 +249,43 @@
 	#tabs #recBtn.rec .glyph { transform: scale(1.18); }
 
 	/* ------------------------------------------------------------- task */
-	#modelNow { max-width: 42%; flex: none; font-size: 12px; opacity: .92; }
-	.sessionbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge); }
+	#modelNow { max-width: 46%; flex: 0 1 auto; width: auto; font-size: 12px; opacity: .92; }
+	.sessionbar {
+		flex: none; display: flex; align-items: center; gap: 8px;
+		padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); box-shadow: var(--glass-edge);
+	}
 	.sessionbar select {
-		width: 100%; background: var(--panel-2); border: 1px solid var(--field-line);
+		background: var(--panel-2); border: 1px solid var(--field-line);
 		border-radius: 12px; padding: 10px 11px; font-size: 14px; box-shadow: var(--glass-edge);
 	}
+	/*
+	 * 会话栏那一行（2.5.0）：**原生 <select> 里放不下 📌/⭐ 按钮，也没法分组排序** ——
+	 * 而"分组"正是这个需求本身（📌 置顶 → ⭐ 常用 → 🕘 最近）。所以换成自己画的：
+	 * 上面一行只显示"现在在哪个会话"，点开才出完整列表。
+	 */
+	#sessBtn {
+		flex: 1 1 auto; min-width: 0; text-align: left; font-size: 14px;
+		background: var(--panel-2); border: 1px solid var(--field-line);
+		border-radius: 12px; padding: 10px 11px; box-shadow: var(--glass-edge);
+		overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	}
+	.sessgroup { margin: 4px 0 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+	.sessrow { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+	.sessmain {
+		flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 8px; text-align: left;
+		background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+		padding: 11px 12px; font-size: 14px; box-shadow: var(--glass-edge);
+	}
+	.sessmain.on { border-color: var(--accent); background: var(--panel-2); }
+	.sessmain.warn { opacity: .68; }
+	.sessmain .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.sessmain .meta { flex: none; font-size: 11px; color: var(--muted); }
+	/* 📌 / ⭐ 两个开关：没标上时压暗，标上了才亮 —— 一眼看出这条标了没有。 */
+	.sessbtn {
+		flex: none; width: 42px; height: 42px; border-radius: 12px; font-size: 16px; line-height: 1;
+		background: var(--panel); border: 1px solid var(--line); box-shadow: var(--glass-edge); opacity: .5;
+	}
+	.sessbtn.on { opacity: 1; border-color: var(--accent); background: var(--panel-2); }
 	#log { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 4px; }
 	/* 「回到最新」：往上翻着看历史时，新内容在下面长出来，给一个明确的回去入口。
 	   以前是自动把视线拽回底部（和用户抢滚动条），现在改成"用户说了算"。
@@ -801,7 +833,7 @@
 
 	<main>
 		<section class="view" id="view-task" data-display="flex" style="display:none">
-			<div class="sessionbar"><select id="session"></select><select id="modelNow" title="当前模型（点开就能换）"></select></div>
+			<div class="sessionbar"><button id="sessBtn" title="切换会话（📌 置顶 / ⭐ 常用）"></button><select id="modelNow" title="当前模型（点开就能换）"></select></div>
 			<div id="banner" data-display="block" style="display:none"></div>
 			<div id="log"></div>
 			<button id="tonew" style="display:none" title="回到最新" aria-label="回到最新">↓</button>
@@ -990,6 +1022,22 @@
 			</div>
 		</section>
 
+		<!-- 会话列表（2.5.0）：点上面那一行打开。
+		     为什么不再用原生 <select>：里面放不下 📌 / ⭐ 两个按钮，也不能分组排序 ✗，
+		     而"分组"正是用户要的东西 —— 📌 置顶 → ⭐ 常用 → 🕘 最近 ✓。
+		     三份数据只存在这台手机里（localStorage），不碰宿主的会话库 ✓。 -->
+		<section class="sheet" id="sessopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="sessBack">← 返回</button>
+				<span class="title">切换会话</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div id="sessList"></div>
+				<div class="hint">📌 钉到最上面（重启手机也还在）；⭐ 标成常用。点一行就切过去。</div>
+			</div>
+		</section>
+
 		<section class="view" id="view-bill" data-display="block" style="display:none">
 			<div class="scroll pad">
 				<div id="billBody"></div>
@@ -1101,7 +1149,7 @@
 	'use strict'
 
 	const $ = (id) => document.getElementById(id)
-	const gate = $('gate'), app = $('app'), log = $('log'), sessionSelect = $('session')
+	const gate = $('gate'), app = $('app'), log = $('log'), sessBtn = $('sessBtn'), sessList = $('sessList')
 	const dot = $('dot'), text = $('text'), thumbs = $('thumbs'), fileInput = $('file'), fileAnyInput = $('fileAny')
 	const sendBtn = $('send'), stopBtn = $('stop'), banner = $('banner'), heading = $('heading')
 	const compose = $('compose')
@@ -1776,9 +1824,9 @@
 		return nodeShown($('welcome')) || nodeShown($('ask')) || nodeShown($('offline'))
 	}
 
-	/** 现在开着的是哪个"工具抽屉"（录音 / 生图 / 背景 / 权限）；没有就 null。 */
+	/** 现在开着的是哪个"工具抽屉"（会话 / 录音 / 生图 / 背景 / 权限）；没有就 null。 */
 	function openToolPanel() {
-		for (const id of ['recopen', 'genopen', 'bgopen', 'permopen']) {
+		for (const id of ['sessopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -3666,6 +3714,167 @@
 
 	/* -------------------------------------------------------------- 任务 */
 
+	/* ----------------------------------------------- 会话列表（2.5.0） */
+	/*
+	 * 用户 2026-10-11：「a（常用：按使用频率自动排）b（常用：手动打星）都要」，还要能把
+	 * 某个会话**钉到最上面** ✓。
+	 *
+	 * 三份数据**只存在这台手机里**：
+	 *   dshm.pins  = ["session-…"]       置顶（顺序 = 数组顺序，先钉的在前）
+	 *   dshm.stars = ["session-…"]       手动打星
+	 *   dshm.usage = { "session-…": 12 } 用过几次（切过去 +1；发一条也 +1）
+	 * **不写宿主的会话库、不给宿主加字段** ✗ —— 所以电脑端完全不受影响 ✓。
+	 *
+	 * 排序稳定：📌 置顶（按钉的顺序）→ ⭐ 常用 → 🕘 最近（其余按最近活动降序）。
+	 * 「常用」这顶帽子下面有两类：**自己打了星的** + **用得最多的前 3 个**（自动频率）✓。
+	 */
+	const SESS_USAGE_TOP = 3
+
+	/** 读一份本地 JSON。坏数据、无痕模式都当成"没有"，绝不让页面死在这里。 */
+	function readJsonLocal(key, fallback) {
+		const raw = readLocal(key)
+		if (raw === '') return fallback
+		try {
+			const value = JSON.parse(raw)
+			return value === null || value === undefined ? fallback : value
+		} catch { return fallback }
+	}
+
+	/**
+	 * 每次渲染**重新读一遍** localStorage，而不是启动时读一次就常驻内存：
+	 * 内存副本和存储一旦不一致（多开一个页面、清了站点数据、换了台设备接同一份），
+	 * 用户看到的就是"我明明钉过"。读一次的成本可以忽略。
+	 */
+	function sessPrefs() {
+		const pins = readJsonLocal('dshm.pins', [])
+		const stars = readJsonLocal('dshm.stars', [])
+		const usage = readJsonLocal('dshm.usage', {})
+		const ids = (value) => Array.isArray(value)
+			? value.filter((id) => typeof id === 'string' && id !== '')
+			: []
+		return {
+			pins: ids(pins),
+			stars: ids(stars),
+			usage: usage !== null && typeof usage === 'object' && Array.isArray(usage) === false ? usage : {},
+		}
+	}
+
+	function sessUsage(prefs, sessionId) {
+		const count = Number(prefs.usage[sessionId])
+		return Number.isFinite(count) && count > 0 ? count : 0
+	}
+	const sessPinned = (prefs, id) => prefs.pins.includes(id) === true
+	const sessStarred = (prefs, id) => prefs.stars.includes(id) === true
+
+	/** 📌 / ⭐ 开关。返回"现在是开还是关"（用来回一句提示）。 */
+	function toggleSessMark(which, sessionId) {
+		if (typeof sessionId !== 'string' || sessionId === '') return false
+		const prefs = sessPrefs()
+		const list = (which === 'pins' ? prefs.pins : prefs.stars).slice()
+		const at = list.indexOf(sessionId)
+		if (at === -1) list.push(sessionId)
+		else list.splice(at, 1)
+		writeLocal(which === 'pins' ? 'dshm.pins' : 'dshm.stars', JSON.stringify(list))
+		return at === -1
+	}
+
+	/** 用一次就 +1（切过去、发一条都算）—— 这就是「常用 A」的全部依据。 */
+	function bumpUsage(sessionId) {
+		if (typeof sessionId !== 'string' || sessionId === '') return
+		const prefs = sessPrefs()
+		writeLocal('dshm.usage', JSON.stringify({ ...prefs.usage, [sessionId]: sessUsage(prefs, sessionId) + 1 }))
+	}
+
+	/**
+	 * 把会话分成三组。**稳定的三档**（用户看的是"我钉的/我标的/最近的"这个秩序，
+	 * 不能每次打开都换个位置）。
+	 */
+	function sessGroups() {
+		const prefs = sessPrefs()
+		const byId = new Map(state.sessions.map((item) => [item.sessionId, item]))
+		// 置顶：按 pins 数组的顺序（先钉的在前）。已经不在列表里的钉留在 pins 里不删 ——
+		// 会话可能只是暂时没被宿主报出来，删了就再也回不来。
+		const pinned = prefs.pins.map((id) => byId.get(id)).filter((item) => item !== undefined)
+		const pinnedIds = new Set(pinned.map((item) => item.sessionId))
+		const rest = state.sessions.filter((item) => pinnedIds.has(item.sessionId) === false)
+		const recency = (a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0)
+		const frequency = (a, b) => sessUsage(prefs, b.sessionId) - sessUsage(prefs, a.sessionId) || recency(a, b)
+		const starred = rest.filter((item) => sessStarred(prefs, item.sessionId)).sort(frequency)
+		const starredIds = new Set(starred.map((item) => item.sessionId))
+		const auto = rest
+			.filter((item) => starredIds.has(item.sessionId) === false && sessUsage(prefs, item.sessionId) > 0)
+			.sort(frequency)
+			.slice(0, SESS_USAGE_TOP)
+		const common = starred.concat(auto)
+		const commonIds = new Set(common.map((item) => item.sessionId))
+		const others = rest.filter((item) => commonIds.has(item.sessionId) === false).sort(recency)
+		return { prefs, pinned, common, others }
+	}
+
+	const sessTitle = (item) => item.title || item.sessionId.slice(0, 12)
+
+	/** 顶部那一行：当前会话 + 它标了什么。 */
+	function renderSessBar() {
+		if (sessBtn === null || sessBtn === undefined) return
+		const prefs = sessPrefs()
+		const item = state.sessions.find((entry) => entry.sessionId === state.sessionId)
+		const mark = item === undefined
+			? ''
+			: (sessPinned(prefs, item.sessionId) ? '📌 ' : (sessStarred(prefs, item.sessionId) ? '⭐ ' : ''))
+		sessBtn.textContent = mark + (item === undefined ? '还没有会话' : sessTitle(item)) + ' ▾'
+	}
+
+	function sessRow(item, prefs) {
+		const id = item.sessionId
+		const meta = (text) => '<span class="meta">' + escapeHtml(text) + '</span>'
+		const marks = (item.running === true ? meta('● 在跑') : '')
+			+ (state.unsupported.has(id) ? meta('⚠️ 打不开') : '')
+			+ (item.blank === true ? meta('空') : '')
+			+ (sessUsage(prefs, id) > 0 ? meta('用 ' + sessUsage(prefs, id) + ' 次') : '')
+		return '<div class="sessrow">'
+			+ '<button class="sessmain' + (id === state.sessionId ? ' on' : '') + (state.unsupported.has(id) ? ' warn' : '')
+			+ '" data-session="' + escapeHtml(id) + '"><span class="t">' + escapeHtml(sessTitle(item)) + '</span>' + marks + '</button>'
+			+ '<button class="sessbtn' + (sessPinned(prefs, id) ? ' on' : '') + '" data-pin="' + escapeHtml(id) + '" title="置顶" aria-label="置顶">📌</button>'
+			+ '<button class="sessbtn' + (sessStarred(prefs, id) ? ' on' : '') + '" data-star="' + escapeHtml(id) + '" title="常用" aria-label="常用">⭐</button>'
+			+ '</div>'
+	}
+
+	function renderSessList() {
+		if (sessList === null || sessList === undefined) return
+		const { prefs, pinned, common, others } = sessGroups()
+		const group = (label, items) => items.length === 0 ? '' : '<div class="sessgroup">' + label + '</div>' + items.map((item) => sessRow(item, prefs)).join('')
+		const html = group('📌 置顶', pinned) + group('⭐ 常用', common) + group('🕘 最近', others)
+		sessList.innerHTML = html === ''
+			? '<div class="hint">这台电脑上还没有任何会话，去「新建」开一个。</div>'
+			: html
+	}
+
+	/** 切到某个会话。**和以前 <select> 的 change 是同一段逻辑**，只是入口换成了列表里的行。 */
+	function switchSession(sessionId) {
+		if (typeof sessionId !== 'string' || sessionId === '') return
+		if (sessionId === state.sessionId) { renderSessBar(); return }
+		// 先把当前这份存下来：切回来时它能让屏幕立刻有内容。
+		rememberSession(state.sessionId)
+		state.sessionId = sessionId
+		writeLocal('dshm.session', sessionId)
+		bumpUsage(sessionId)          // 「常用 A」：切到它就 +1 ✓
+		const picked = state.sessions.find((item) => item.sessionId === sessionId)
+		state.sessionBlank = picked !== undefined && picked.blank === true
+		// 换会话必须把"在跑"重置成新会话的真实状态，否则按钮还写着「插话」、
+		// 停止键还亮着，而这条消息其实是普通发送（还会回一句假的"已插话"）。
+		state.running = picked !== undefined && picked.running === true
+		// 有缓存就立刻铺上（秒开），没有才走"空 + 等下载"那条老路。
+		const warm = restoreSession(sessionId)
+		// DOM 上现在是【另一个会话】的内容，增量比对的前缀对不上，必须整段换。
+		rendered = []
+		render()
+		if (warm) bootStep(58, '已经从本地恢复')
+		connect()
+		refreshPermBadge()
+		renderSessBar()
+		renderSessList()
+	}
+
 	async function loadSessions(prefetched) {
 		// boot 那一步已经拿到过一份 bootstrap 了，别再要一遍 —— 手机上一次多余往返
 		// 就是好几百毫秒，而"进去太慢"用户是能感觉到的。
@@ -3694,11 +3903,7 @@
 			hasBackdrop = body.background !== null && body.background !== undefined
 			if (body.welcomed === true) welcomedOnServer = true
 			state.sessions = body.sessions || []
-			sessionSelect.innerHTML = state.sessions.map((item) =>
-				'<option value="' + escapeHtml(item.sessionId) + '">' +
-				(item.running ? '● ' : '') + (item.blank === true ? '（空）' : '') +
-				escapeHtml(item.title || item.sessionId.slice(0, 12)) +
-				'</option>').join('')
+			renderSessBar()
 			if (state.sessions.length === 0) {
 				flash('这台电脑上还没有任何会话，去「新建」开一个。')
 				return
@@ -3724,7 +3929,6 @@
 			// 会话在不在跑，以宿主给的 running 为准：切换/重开页面时 state.running
 			// 还留着上一个会话的值，按钮会一直写着「插话」，点下去还回一句假的"已插话"。
 			state.running = chosen.running === true
-			sessionSelect.value = chosen.sessionId
 			// `state.source === null` 也要重连：从 PIN 门回来时 sessionId 没变，但那条 SSE
 			// 已经在 showGate() 里被关掉了。只比较 sessionId 的话，页面看着一切正常，
 			// 却再也收不到任何实时更新。
@@ -3738,6 +3942,8 @@
 				render()
 				connect()
 			}
+			// 顶部那一行要等 state.sessionId 定下来之后再画（它就是画"现在在哪个会话"）。
+			renderSessBar()
 	}
 
 	function send() {
@@ -3757,6 +3963,9 @@
 		const interjecting = state.running
 		// 认准"我发的是哪个会话"：失败回包可能在用户已经换会话之后才到。
 		const target = state.sessionId
+		// 「常用 A」（2.5.0）：发一条也算用过这个会话 —— 切过去已经记过一次，这里再 +1 是
+		// 故意的：聊得多的会话本来就该比"只是点开看一眼"的更靠前。
+		bumpUsage(target)
 		// 图片总量也要收敛：几 MB 的请求在隧道上很慢，甚至会被入口掐断。
 		// 超出的那几张改走"分片上传 + 路径"，一张都不丢。
 		const images = []
@@ -5198,24 +5407,43 @@
 			.catch(() => { /* 角标而已，读不到就当没这回事，不要弹东西吓人 */ })
 	}
 
-	sessionSelect.addEventListener('change', () => {
-		// 先把当前这份存下来：切回来时它能让屏幕立刻有内容。
-		rememberSession(state.sessionId)
-		state.sessionId = sessionSelect.value
-		writeLocal('dshm.session', state.sessionId)
-		const picked = state.sessions.find((item) => item.sessionId === state.sessionId)
-		state.sessionBlank = picked !== undefined && picked.blank === true
-		// 换会话必须把"在跑"重置成新会话的真实状态，否则按钮还写着「插话」、
-		// 停止键还亮着，而这条消息其实是普通发送（还会回一句假的"已插话"）。
-		state.running = picked !== undefined && picked.running === true
-		// 有缓存就立刻铺上（秒开），没有才走"空 + 等下载"那条老路。
-		const warm = restoreSession(state.sessionId)
-		// DOM 上现在是【另一个会话】的内容，增量比对的前缀对不上，必须整段换。
-		rendered = []
-		render()
-		if (warm) bootStep(58, '已经从本地恢复')
-		connect()
-		refreshPermBadge()
+	/* --- 会话列表的入口（2.5.0）：点顶部那一行开面板，点行切会话，点 📌/⭐ 只改标记 --- */
+	sessBtn.addEventListener('click', () => { renderSessList(); show($('sessopen')) })
+	$('sessBack').addEventListener('click', () => hide($('sessopen')))
+	/*
+	 * 这一片在 #view-task 里，而"滑动换页"的判定挂在 document 上（2.0 起工具抽屉不再挡滑动）。
+	 * 不挡的话，**按着 📌/⭐ 横向拖一下就会被吃成翻页** —— 那两个键很小，手指按上去本来就
+	 * 容易带一点横向位移。所以从按钮上起手时把 touchstart 拦住，让它到不了 document：
+	 * 点按钮只改标记，绝不翻页；而列表本身（分组标题、行与行之间的空隙）照样能左右滑换页 ✓。
+	 */
+	$('sessopen').addEventListener('touchstart', (event) => {
+		const target = event.target
+		if (target !== null && target !== undefined && typeof target.closest === 'function' && target.closest('button') !== null) {
+			event.stopPropagation()
+		}
+	}, { passive: true })
+	sessList.addEventListener('click', (event) => {
+		const target = event.target
+		if (target === null || target === undefined || typeof target.closest !== 'function') return
+		// 📌 / ⭐：只切换标记，**不切会话**（用户按的是"标一下"，不是"跳过去"）。
+		const mark = target.closest('[data-pin], [data-star]')
+		if (mark !== null) {
+			const pinning = mark.getAttribute('data-pin') !== null
+			const id = mark.getAttribute(pinning ? 'data-pin' : 'data-star') ?? ''
+			const on = toggleSessMark(pinning ? 'pins' : 'stars', id)
+			renderSessList()
+			renderSessBar()
+			toast(pinning
+				? (on ? '已置顶：这条会一直排在最上面' : '已取消置顶')
+				: (on ? '已标成常用：以后排在「常用」里' : '已取消常用'), 2000)
+			return
+		}
+		const row = target.closest('[data-session]')
+		if (row !== null) {
+			// 先收起面板：用户要看到的是"切过去之后的那个会话"，不是还盖着的列表。
+			hide($('sessopen'))
+			switchSession(row.getAttribute('data-session') ?? '')
+		}
 	})
 
 	$('pick').addEventListener('click', () => fileInput.click())
