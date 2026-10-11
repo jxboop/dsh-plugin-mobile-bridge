@@ -830,6 +830,19 @@ check('history image element is present', window.document.querySelectorAll('#log
 		$('docBody').innerHTML.slice(0, 80))
 	check('给了「下载」入口（手机上看不了的也能拿走）',
 		String($('docDownload').getAttribute('href')).startsWith('api/file?path='))
+	/*
+	 * 🔴 用户现场（2026-10-11）：「下载之后就没有返回按钮了」。
+	 * 手机上 `download` 属性会被忽略（iOS 尤其）→ 点下载会在**当前页**打开文件 → 我们的页面
+	 * 被顶掉、返回按钮也没了 ✗。所以「下载」和「新标签」都必须 target=_blank ✓。
+	 */
+	check('「下载」在新标签打开（不会把当前页面顶掉、返回按钮还在）',
+		$('docDownload').getAttribute('target') === '_blank'
+		&& String($('docDownload').getAttribute('rel')).includes('noopener'),
+		`target=${$('docDownload').getAttribute('target')} rel=${$('docDownload').getAttribute('rel')}`)
+	check('「新标签」兜底入口也在（预览渲染不出来时用）',
+		$('docOpenTab') !== null && $('docOpenTab').getAttribute('target') === '_blank'
+		&& String($('docOpenTab').getAttribute('href')).includes('inline=1'),
+		String($('docOpenTab')?.getAttribute('href')))
 	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(40)
 	check('返回就收起预览面板', window.getComputedStyle($('docopen')).display === 'none')
@@ -847,8 +860,9 @@ check('history image element is present', window.document.querySelectorAll('#log
 	check('Excel 这类也给了可点条目', xlsxRow !== null, xlsxRow === null ? '没有找到 .xlsx 条目' : 'ok')
 	xlsxRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(80)
-	check('点开 Excel：明说"浏览器看不了"+ 指引下载（不假装能看）',
-		$('docBody').textContent.includes('看不了') && $('docBody').textContent.includes('下载'),
+	check('点开 Excel：明说"浏览器渲染不了"+ 指引下载（不假装能看，还说清是什么类型）',
+		$('docBody').textContent.includes('渲染不了') && $('docBody').textContent.includes('.xlsx')
+		&& $('docBody').textContent.includes('下载'),
 		$('docBody').textContent.trim().slice(0, 60))
 	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(40)

@@ -891,7 +891,12 @@
 				<button class="iconbtn" id="docBack">← 返回</button>
 				<span class="title" id="docTitle">文档</span>
 				<span class="spacer"></span>
-				<a class="iconbtn" id="docDownload" href="#" download>下载</a>
+				<!-- 下载**必须开新标签**：手机上（尤其 iOS）`download` 属性会被忽略，直接在当前页
+				     打开文件 → 我们的页面被顶掉、连返回按钮都没了 ✗（用户现场：「下载之后就没有
+				     返回按钮了」）。加 target=_blank 后当前页原地不动，退回来还是原来那样 ✓。
+				     「新标签打开」是给"预览渲染不出来"时的兜底（浏览器自己会按类型处理）。 -->
+				<a class="iconbtn" id="docOpenTab" href="#" target="_blank" rel="noopener">新标签</a>
+				<a class="iconbtn" id="docDownload" href="#" target="_blank" rel="noopener" download>下载</a>
 			</div>
 			<div class="scroll pad" id="docBody"></div>
 		</section>
@@ -5328,8 +5333,11 @@
 		const body = $('docBody')
 		const src = 'api/file?path=' + encodeURIComponent(path)
 		$('docTitle').textContent = name === '' ? '文档' : name
+		// 两个链接都指到**新标签**：手机上点「下载」不会再把当前页面顶掉（用户现场：
+		// 「下载之后就没有返回按钮了」✗）；「新标签」是预览渲染不出来时的兜底。
 		$('docDownload').setAttribute('href', src)
 		$('docDownload').setAttribute('download', name === '' ? 'file' : name)
+		$('docOpenTab').setAttribute('href', src + '&inline=1')
 		body.textContent = '正在打开…'
 		show($('docopen'))
 		const kind = docKindOf(name === '' ? path : name)
@@ -5342,18 +5350,24 @@
 		}
 		if (kind === 'pdf') { body.innerHTML = '<iframe src="' + src + '&inline=1" title="PDF"></iframe>'; return }
 		if (kind === 'binary') {
-			body.innerHTML = '<div id="docNote">这类文件（Word / Excel / PPT / 压缩包）浏览器看不了 —— '
-				+ '点右上角「下载」，用手机上的 WPS / Office 打开。</div>'
+			// 文件名后缀是重要线索：同一句"看不了"可能对应很多事，把类型写出来才好排查。
+			const ext = (String(name).match(/\.[A-Za-z0-9]+$/) ?? [''])[0]
+			body.innerHTML = '<div id="docNote">' + escapeHtml(ext === '' ? '这类文件' : ext + ' 文件')
+				+ '浏览器渲染不了（Word / Excel / PPT / 压缩包都算）—— 点右上角「新标签」或「下载」，'
+				+ '用手机上的 WPS / Office 打开。</div>'
 			return
 		}
 		try {
 			const response = await fetch(src)
 			if (response.ok !== true) throw new Error('HTTP ' + response.status)
 			const raw = await response.text()
+			// 空文件 / 服务端给了空内容时别只留一片白 ✗（用户会说"看不了"）。
+			if (raw.trim() === '') { body.innerHTML = '<div id="docNote">这个文件是空的。</div>'; return }
 			body.innerHTML = kind === 'markdown' ? tinyMarkdown(raw) : '<pre>' + escapeHtml(raw) + '</pre>'
 		} catch (error) {
+			// 失败时**把原因和出路一起给**：光说"打不开"用户只能猜 ✗。
 			body.innerHTML = '<div id="docNote">打不开（' + escapeHtml(String(error?.message ?? error))
-				+ '）—— 可以点右上角「下载」试试。</div>'
+				+ '）。可以点右上角「新标签」让浏览器自己处理，或「下载」用别的 App 打开。</div>'
 		}
 	}
 
