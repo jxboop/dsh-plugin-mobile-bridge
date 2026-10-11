@@ -2311,6 +2311,13 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	check('乱猜令牌：404（不是 403 —— 不告诉对方"这里有个链接" ✓）',
 		(await fetch(`${base}/share?t=${'0'.repeat(32)}`)).status === 404)
 
+	const listOn = await (await fetch(`${base}/api/share`, authed)).json()
+	check('列表里的 url 是**能打开的**（带端口 + `?t=` ✓ —— 原来拼错了、等于给个死链 ✗）',
+		Array.isArray(listOn.links) && listOn.links.length >= 1
+		&& String(listOn.links[0].url).includes('/share?t=') && String(listOn.links[0].url).length > 20
+		&& String(listOn.links[0].token).length === 32,
+		String(listOn.links?.[0]?.url ?? '(空)').slice(0, 70))
+
 	// 撤销后立刻失效 ✓
 	const revoked = await fetch(`${base}/api/share/revoke`, {
 		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ token: created.token }),
@@ -2327,6 +2334,11 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		delete stored.shareLinks
 		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify(stored), 'utf8')
 	}
+	// 冷视角复查 #7：功能关掉之后，撤销这条路也要关上 ✓（不能让偷到 cookie 的人拿它做破坏 ✓）。
+	check('只读链接关掉后：撤销也 403（不是"想撤就撤" ✗）',
+		(await fetch(`${base}/api/share/revoke`, {
+			method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ token: 'whatever' }),
+		})).status === 403)
 }
 
 /* --- 手机上回答提问 / 批准操作 ------------------------------------------- */
@@ -2451,6 +2463,22 @@ async function readInteraction(reader) {
 	})
 	check('合法的审批结果被接受', allowed.status === 200, `HTTP ${allowed.status}`)
 	check('waterfall 拿到 allowed-once', (await pendingApproval) === 'allowed-once')
+
+	/*
+	 * ③ 审批记录（2.5.0 遗留）：刚批的这一次必须**落了账** ✓ ——
+	 * "谁（来源 IP）、在哪个会话、批了哪个工具、批成什么" ✓。
+	 * 审计是**事后能查**的意思：写不进去不许挡住审批本身 ✓（这条只验"写进去的能读回来" ✓）。
+	 */
+	const audit = await (await fetch(`${base}/api/approvals?limit=5`, { headers: { cookie: authed.headers.cookie } })).json()
+	const latest = Array.isArray(audit.records) ? audit.records.at(-1) : null
+	check('审批记录：刚批的这一次在账上（结果 + 来源 IP + 经由"手机"✓）',
+		latest !== null && latest.kind === 'approval' && latest.outcome === 'allowed-once'
+		&& typeof latest.ip === 'string' && latest.ip !== '' && latest.via === 'phone'
+		&& typeof latest.at === 'number',
+		JSON.stringify(latest).slice(0, 110))
+	check('审批记录：问话不算账（只记"审批" ✓ —— 混进来就分不清"问"和"批"了 ✗）',
+		Array.isArray(audit.records) && audit.records.every((item) => item.kind === 'approval'))
+	check('审批记录要登录才读得到（谁批过也是隐私 ✓）', (await fetch(`${base}/api/approvals`)).status === 401)
 
 	await reader.cancel().catch(() => {})
 }

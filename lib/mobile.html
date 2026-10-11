@@ -4530,8 +4530,13 @@
 	 * "手机发图发不出去"时我这边日志干干净净，只能靠猜（2026-10-09 卡了很久）。
 	 * 现在是"fire and forget"：上报本身失败绝不能再影响用户操作。
 	 */
-	function reportToBridge(event, detail, bytes) {
+	function reportToBridge(
+		// 2.7.1 冷视角复查 **#6**：这里原来是**裸 fetch POST** ✗ —— 于是"只看不发"时手机仍会往电脑发东西，
+		// "所有写请求都从 api() 出去"那句话就是**假的** ✓。补上短路 ✓（上报日志不值得破这个规矩 ✓）。
+		event, detail, bytes) {
 		try {
+			// 2.7.1 冷视角复查 #6：只看不发时**不发**这条上报 ✓（它也是往电脑发的写请求 ✓）。
+			if (readOnly.on === true) return
 			fetch('api/clientlog', {
 				method: 'POST',
 				credentials: 'same-origin',
@@ -6757,6 +6762,23 @@
 		row.appendChild(allow)
 		row.appendChild(deny)
 		holder.card.appendChild(row)
+		/*
+		 * ④「以后少问这类」捷径（2026-10-12 补做，2.5.0 的遗留项 ✓）。
+		 *
+		 * 为什么走「权限」那一页：卡片上只有"允许一次 / 拒绝"两个动作 ✓，而"以后少问"是**改规矩** ✓
+		 * —— 规矩在权限纸里、改它要**重输 PIN** ✓（和放开权限同一个纪律 ✓）。
+		 * ⚠️ 文案**不许暗示"这一次也批了"** ✗：它只管以后 ✓，所以这里明说"这一次仍要点上面的允许一次" ✓。
+		 */
+		const shortcut = mk('button', 'sessbtn', '以后少问这类 →')
+		shortcut.setAttribute('title', '改的是"以后"的规矩（要重输 PIN）—— 不等于批准这一次')
+		shortcut.addEventListener('click', (event) => {
+			event.stopPropagation()
+			toast('改的是"以后"的规矩（要重输 PIN）✓ —— 这一次仍要点上面的「允许一次」', 3600)
+			// 直接走用户平时点的那条路 ✓（同一个键、同一段代码 ✓），不另开旁路 ✗。
+			const entry = $('permBtn')
+			if (entry !== null && entry !== undefined) entry.click()
+		})
+		holder.card.appendChild(shortcut)
 		holder.card.appendChild(holder.err)
 		return holder.card
 	}
