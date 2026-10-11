@@ -21,7 +21,7 @@
  */
 
 import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = join(import.meta.dirname, '..')
@@ -92,6 +92,60 @@ for (const rel of ['lib/mobile.html', 'lib/icons/icon-180.png', 'lib/icons/icon-
 check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	(Array.isArray(pkg.files) ? pkg.files : []).some((pattern) => String(pattern).replace(/^\.\//, '').replace(/\/+$/, '') === 'lib'),
 	JSON.stringify(pkg.files))
+
+/*
+ * 4) **每个 .ps1 都必须带 UTF-8 BOM**（2026-10-11 真踩过 ✗）。
+ *
+ * PowerShell 5.1 在没有 BOM 时按 **ANSI（GBK）** 读 .ps1 —— 里面的中文注释会被解成乱码，
+ * 有些字节序列还会把字符串的引号"吃掉"，于是脚本**直接语法错误**（报的还是
+ * "Try statement is missing its Catch or Finally block" 这种完全不指向真因的话 ✗）。
+ * 仓库里原有 11 个脚本都带 BOM ✓，所以这条是"跟着现有约定走"的机械检查 ——
+ * 新加脚本忘了 BOM，在这里就会红，而不是等到用户双击运行才发现 ✓。
+ */
+{
+	const toolsDir = join(ROOT, 'tools')
+	const scripts = existsSync(toolsDir)
+		? readdirSync(toolsDir).filter((name) => name.toLowerCase().endsWith('.ps1'))
+		: []
+	check('（自检）tools/ 下确实有 .ps1 可查', scripts.length > 0, `${scripts.length} 个`)
+	const missingBom = scripts.filter((name) => {
+		const bytes = readFileSync(join(toolsDir, name))
+		return !(bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF)
+	})
+	check('每个 .ps1 都带 UTF-8 BOM（PS 5.1 无 BOM 会按 GBK 读 → 中文把脚本读坏）',
+		missingBom.length === 0, missingBom.join(', ') || `${scripts.length} 个都带 ✓`)
+}
+
+/*
+ * 5) **文本源里不许有"乱码替换字符"（U+FFFD）**（2026-10-11 真出过事故 ✗）。
+ *
+ * 现场：用 PowerShell 的 `Get-Content -Raw` + `Set-Content` 改 `lib/index.js` ——
+ * PS 5.1 按 **ANSI/GBK** 读 UTF-8，中文被双重编码写回，**1641 个字符变成 U+FFFD**、
+ * 还丢了换行，脚本直接语法崩 ✗。这种伤在 `git diff` 里非常显眼，但在"改完就跑测试"的
+ * 节奏里，最该被**最便宜的一条断言**当场拦住 ✓ —— 所以放这儿。
+ *
+ * ⚠️ 顺带记下正确做法：改这些文件**只用编辑工具/Node**，别用 PS 的文本管道 ✗。
+ */
+{
+	const { readdirSync: readdirNames } = await import('node:fs')
+	const targets = []
+	const walk = (dir, depth) => {
+		if (depth > 2) return
+		for (const name of readdirNames(join(ROOT, dir), { withFileTypes: true })) {
+			if (name.name === 'node_modules' || name.name === '.git') continue
+			const rel = dir === '' ? name.name : `${dir}/${name.name}`
+			if (name.isDirectory()) { walk(rel, depth + 1); continue }
+			if (/\.(js|mjs|html|md|json|ps1|yml)$/i.test(name.name)) targets.push(rel)
+		}
+	}
+	walk('lib', 0)
+	walk('test', 0)
+	walk('tools', 0)
+	check('（自检）扫到了该扫的文本源', targets.length > 10, `${targets.length} 个`)
+	const mojibake = targets.filter((rel) => readFileSync(join(ROOT, rel), 'utf8').includes('\uFFFD'))
+	check('没有文件被写成乱码（U+FFFD 一个都不许有 —— PS 文本管道改文件会留下它 ✗）',
+		mojibake.length === 0, mojibake.join(', ') || `${targets.length} 个文件都干净 ✓`)
+}
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

@@ -59,11 +59,18 @@ await mkdir(join(scratch, 'mobile-uploads'), { recursive: true })
 await writeFile(join(scratch, 'mobile-uploads', 'bg.mov'), BACKDROP_BYTES)
 await writeFile(
 	join(scratch, 'mobile-bridge.json'),
-	JSON.stringify({ version: 1, port: PORT, pin: '123456', answerOnPhone: true, backgroundFile: 'bg.mov', asrKey: 'harness-asr-key', asrBaseUrl: ASR_BASE }),
+	JSON.stringify({
+		version: 1, port: PORT, pin: '123456', answerOnPhone: true, backgroundFile: 'bg.mov',
+		asrKey: 'harness-asr-key', asrBaseUrl: ASR_BASE,
+		// 2.7.0：用户自己加的键**不许被配置重写抹掉** ✗ —— loadConfig 是白名单重写，
+		// 这条特意放进来看它能不能活过启动时那次规范化 ✓（下面有对应断言 ✓）。
+		myCustomFlag: 'keep-me',
+	}),
 	'utf8',
 )
 
 const { apply } = await import('../lib/index.js')
+const { qrMatrix } = await import('../lib/qr.js')
 
 const STATE = { prompts: [], cancelled: [], followed: [], created: [], queueMutations: [] }
 
@@ -239,6 +246,36 @@ let badgeTap = null
 const services = {
 	/** 记录"切模型"的请求（2.4.0）。 */
 	selectedModels: [],
+	/*
+	 * 2.7.0 ★6：定时任务栏的桩。
+	 *
+	 * 真上游是 `@deepseek-ai/dsh-schedule` 注册的 **`schedule`** 服务（`super(ctx, "schedule")` ✓），
+	 * 方法：create(sessionId, request) / list({sessionId}) / catalog() / delete({id, sessionId}) ✓。
+	 * 桩的重点不是"演得像"，而是**把桥转发过去的请求形状记下来** ✓ —— 形状错了，
+	 * 真宿主会直接抛输入错误，而那时候用户看到的是"没建成" ✗。
+	 */
+	schedule: {
+		created: [],
+		deleted: [],
+		tasks: [
+			{ id: 'schedule-1', sessionId: 'session-test', title: '整理今天的笔记', prompt: '整理今天的笔记', scheduledAt: '2026-10-13T15:00:00.000Z', repeat: { kind: 'daily', time: '23:00:00', timeZone: 'Asia/Shanghai' }, status: 'active' },
+		],
+		async create(sessionId, request) {
+			this.created.push({ sessionId, request })
+			return { id: `schedule-new-${this.created.length}`, sessionId, status: 'active', ...request }
+		},
+		async list({ sessionId }) {
+			return this.tasks.filter((task) => task.sessionId === sessionId)
+		},
+		async catalog() {
+			return this.tasks
+		},
+		async delete({ id, sessionId }) {
+			this.deleted.push({ id, sessionId })
+			const found = this.tasks.some((task) => task.id === id && task.sessionId === sessionId)
+			return found ? { id, deleted: true } : { id, deleted: false, code: 'schedule_not_found' }
+		},
+	},
 	// 桌面角标靠 webServer.tapIndex 注入。以前 harness 里没有这个服务，于是
 	// installBadge 整个走不到 —— 一个作用域写错（模块级函数里用了 createBridge
 	// 内的 record()）就让 start() 抛错：角标消失、隧道自检永不启动，
@@ -1758,6 +1795,538 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	// apply() 里的 catch 会把 start() 的异常写进这个文件 —— 它不存在 = 启动没抛错。
 	check('start() 没有抛异常（抛了就会留下 start-error 日志）',
 		!existsSync(join(scratch, 'mobile-bridge-start-error.log')))
+}
+
+/* --- publicUrl：密钥段只能出现一次（2.7.0 第 2 轮"上下游"抓到的真 bug）----
+ * 现场：`boot-up.ps1` 把 publicUrl 写成了**带密钥段的完整地址**，而桥的 `withSecret()`
+ * 是"给裸地址拼上密钥段"的 —— 于是徽标、隧道自检、手机拿到的"切到当前地址"全变成
+ * `…/<secret>/<secret>/`，打不开 ✗。而当时这条路径**一条断言都没有** ✓（所以能溜到线上）。
+ * 规矩：两种写法（裸的 / 已经带密钥段的）都必须只出现**一段**密钥 ✓。
+ */
+{
+	const configPath = join(scratch, 'mobile-bridge.json')
+	const readConfig = async () => JSON.parse(await readFile(configPath, 'utf8'))
+	const writeConfig = async (next) => writeFile(configPath, JSON.stringify(next), 'utf8')
+	const setPublicUrl = async (value) => {
+		const next = await readConfig()
+		next.publicUrl = value
+		await writeConfig(next)
+		// 角标那条 tap 每次渲染 index 都会重读配置文件（隧道网址会变），借它刷新缓存。
+		if (typeof badgeTap === 'function') badgeTap('<html><body>hi</body></html>')
+	}
+	const bootstrapPublicUrl = async () => (await (await fetch(`${base}/api/bootstrap`, authed)).json()).publicUrl
+	const secret = (await readConfig()).pathSecret
+	check('（前置）配置里有 pathSecret，用例才有意义',
+		typeof secret === 'string' && /^[0-9a-f]{16}$/.test(secret), String(secret))
+
+	// ① 裸地址 → 拼出一段密钥
+	await setPublicUrl('https://example.ts.net')
+	const bare = await bootstrapPublicUrl()
+	check('publicUrl 写裸地址：桥只拼一次密钥段（手机"切到当前地址"才能用）',
+		bare === `https://example.ts.net/${secret}/`, String(bare))
+
+	// ② 已经带密钥段的写法 → **必须幂等**，不许再拼一次
+	await setPublicUrl(`https://example.ts.net/${secret}/`)
+	const suffixed = await bootstrapPublicUrl()
+	check('publicUrl 已经带密钥段：仍然只有一段（withSecret 幂等 —— 脚本写两种写法都不会坏）',
+		suffixed === `https://example.ts.net/${secret}/`, String(suffixed))
+
+	// ③ 下游：角标里会列好几个地址（局域网 / 外网 / USB…），每个各带一段密钥是对的 ✓ ——
+	//    错的是**同一个地址被拼了两段**（`<secret>/<secret>`）。所以查的是"有没有连着两段"。
+	const badgeHtml = String(typeof badgeTap === 'function' ? badgeTap('<html><body>hi</body></html>') : '')
+	check('角标里的地址没有出现"连着两段密钥"（徽标是用户复制地址的地方）',
+		badgeHtml.includes(`${secret}/${secret}`) === false && badgeHtml.includes(secret),
+		badgeHtml.includes(`${secret}/${secret}`) ? '出现了两段 ✗' : '只有单段 ✓')
+
+	/*
+	 * ④ 地址卡（2.7.0 ★2）：把注入的 SVG **解析回矩阵**，和编码器自己算的逐格比对 ✓。
+	 *    这条把"编码器 → 矩阵 → SVG → 注入的 HTML"整条链钉死：
+	 *    编码器的正确性由 test/qr.mjs 的往返解码保证 ✓，这里保证"画进角标的确实是那个矩阵"✓。
+	 */
+	check('角标里带地址卡（可点开）+ 开关都在',
+		badgeHtml.includes('dsh-mobile-bridge-card') && badgeHtml.includes('dsh-mobile-bridge-card-toggle'))
+	const svg = /<svg[^>]*>[\s\S]*?<\/svg>/.exec(badgeHtml)?.[0] ?? ''
+	check('地址卡里有内联二维码 SVG（不用 canvas、不引任何前端依赖）', svg.startsWith('<svg '), svg.slice(0, 60))
+	const path = /<path d="([^"]*)"/.exec(svg)?.[1] ?? ''
+	const scale = Number(/h(\d+)v\1/.exec(path)?.[1] ?? 0)
+	const cells = [...path.matchAll(/M(\d+) (\d+)h/g)].map((match) => [Number(match[1]) / scale, Number(match[2]) / scale])
+	const expectedUrl = `https://example.ts.net/${secret}/`
+	const expected = qrMatrix(expectedUrl)
+	const quiet = 4
+	const parsed = Array.from({ length: expected.size }, () => new Array(expected.size).fill(false))
+	let inside = 0
+	for (const [x, y] of cells) {
+		const col = x - quiet
+		const row = y - quiet
+		if (row >= 0 && col >= 0 && row < expected.size && col < expected.size) { parsed[row][col] = true; inside += 1 }
+	}
+	let dark = 0
+	for (const row of expected.modules) for (const cell of row) if (cell) dark += 1
+	check('地址卡里的二维码就是那个地址的矩阵（逐格比对，含静区偏移 ✓）',
+		path !== '' && scale > 0 && inside === dark && expected.modules.every((row, r) => row.every((cell, c) => cell === parsed[r][c])),
+		`SVG 模块 ${cells.length} / 矩阵黑块 ${dark}（落进矩阵 ${inside}）`)
+	check('码里编的是**带密钥段的完整地址**（扫码直接进，不用手输 ✓）',
+		expected.version >= 1 && expectedUrl.includes(secret) === true, expectedUrl)
+
+	await setPublicUrl('')
+}
+
+/* --- 消费者：配置文件里的"用户自己加的键"必须活下来（2.7.0 上游 bug）---------
+ * `loadConfig()` 是一张**白名单**：它会把配置对象重建成"已知字段"，再写回文件 ✗ ——
+ * 于是用户自己加的键（比如 `processControl`、或者随便一个备注）会被**静默抹掉** ✓。
+ * `asrMaxMinutes` 就这么丢过一次（代码注释里有记录 ✓），2026-07-11 加 `processControl`
+ * 时又差点重演 ✓。现在改成"不认识的键一律原样保留" ✓，这条断言把它钉住 ✓。
+ */
+{
+	const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('用户自己加的配置键活过了启动时的配置重写（未知键原样保留 ✓）',
+		stored.myCustomFlag === 'keep-me', JSON.stringify({ myCustomFlag: stored.myCustomFlag ?? null }))
+	check('已知字段照样被规范化（保留未知键不许顺手把已知字段放过去 ✗）',
+		stored.pin === '123456' && stored.port === PORT && typeof stored.pathSecret === 'string',
+		JSON.stringify({ pin: stored.pin, port: stored.port, secret: typeof stored.pathSecret }))
+}
+
+/* --- 电脑状态盘 / 结束进程（2.7.0 ★3）-------------------------------------
+ * 用户要的：「不用回电脑前就知道：CPU/内存/磁盘/网速、哪个 node 卡住了、一键 kill」。
+ * 这一块**危险**：DSH 自己就是一个 node 进程，而桥跑在它里面 —— 杀错就是"手机把自己弄断线"✗。
+ * 所以四条断言主线：状态读得到 ✓、默认关 ✓、PIN 门 ✓、**自己/子进程杀不得** ✓，
+ * 最后再真杀一个"我们故意起的、父进程不是我们"的 node 进程 ✓。
+ */
+{
+	const snapshot = await (await fetch(`${base}/api/system`, authed)).json()
+	check('电脑状态读得出来（CPU 核数 / 内存 / 磁盘 / 进程表）',
+		Number.isInteger(snapshot.host?.cores) && snapshot.host.cores > 0
+		&& snapshot.host.memoryTotalMB > 0
+		&& Array.isArray(snapshot.disks) && Array.isArray(snapshot.processes) && snapshot.processes.length > 0,
+		JSON.stringify({ 核: snapshot.host?.cores, 内存MB: snapshot.host?.memoryTotalMB, 磁盘: snapshot.disks?.length, 进程: snapshot.processes?.length }))
+	check('进程表里点名了"这就是我们自己的那个进程"（杀它=把手机桥弄断 ✗）',
+		snapshot.processes.some((entry) => entry.pid === process.pid && entry.isSelf === true && entry.killable === false),
+		JSON.stringify(snapshot.processes.find((entry) => entry.pid === process.pid) ?? null))
+	check('默认关闭时，状态里就说清"结束进程默认关 + 怎么开"',
+		snapshot.killEnabled === false && String(snapshot.killNote ?? '').includes('processControl'),
+		String(snapshot.killNote ?? '').slice(0, 60))
+
+	const anonSystem = await fetch(`${base}/api/system`)
+	check('电脑状态也要登录才读得到', anonSystem.status === 401, String(anonSystem.status))
+
+	const killBody = (pid, pin) => ({
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(pin === undefined ? { pid } : { pid, pin }),
+	})
+
+	// ① 默认关：连 PIN 都不该问，直接说清怎么开 ✓
+	const off = await fetch(`${base}/api/system/kill`, killBody(process.pid, config.pin))
+	const offBody = await off.json()
+	check('结束进程默认关：403 并在提示里写清怎么开（默认关是这一版的硬要求 ✓）',
+		off.status === 403 && String(offBody.error).includes('processControl'), `HTTP ${off.status}`)
+
+	// ② 打开它（**改配置文件即生效** —— 安全开关不该还要重启 ✓）
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...stored, processControl: true }), 'utf8')
+	}
+	const on = await (await fetch(`${base}/api/system`, authed)).json()
+	check('打开 processControl 后**立刻**生效（不用重启 DSH —— 关掉时也能立刻生效 ✓）',
+		on.killEnabled === true, String(on.killEnabled))
+
+	// ③ 三道"必须有"的闸
+	const noPin = await fetch(`${base}/api/system/kill`, killBody(process.pid))
+	check('没带 PIN：403，且不去动任何进程', noPin.status === 403, `HTTP ${noPin.status}`)
+	const badPin = await fetch(`${base}/api/system/kill`, killBody(process.pid, '000000'))
+	check('PIN 不对：403（不是 401 —— 401 会弹登录门把界面盖掉）', badPin.status === 403, `HTTP ${badPin.status}`)
+	const selfKill = await fetch(`${base}/api/system/kill`, killBody(process.pid, config.pin))
+	const selfBody = await selfKill.json()
+	check('想结束 DSH 本体：400 + 说清为什么（这一条要是漏了，用户一点手机就断线 ✗）',
+		selfKill.status === 400 && String(selfBody.error).includes('DSH 本体'), `HTTP ${selfKill.status} ${String(selfBody.error).slice(0, 40)}`)
+	const notNode = await fetch(`${base}/api/system/kill`, killBody(4, config.pin))
+	check('非 node / 不存在的进程：400 或 404（两种都不许真去杀）',
+		notNode.status === 400 || notNode.status === 404, `HTTP ${notNode.status}`)
+
+	/*
+	 * ④ 真杀一个：故意用 `cmd start /b` 起一个 node —— **它的父进程不是我们** ✓。
+	 *    直接 spawn 的话父进程就是本进程，会被"DSH 子进程"那条规则挡掉 ✓（那是设计如此 ✓），
+	 *    所以这里绕一层，才测得到"允许的那条路真的能杀"✓。
+	 */
+	const marker = `dsh-kill-test-${Date.now()}`
+	const probeFile = join(scratch, 'kill-target.mjs')
+	await writeFile(probeFile, 'setInterval(() => {}, 1000)\n', 'utf8')
+	spawnSync('cmd.exe', ['/c', 'start', '/b', process.execPath, probeFile, marker], { windowsHide: true, stdio: 'ignore', timeout: 8000 })
+	let victim = null
+	for (let i = 0; i < 20 && victim === null; i++) {
+		await new Promise((resolve) => setTimeout(resolve, 250))
+		const shot = await (await fetch(`${base}/api/system`, authed)).json()
+		victim = shot.processes.find((entry) => String(entry.command).includes(marker)) ?? null
+	}
+	if (victim === null) {
+		check('（前置）起得来一个"父进程不是我们"的 node 进程，才好验真杀', false, `没找到含 ${marker} 的进程`)
+	} else {
+		check('（前置）它被判成可结束（父进程不是我们 → 不是"DSH 子进程"）',
+			victim.killable === true && victim.isNode === true, JSON.stringify({ pid: victim.pid, killable: victim.killable, why: victim.why }))
+		const killed = await fetch(`${base}/api/system/kill`, killBody(victim.pid, config.pin))
+		const killedBody = await killed.json()
+		check('PIN 对 + node + 不是自己人：真的把它结束了，并且**确认过**它没了 ✓',
+			killed.status === 200 && killedBody.killed === true && killedBody.alive === false,
+			JSON.stringify(killedBody))
+		// 复查：再从系统里看一眼，那个 PID 真的不在进程表里 ✓
+		const after = await (await fetch(`${base}/api/system`, authed)).json()
+		check('结束之后它确实不在进程表里了（不是"发出请求就当成功"✗）',
+			after.processes.some((entry) => entry.pid === victim.pid) === false,
+			`PID ${victim.pid}`)
+	}
+
+	// 收尾：把开关关回去（后面的用例按默认关走 ✓）
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		delete stored.processControl
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify(stored), 'utf8')
+	}
+}
+
+/* --- 一键动作：锁屏 / 关机 / 重启（2.7.0 ★4）-------------------------------
+ * 纪律：锁屏一键（往安全方向走 ✓）；关机/重启**默认关 + 现输 PIN + 点两次 + 可取消** ✓。
+ * 测试**绝不去真关机/真锁屏** ✗ —— 靠 `dryRun`（只回报会跑哪条命令 ✓）验到命令这一层 ✓。
+ */
+{
+	const info = await (await fetch(`${base}/api/power`, authed)).json()
+	check('一键动作面板读得到：锁屏可用、关机默认关、并带"关机前自检"四条',
+		info.lockEnabled === true && info.powerEnabled === false
+		&& Array.isArray(info.preflight) && info.preflight.length >= 4
+		&& info.pending === null,
+		JSON.stringify({ lock: info.lockEnabled, power: info.powerEnabled, 自检: info.preflight?.length, note: String(info.note).slice(0, 30) }))
+	check('自检里那条"开机自启已装"是真的去查了计划任务（不是写死的 ✓）',
+		info.preflight.some((entry) => entry.name === '开机自启已装' && typeof entry.ok === 'boolean' && String(entry.hint).length > 5),
+		JSON.stringify(info.preflight?.find((entry) => entry.name === '开机自启已装') ?? null))
+	check('没登录读不到一键动作面板', (await fetch(`${base}/api/power`)).status === 401)
+
+	const power = (body) => fetch(`${base}/api/power`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+	})
+
+	// 锁屏：不用 PIN ✓；但**用 dryRun** 验命令，绝不真把这台机器锁上 ✗
+	const lockDry = await power({ action: 'lock', dryRun: true })
+	const lockBody = await lockDry.json()
+	check('锁屏：一键、不要 PIN，命令是 Windows 那条 LockWorkStation（dryRun 验的 ✓）',
+		lockDry.status === 200 && String(lockBody.command).includes('LockWorkStation'), JSON.stringify(lockBody))
+
+	// 默认关：关机/重启连 PIN 都不问 ✓
+	const off = await power({ action: 'shutdown', pin: config.pin, dryRun: true })
+	check('关机默认关：403 并写清怎么开', off.status === 403, `HTTP ${off.status}`)
+
+	// 打开它（安全开关改配置即生效 ✓）
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...stored, powerControl: true }), 'utf8')
+	}
+	check('打开 powerControl 后立刻生效', (await (await fetch(`${base}/api/power`, authed)).json()).powerEnabled === true)
+	check('没带 PIN 不许关机', (await power({ action: 'shutdown', dryRun: true })).status === 403)
+	check('PIN 不对不许关机', (await power({ action: 'shutdown', pin: '000000', dryRun: true })).status === 403)
+	check('不支持的动作回 400（不许拿别的字符串当动作使）', (await power({ action: 'reboot-now', pin: config.pin })).status === 400)
+
+	const shutdownDry = await (await power({ action: 'shutdown', pin: config.pin, dryRun: true })).json()
+	check('关机：命令形态是 shutdown /s /t 20（**留 20 秒给「取消」** ✓）',
+		shutdownDry.command === 'shutdown.exe /s /t 20 /c mobile-bridge', String(shutdownDry.command))
+	const restartDry = await (await power({ action: 'restart', pin: config.pin, dryRun: true })).json()
+	check('重启：命令形态是 shutdown /r /t 20', restartDry.command === 'shutdown.exe /r /t 20 /c mobile-bridge', String(restartDry.command))
+
+	// 取消：没有待执行的关机时，系统会拒绝 —— 我们如实回 409 ✓（不假装"已取消"✗）
+	const cancel = await power({ action: 'cancel' })
+	check('没有可取消的关机时如实回 409（不假装成功）', cancel.status === 409, `HTTP ${cancel.status}`)
+
+	// 收尾：关回去
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		delete stored.powerControl
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify(stored), 'utf8')
+	}
+}
+
+/* --- 剪贴板 & 截屏（2.7.0 池子里的 ★4）-------------------------------------
+ * 文档原话：「电脑截图 → 手机立刻看到 ✓；手机复制的文字 → 进电脑剪贴板 ✓」。
+ * ⚠️ 这组用例会**动用户真实的剪贴板** —— 所以先备份、测完**还原** ✓（这是礼貌，也是纪律 ✓）。
+ * 文字里特意带中文 / emoji / 引号 / `$` / 换行 —— 凡是"走命令行就会翻车"的东西都放进去 ✓
+ * （2026-10-12 真机验证时就是这里抓到编码 bug 的 ✓）。
+ */
+{
+	const clipboardGet = async () => (await (await fetch(`${base}/api/clipboard`, authed)).json())
+	const clipboardSet = (text) => fetch(`${base}/api/clipboard`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ text }),
+	})
+
+	const original = await clipboardGet()
+	check('读电脑剪贴板：登录就能读（读不到会明说，不是编一个空的 ✓）',
+		typeof original.text === 'string' || typeof original.error === 'string', JSON.stringify(original).slice(0, 60))
+	check('没登录读不到剪贴板', (await fetch(`${base}/api/clipboard`)).status === 401)
+
+	const marker = `手机桥测试-${Date.now()}-中文🎯-"引号"-$符号\n第二行\tTab`
+	const wrote = await clipboardSet(marker)
+	check('写电脑剪贴板：200', wrote.status === 200, `HTTP ${wrote.status}`)
+	const readBack = await clipboardGet()
+	check('写进去再读回来**一字不差**（base64 走 stdio：中文/emoji/引号/$/换行都不许烂 ✗）',
+		readBack.text === marker, JSON.stringify(readBack.text ?? readBack.error).slice(0, 80))
+	check('没带 text：400（不是 500，也不是静默成功）', (await fetch(`${base}/api/clipboard`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({}),
+	})).status === 400)
+
+	const screen = await fetch(`${base}/api/screen`, authed)
+	const screenBytes = Buffer.from(await screen.arrayBuffer())
+	check('截屏：200 + image/png + 真的是一张图（PNG 头 + 至少 10KB ✓）',
+		screen.status === 200 && screen.headers.get('content-type') === 'image/png'
+		&& screenBytes.length > 10000 && screenBytes.slice(1, 4).toString() === 'PNG',
+		`HTTP ${screen.status} ${screen.headers.get('content-type')} ${(screenBytes.length / 1024).toFixed(0)}KB`)
+	check('截屏不许被缓存（屏幕内容 + cache-control: no-store ✓）',
+		String(screen.headers.get('cache-control') ?? '').includes('no-store'), String(screen.headers.get('cache-control')))
+	check('没登录截不到屏', (await fetch(`${base}/api/screen`)).status === 401)
+
+	// 还原用户原来的剪贴板 ✓
+	if (typeof original.text === 'string') await clipboardSet(original.text)
+	const restored = await clipboardGet()
+	check('测完把用户原来的剪贴板还原了 ✓（不许留测试垃圾在人家剪贴板里 ✗）',
+		typeof original.text !== 'string' || restored.text === original.text,
+		`还原 ${String(restored.text ?? '').length} 字符 / 原 ${String(original.text ?? '').length} 字符`)
+}
+
+/* --- 会话导出 / 分享（2.7.0 池子里的 ★5）---------------------------------
+ * 上游是**真东西**：会话日志 = zstd 分帧 jsonl（`lib/export.js` ✓，脚本和桥共用一份 ✓）。
+ * 这里**种一份合成日志**（自己 zstd 压缩 ✓），于是每条口径都能钉死：
+ *   用户原文 ✓ / 运行时注入的"用户消息"必须滤掉 ✓ / 推理默认不带 ✓ 带 `reasoning=1` 才带 ✓ /
+ *   `max` 截断 ✓ / 条数（info=1）✓ / 401 ✓ / 404 ✓ / id 带斜杠直接拒 ✓。
+ */
+{
+	const { zstdCompressSync } = await import('node:zlib')
+	const exportId = `session-exporttest-${Date.now()}`
+	const dir = join(scratch, 'sessions', '--D-test--', exportId)
+	await mkdir(dir, { recursive: true })
+	const events = [
+		{ type: 'session', id: exportId, cwd: 'D:\\test' },
+		{ type: 'user/message', time: 1, data: { content: [{ type: 'text', text: '用户说的第一句话：请把这事办了' }] } },
+		{ type: 'user/message', time: 2, data: { content: [{ type: 'text', text: 'Current runtime context：这是注入的，不该出现在导出里' }] } },
+		{ type: 'user/message', time: 2.5, data: { content: [{ type: 'text', text: `很长的一条：${'填'.repeat(800)}` }] } },
+		{ type: 'assistant/message', time: 3, data: { message: { content: [{ type: 'reasoning', text: '这段推理默认不该出现' }, { type: 'text', text: '助手回答：已经办好了' }] } } },
+		{ type: 'tool/call', time: 4, data: { name: 'read', arguments: '{"file":"x"}' } },
+		{ type: 'tool/result', time: 5, data: { message: { content: [{ content: [{ type: 'text', text: '工具结果正文' }] }] } } },
+	]
+	await writeFile(join(dir, 'session.v3.jsonl.zstd'), zstdCompressSync(Buffer.from(events.map((event) => JSON.stringify(event)).join('\n'), 'utf8')))
+
+	const exported = await fetch(`${base}/api/export/session?id=${exportId}`, authed)
+	const markdown = await exported.text()
+	check('导出：200 + text/markdown + 文件名（中文名走 RFC 5987，老浏览器有 ASCII 兜底 ✓）',
+		exported.status === 200
+		&& String(exported.headers.get('content-type')).startsWith('text/markdown')
+		&& String(exported.headers.get('content-disposition')).includes('attachment')
+		&& String(exported.headers.get('content-disposition')).includes("filename*=UTF-8''"),
+		`HTTP ${exported.status} ${exported.headers.get('content-disposition')}`)
+	check('导出内容：用户原文 + 助手正文都在',
+		markdown.includes('用户说的第一句话') && markdown.includes('助手回答：已经办好了'))
+	check('运行时注入的"用户消息"被滤掉了（不然记录里全是环境快照那种噪音 ✗）',
+		markdown.includes('Current runtime context') === false)
+	check('推理过程**默认不带** ✓（`reasoning=1` 才带 ✓）', markdown.includes('这段推理默认不该出现') === false)
+	const withReasoning = await (await fetch(`${base}/api/export/session?id=${exportId}&reasoning=1`, authed)).text()
+	check('带 reasoning=1 时推理才进来（放在 <details> 里 ✓）',
+		withReasoning.includes('这段推理默认不该出现') && withReasoning.includes('<details>'))
+	// 截断：接口把 max 钳在 [500, 20000] ✓（防止有人传 max=1 导出一堆没用的东西 ✗），
+	// 所以用一条 800 字的消息 + max=500 来验 ✓ —— 而不是传个假参数再抱怨没截断 ✗。
+	const truncated = await (await fetch(`${base}/api/export/session?id=${exportId}&max=500`, authed)).text()
+	check('max 截断生效（不让一条超长输出把文件撑爆 ✓）',
+		truncated.includes('（截断，原文还有') === true, truncated.includes('截断') ? '' : '没有截断标记 ✗')
+	const tooSmall = await (await fetch(`${base}/api/export/session?id=${exportId}&max=3&info=1`, authed)).json()
+	check('max 传得太小会被钳到下限（不是接受它、也不是报错 ✓）', tooSmall.bytes > 500, JSON.stringify(tooSmall.bytes))
+	const info = await (await fetch(`${base}/api/export/session?id=${exportId}&info=1`, authed)).json()
+	check('info=1 只回报条数不改口径（2 用户（注入那条不算 ✓）/ 1 助手 / 1 工具调用 ✓）',
+		info.users === 2 && info.assistants === 1 && info.toolCalls === 1 && info.bytes > 0, JSON.stringify(info))
+	check('没登录导不出会话', (await fetch(`${base}/api/export/session?id=${exportId}`)).status === 401)
+	check('不存在的会话：404（说清是"找不到"而不是空文件 ✓）',
+		(await fetch(`${base}/api/export/session?id=session-nope-nope`, authed)).status === 404)
+	check('id 里带路径分隔符：400（防"读别的东西" ✓）',
+		(await fetch(`${base}/api/export/session?id=${encodeURIComponent('../secrets')}`, authed)).status === 400)
+
+	/*
+	 * v4 会话（**当前会话写的就是 v4** ✓）。
+	 * 真机验证抓到的 bug：日志文件名写死 `session.v3.jsonl.zstd` ✗ → 所有新会话都导不出来 ✓。
+	 * 所以这里同时种一份 v3（旧代）+ 一份 v4（新代），钉住"两代都认、优先新的" ✓。
+	 */
+	const v4Id = `session-exportv4-${Date.now()}`
+	const v4dir = join(scratch, 'sessions', '--D-test--', v4Id)
+	await mkdir(v4dir, { recursive: true })
+	const line = (event) => `${JSON.stringify(event)}\n`
+	await writeFile(join(v4dir, 'session.v4.jsonl.zstd'), zstdCompressSync(Buffer.from(
+		line({ type: 'session', version: 4, id: v4Id, cwd: 'D:\\test' })
+		+ line({ type: 'user/message', time: 1, data: { content: [{ type: 'text', text: 'v4 里的用户消息' }] } }), 'utf8')))
+	await writeFile(join(v4dir, 'session.v3.jsonl.zstd'), zstdCompressSync(Buffer.from(
+		line({ type: 'session', version: 3, id: v4Id, cwd: 'D:\\test' })
+		+ line({ type: 'user/message', time: 1, data: { content: [{ type: 'text', text: 'v3 里那句不该被选中' }] } }), 'utf8')))
+	const v4out = await (await fetch(`${base}/api/export/session?id=${v4Id}`, authed)).text()
+	check('v4 会话也导得出来（日志文件名不许写死 v3 ✗ —— 真机验证抓到的 bug ✓）',
+		v4out.includes('v4 里的用户消息'), v4out.slice(0, 60))
+	check('同一会话同时有 v3 和 v4 时取 v4（别把旧的那份导出来 ✗）',
+		v4out.includes('v3 里那句不该被选中') === false)
+}
+
+/* --- 定时任务面板（2.7.0 池子里的 ★6）-------------------------------------
+ * 上游是宿主的 **`schedule` 服务**（`@deepseek-ai/dsh-schedule` ✓，形状在上面桩里注明了 ✓）。
+ * 桥只该做"翻译 + 转发" ✓ —— 所以这里主要验**转发出去的请求形状** ✓ + 各种挡门 ✓。
+ */
+{
+	const list = await (await fetch(`${base}/api/schedule?sessionId=session-test`, authed)).json()
+	check('列定时任务：这份会话的都在（id/标题/提示/下次时间/重复规则 ✓）',
+		list.count === 1 && list.tasks[0].id === 'schedule-1' && list.tasks[0].repeat?.kind === 'daily',
+		JSON.stringify(list.tasks[0] ?? null).slice(0, 90))
+	const all = await (await fetch(`${base}/api/schedule`, authed)).json()
+	check('不带 sessionId 时列全部（宿主 catalog ✓）', all.count === 1 && all.sessionId === null)
+	check('没登录读不到定时任务', (await fetch(`${base}/api/schedule`)).status === 401)
+
+	const write = (body) => fetch(`${base}/api/schedule`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body),
+	})
+	const created = await write({ sessionId: 'session-test', prompt: '整理今天的笔记', title: '每晚整理', daily: { time: '23:00:00', time_zone: 'Asia/Shanghai' } })
+	const createdBody = await created.json()
+	const forwarded = services.schedule.created.at(-1)
+	check('建任务：转发给宿主的形状就是 schedule_create 那套（prompt + title + 六选一 ✓）',
+		created.status === 200 && forwarded?.sessionId === 'session-test'
+		&& forwarded?.request.prompt === '整理今天的笔记'
+		&& forwarded?.request.daily?.time === '23:00:00'
+		&& forwarded?.request.title === '每晚整理',
+		JSON.stringify(forwarded ?? null).slice(0, 120))
+	check('建完把宿主返回的任务回给手机（id 要有，手机要用来删 ✓）',
+		createdBody.created === true && typeof createdBody.task?.id === 'string', JSON.stringify(createdBody.task ?? null).slice(0, 80))
+	const noTitle = await write({ sessionId: 'session-test', prompt: '只有提示', every_seconds: 3600 })
+	check('没给标题时用提示开头当标题（不发一个没名字的任务出去 ✓）',
+		noTitle.status === 200 && services.schedule.created.at(-1)?.request.title === '只有提示')
+	check('不给 sessionId：400（到点往哪个会话发？不能瞎猜 ✓）',
+		(await write({ prompt: 'x', every_seconds: 60 })).status === 400)
+	check('不给 prompt：400', (await write({ sessionId: 'session-test', every_seconds: 60 })).status === 400)
+	check('定时器给两个：400（宿主也会拒，但先挡一道错误更好懂 ✓）',
+		(await write({ sessionId: 'session-test', prompt: 'x', every_seconds: 60, daily: { time: '09:00:00', time_zone: 'Asia/Shanghai' } })).status === 400)
+	check('定时器一个都不给：400', (await write({ sessionId: 'session-test', prompt: 'x' })).status === 400)
+	check('action 乱写：400', (await write({ action: 'explode', sessionId: 'session-test' })).status === 400)
+
+	const removed = await write({ action: 'delete', sessionId: 'session-test', id: 'schedule-1' })
+	check('删任务：转发 {id, sessionId} ✓ 并回报 deleted ✓',
+		removed.status === 200 && services.schedule.deleted.at(-1)?.id === 'schedule-1')
+	check('删不存在的：404（说"没找到"，不是假装删了 ✗）',
+		(await write({ action: 'delete', sessionId: 'session-test', id: 'schedule-nope' })).status === 404)
+
+	// 宿主没装 schedule 插件时：501 + 说清楚，别的功能不受影响 ✓
+	const saved = services.schedule
+	delete services.schedule
+	const missing = await fetch(`${base}/api/schedule?sessionId=session-test`, authed)
+	const missingBody = await missing.json()
+	check('宿主没装 schedule 插件：501 + 说人话（不是 500 崩掉，也不是假装空列表 ✗）',
+		missing.status === 501 && String(missingBody.error).includes('schedule'), `HTTP ${missing.status}`)
+	services.schedule = saved
+}
+
+/* --- 学习向：转写 / 对话存盘（2.7.0 池子里的 ★9）---------------------------
+ * 分工：**原文落盘靠桥** ✓（确定性 ✓）、提纲/复习卡靠会话里的 agent ✓。
+ * 这里验"落盘"那一半：路径安全 ✓（标题里的 `/`、emoji 不许决定路径 ✗）、内容带表头 ✓、
+ * 空正文 400 ✓、要登录 ✓。
+ */
+{
+	const noteResponse = await fetch(`${base}/api/note`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-test', title: '第 3 讲：量子/纠缠 🎯', text: '转写原文第一行\n第二行' }),
+	})
+	const note = await noteResponse.json()
+	check('转写存盘：写到 ~/.dsh/mobile-bridge/notes/ 下（返回真实路径 ✓）',
+		noteResponse.status === 200 && typeof note.file === 'string' && note.file.includes('mobile-bridge')
+		&& note.file.endsWith('.md'), JSON.stringify(note).slice(0, 100))
+	const noteBase = typeof note.file === 'string' ? note.file.split(/[\\/]/).pop() : ''
+	check('文件名只用安全字符（`/ : * ? " < > |` 和 emoji 全被剔掉 ✓；CJK 保留反而更好读 ✓）',
+		typeof note.file === 'string' && /[\\/]notes[\\/][^\\/]+\.md$/.test(note.file)
+		&& /[\\/:*?"<>|]/.test(noteBase) === false
+		&& /\p{Extended_Pictographic}/u.test(noteBase) === false,
+		noteBase)
+	const written = note.file === undefined ? '' : await readFile(note.file, 'utf8')
+	check('文件内容 = 表头 + 原文（表头带保存时间/会话 ✓，原文一字不差 ✓）',
+		written.includes('## 转写原文') && written.includes('转写原文第一行') && written.includes('session-test'),
+		written.slice(0, 60).replace(/\n/g, ' | '))
+	check('空正文：400（不写一个空文件糊弄 ✓）',
+		(await fetch(`${base}/api/note`, {
+			method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: '   ' }),
+		})).status === 400)
+	check('没登录不能往电脑上写文件', (await fetch(`${base}/api/note`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'x' }),
+	})).status === 401)
+}
+
+/* --- 受限只读链接（2.7.0 池子里的 ★10）-----------------------------------
+ * 文档要求：**默认关** ✓ / 开必须**重输 PIN** ✓ / 只给**一个**会话 ✓ / **可随时撤销** ✓。
+ * 客人那一页**不需要登录** ✓（令牌就是凭证 ✓），所以更要钉死：拿不到就别想看到东西 ✓、
+ * 看得到的那一份也只有那一份 ✓、页面上没有任何可写的东西 ✓。
+ */
+{
+	const { zstdCompressSync: zstdShare } = await import('node:zlib')
+	const shareCreate = (body) => fetch(`${base}/api/share`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body),
+	})
+	check('默认关：生成链接 403 并说清怎么开', (await shareCreate({ sessionId: 'session-test', pin: config.pin })).status === 403,
+		String((await (await fetch(`${base}/api/share`, authed)).json()).enabled))
+	check('默认关时列表也说得明白（enabled:false ✓，不是假装列出空 ✓）',
+		(await (await fetch(`${base}/api/share`, authed)).json()).enabled === false)
+	check('没登录不能生成链接', (await shareCreate({ sessionId: 'session-test', pin: config.pin })).status === 401 ||
+		(await shareCreate({ sessionId: 'session-test', pin: config.pin })).status === 403)
+
+	// 打开它（安全开关改配置即生效 ✓）
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...stored, shareLinks: true }), 'utf8')
+	}
+	check('PIN 不对：403，且不会生成链接', (await shareCreate({ sessionId: 'session-test', pin: '000000' })).status === 403)
+	check('sessionId 里带路径分隔符：400（只读页是按 id 去读会话的 ✓ —— 不能让 id 决定路径 ✗）',
+		(await shareCreate({ sessionId: '../secrets', pin: config.pin })).status === 400)
+
+	// ⚠️ `exportId` 是 ★5 那块里的**块内变量** ✗（直接引用会 ReferenceError —— 这个坑今晚踩第三次了 ✓）。
+	// 这块自己种一份最小日志 ✓，用自己作用域里的 id ✓。
+	const shareId = `session-sharetest-${Date.now()}`
+	const shareDir = join(scratch, 'sessions', '--D-test--', shareId)
+	await mkdir(shareDir, { recursive: true })
+	await writeFile(join(shareDir, 'session.v4.jsonl.zstd'), zstdShare(Buffer.from(
+		`${JSON.stringify({ type: 'session', version: 4, id: shareId, cwd: 'D:\\test' })}\n`
+		+ `${JSON.stringify({ type: 'user/message', time: 1, data: { content: [{ type: 'text', text: '客人只该看到这一句' }] } })}\n`, 'utf8')))
+
+	const created = await (await shareCreate({ sessionId: shareId, pin: config.pin, hours: 2 })).json()
+	check('生成只读链接：拿到一次性令牌 + 到期时间 + 可直接打开的地址 ✓',
+		created.created === true && typeof created.token === 'string' && created.token.length >= 32
+		&& typeof created.url === 'string' && created.url.includes('/share?t=') && created.expiresAt > Date.now(),
+		String(created.url).slice(0, 70))
+	check('令牌**不是** PIN ✓（而且链接照常挂在 pathSecret 之下 ✓ —— 客人拿到的是完整网址 ✓）',
+		created.token !== config.pin && created.token !== secret && created.token.length === 32,
+		`token 长度 ${String(created.token).length}`)
+
+	// 客人那一页：不要 cookie 也打得开 ✓，而且只有那一份
+	const guest = await fetch(created.url)
+	const guestHtml = await guest.text()
+	check('客人页：不用登录就能打开 ✓（令牌即凭证 ✓），且内容就是那一份会话 ✓',
+		guest.status === 200 && guestHtml.includes('只读快照') && guestHtml.includes('客人只该看到这一句'),
+		`HTTP ${guest.status} ${guestHtml.length} 字节`)
+	check('客人页是**只读**的：没有输入框/表单/脚本 ✓（客人那台设备上改不了任何东西 ✓）',
+		guestHtml.includes('<textarea') === false && guestHtml.includes('<form') === false
+		&& guestHtml.includes('<script') === false && guestHtml.includes('<input') === false)
+	check('客人页不许被缓存、不许被嵌进别的站 ✓',
+		String(guest.headers.get('cache-control')).includes('no-store') && guest.headers.get('x-frame-options') === 'DENY')
+	check('乱猜令牌：404（不是 403 —— 不告诉对方"这里有个链接" ✓）',
+		(await fetch(`${base}/share?t=${'0'.repeat(32)}`)).status === 404)
+
+	// 撤销后立刻失效 ✓
+	const revoked = await fetch(`${base}/api/share/revoke`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ token: created.token }),
+	})
+	check('撤销：200 ✓', revoked.status === 200)
+	check('撤销后那一页立刻打不开（不用等过期 ✓）', (await fetch(created.url)).status === 404)
+	check('撤销不存在的链接：404（不假装成功 ✓）', (await fetch(`${base}/api/share/revoke`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ token: 'nope' }),
+	})).status === 404)
+
+	// 收尾：关回去
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		delete stored.shareLinks
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify(stored), 'utf8')
+	}
 }
 
 /* --- 手机上回答提问 / 批准操作 ------------------------------------------- */

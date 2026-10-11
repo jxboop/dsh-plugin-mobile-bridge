@@ -303,6 +303,19 @@
 	}
 	#sessAllWrap input { width: 16px; height: 16px; flex: none; }
 	#delError { color: var(--err); min-height: 18px; }
+	/* 电脑状态盘（2.7.0 ★3）：一块数字卡 + 进程行。 */
+	.syscard { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin-bottom: 10px; box-shadow: var(--glass-edge); }
+	.sysrow { display: flex; align-items: baseline; gap: 8px; font-size: 13px; padding: 3px 0; }
+	.sysrow .k { flex: none; width: 76px; color: var(--muted); font-size: 12px; }
+	.sysrow .v { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+	.sysrow .n { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.proc { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 9px 11px; margin-bottom: 8px; box-shadow: var(--glass-edge); }
+	.proc.node { border-color: var(--accent); }
+	.proc .pt { font-size: 13px; font-weight: 600; }
+	.proc .pid { color: var(--muted); font-weight: 400; font-size: 11px; }
+	.proc .pm { font-size: 11px; color: var(--muted); margin-top: 2px; }
+	.proc .pc { font-size: 11px; color: var(--muted); margin-top: 3px; word-break: break-all; opacity: .8; }
+	.proc .sessbtn { position: absolute; right: 9px; top: 9px; width: auto; height: auto; padding: 5px 10px; font-size: 12px; }
 	#log { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 4px; }
 	/* 「回到最新」：往上翻着看历史时，新内容在下面长出来，给一个明确的回去入口。
 	   以前是自动把视线拽回底部（和用户抢滚动条），现在改成"用户说了算"。
@@ -884,6 +897,15 @@
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
 					<button id="bgBtn" title="换手机界面的背景（图片 / 动图 / 视频）">背景</button>
 					<button id="permBtn" title="这个会话允许 agent 做到哪一步（改权限要重新输 PIN）">🔐</button>
+					<button id="sysBtn" title="电脑状态（CPU / 内存 / 磁盘 / 网速）+ 结束卡住的 node 进程">📊</button>
+					<button id="clipBtn" title="电脑剪贴板（看 / 发）与截屏（电脑屏幕 → 手机）">📋</button>
+					<button id="expBtn" title="把这份对话导出成 Markdown（下载 / 复制全文 / 分享 → 发微信）">📤</button>
+					<button id="schBtn" title="定时任务：到点把一句话发进这个会话（每晚 23:00 这类）">📅</button>
+					<button id="roBtn" title="只看不发：出门看进度时一键锁住发送，不怕误触（再点一下解锁）">🔓</button>
+		<!-- 只看不发（2.7.0 池子里的 ★7）：**防误触**，不是安全边界 ✗ —— 真安全靠 PIN + 令牌 ✓。 -->
+		<div id="roStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482000;background:rgba(178,120,20,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px">🔒 只看不发 —— 点右上角 🔓 才发得出去（刷新也保持 ✓）</div>
+		<!-- 离线发件箱（2.7.0 池子里的 ★8）：没网也能先写 ✓，有网自动发 ✓。点一下立刻重试 ✓。 -->
+		<div id="outboxStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482001;background:rgba(30,110,190,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px;cursor:pointer"></div>
 				</div>
 				<div id="compose">
 					<textarea id="text" rows="1" placeholder="给 agent 下达任务…"></textarea>
@@ -1030,6 +1052,7 @@
 					<button class="go" id="recToggle">● 开始录音</button>
 					<button id="recSend" style="display:none">发送这条录音</button>
 					<button id="recRedo" style="display:none">重录</button>
+					<button id="recStudy" style="display:none" title="让 agent 把这条录音的转写整理成提纲 + 复习卡，并存到电脑上">📝 出提纲 + 复习卡</button>
 				</div>
 				<div class="hint">录的时候<strong>别锁屏、别切到别的 App</strong>（iOS 会掐掉网页录音）。录完点「停止」，可以先听一遍再发。</div>
 				<div class="hint">发出去之后，电脑会把这段录音<strong>自动转成文字</strong>交给模型（约 0.06 元/分钟）。录多久都行 —— 一节课也没问题。</div>
@@ -1074,6 +1097,150 @@
 				<div class="hint" id="sessHidden"></div>
 				<label id="sessAllWrap"><input type="checkbox" id="sessAll"> 显示全部会话（连 agent 子会话 / 自检会话一起列出来）</label>
 				<div class="hint">📌 钉到最上面（重启手机也还在）；⭐ 标成常用；🗑 删除这个会话（要输 PIN）。点一行就切过去。</div>
+			</div>
+		</section>
+
+		<!-- 电脑状态盘（2.7.0 ★3）：CPU / 内存 / 磁盘 / 网速 + 哪些 node 卡住 + 一键结束。
+		     为什么要它：今天真实疼过两次 —— "重启后连不上"（端口被占 ✓）和"不知道电脑在忙什么" ✓。
+		     结束进程**默认关闭**（配置里 `processControl: true` 才开 ✓），而且四道闸见 lib/system.js ✓。 -->
+		<section class="sheet" id="sysopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="sysBack">← 返回</button>
+				<span class="title">电脑状态</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="sysRefresh">刷新</button>
+			</div>
+			<div class="scroll pad" id="sysBody"></div>
+		</section>
+
+		<!-- 结束进程：和「删除会话」同一套纪律 —— **现输一次 PIN** ✓（不复用"最近提权过"✓）。 -->
+		<section class="sheet" id="killopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="killBack">← 返回</button>
+				<span class="title">结束进程</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="welcometip">
+					<p>要结束的是：<strong id="killTitle">（未选）</strong></p>
+					<p class="hint">只结束这一个进程（连它的子进程一起）。**正在跑的会话或命令可能因此中断** ——
+						确认它就是那个卡住的再动手。</p>
+					<p class="hint" id="killWhy"></p>
+				</div>
+				<div class="field">
+					<label>输入 PIN 确认（就是登录手机桥那个 6 位 PIN）</label>
+					<input class="plain" id="killPin" type="password" inputmode="numeric" autocomplete="off"
+						autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="12" placeholder="PIN">
+					<div class="hint" id="killError"></div>
+				</div>
+				<button class="primary" id="killGo">结束它</button>
+			</div>
+		</section>
+
+		<!-- 关机 / 重启（2.7.0 ★4）：**默认关 + 现输 PIN + 点两次 + 20 秒倒计时可取消** ✓。
+		     先摆"关机前自检"——"关完回来连不上"这种坑，答案基本都在那四条里 ✓。 -->
+		<section class="sheet" id="poweropen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="powerBack">← 返回</button>
+				<span class="title" id="powerTitle">关机 / 重启</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="hint" id="powerNote"></div>
+				<div id="powerChecks"></div>
+				<div class="field">
+					<label>输入 PIN 确认（就是登录手机桥那个 6 位 PIN）</label>
+					<input class="plain" id="powerPin" type="password" inputmode="numeric" autocomplete="off"
+						autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="12" placeholder="PIN">
+					<div class="hint" id="powerError"></div>
+				</div>
+				<button class="primary" id="powerGo">继续</button>
+				<div class="hint">要点**两次**才会执行 ✓ —— 第一次是"我选它"，第二次是"真的执行"。
+					执行后有 20 秒可以点「取消关机」✓。</div>
+			</div>
+		</section>
+
+		<!-- 定时任务（2.7.0 池子里的 ★6）：把宿主 schedule 服务的任务接出来 ✓。
+		     桥**不自己计时** ✗ —— 任务存在宿主存储里、到点由宿主把提示投进这个会话 ✓。 -->
+		<section class="sheet" id="schopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="schBack">← 返回</button>
+				<span class="title">定时任务</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="schRefresh">刷新</button>
+			</div>
+			<div class="scroll pad">
+				<div class="hint" id="schWhich"></div>
+				<div id="schList"></div>
+				<div class="sessgroup">新建：到点把下面这句话发进这个会话</div>
+				<textarea class="plain" id="schPrompt" rows="3" placeholder="例：整理今天的笔记，写成 3 条要点"></textarea>
+				<div class="actions">
+					<button class="go" data-sch="nightly">每晚 23:00</button>
+					<button class="go" data-sch="hourly">每小时</button>
+				</div>
+				<div class="actions">
+					<button class="go" data-sch="in1h">1 小时后一次</button>
+					<button class="go" data-sch="in10m">10 分钟后一次</button>
+				</div>
+				<div class="hint" id="schError"></div>
+				<div class="hint">到点电脑得是开着的（任务本身存在宿主的存储里，不会丢 ✓）。</div>
+			</div>
+		</section>
+
+		<!-- 会话导出 / 分享（2.7.0 池子里的 ★5）：导 Markdown → 下载 / 复制全文 / 系统分享 → 发微信 ✓。
+		     核心实现和 tools/export-session.mjs 共用一份（lib/export.js ✓）。 -->
+		<section class="sheet" id="exportopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="expBack">← 返回</button>
+				<span class="title">导出 / 分享</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="hint" id="expWhich"></div>
+				<div class="actions">
+					<a class="go" id="expDownload" download style="text-decoration:none;text-align:center;line-height:2.4">⬇️ 下载 Markdown</a>
+					<button class="go" id="expCopy">复制全文</button>
+				</div>
+				<div class="actions"><button class="go" id="expShare">分享…（微信 / 存文件）</button></div>
+				<div class="actions"><button class="go" id="expNote">📝 存到电脑（notes 目录）</button></div>
+				<!-- ★10 受限只读链接：默认关（配置里 shareLinks: true 才开 ✓）；开要**现输 PIN** ✓。 -->
+				<div class="sessgroup">🔗 只读链接（给另一台设备 / 家人看这一份对话）</div>
+				<div class="field">
+					<label>输 PIN 生成（默认 24 小时后失效，随时可撤销 ✓）</label>
+					<input class="plain" id="sharePin" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="PIN">
+					<div class="hint" id="shareError"></div>
+				</div>
+				<div class="actions"><button class="go" id="shareGo">生成只读链接</button><button id="shareRevoke" style="display:none">撤销这条</button></div>
+				<textarea class="plain" id="shareUrl" rows="2" readonly placeholder="生成的链接会出现在这里（客人打开就是只读快照 ✓）"></textarea>
+				<div class="hint" id="expInfo"></div>
+				<div class="hint">导的是**对话正文**：用户消息原文 + 助手回答（推理过程默认不带 ✓），
+					工具调用只留一行摘要 ✓。要连推理一起导就加 <code>&amp;reasoning=1</code> ✓。</div>
+			</div>
+		</section>
+
+		<!-- 剪贴板 & 截屏（2.7.0 池子里的 ★4）：电脑截图 → 手机立刻看到；手机复制 → 进电脑剪贴板。
+		     文字/命令都走 base64+stdio（不碰代码页、也不会被当代码执行 ✓），截图用完即删 ✓。 -->
+		<section class="sheet" id="clipopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="clipBack">← 返回</button>
+				<span class="title">剪贴板 / 截屏</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="clipRefresh">刷新</button>
+			</div>
+			<div class="scroll pad">
+				<div class="sessgroup">电脑剪贴板（只读，能看就能复制 ✓）</div>
+				<textarea class="plain" id="clipPcText" rows="5" readonly placeholder="（读不到，点右上角刷新）"></textarea>
+				<div class="hint" id="clipError"></div>
+
+				<div class="sessgroup">发到电脑剪贴板</div>
+				<textarea class="plain" id="clipPhoneText" rows="4" placeholder="把手机上的文字放这儿，点下面按钮就进电脑剪贴板"></textarea>
+				<div class="actions"><button class="go" id="clipSend">放进电脑剪贴板</button></div>
+				<div class="hint">粘贴用 Ctrl+V（电脑那边不用切窗口）✓</div>
+
+				<div class="sessgroup">电脑屏幕（截图）</div>
+				<div class="actions"><button class="go" id="screenBtn">📸 截一张现在看看</button></div>
+				<div class="hint" id="screenHint">锁屏或没人登录的时候截不到 —— 那时会如实说，不会给你一张黑图 ✗</div>
+				<img id="screenImg" alt="" style="display:none;width:100%;border-radius:10px;margin-top:8px">
 			</div>
 		</section>
 
@@ -1463,6 +1630,19 @@
 	}
 
 	function api(path, options) {
+		/*
+		 * 只看不发（2.7.0 ★7）的**唯一收口** ✓：所有写请求都从 `api()` 出去 ✓
+		 * （下载用的 `apiProgress` 是 GET ✓，不用管 ✓），所以在这一层挡最省事、也最不容易漏 ✓
+		 * —— 以后新加的写接口自动被挡住 ✓。
+		 *
+		 * ⚠️ 这是**防误触**，不是安全边界 ✗：拦的是"出门看进度手滑点到发送" ✓；
+		 * 真安全靠 PIN + 令牌（服务端那套 ✓）。所以文案不许写成"已锁定"那种让人误以为安全的话 ✗。
+		 */
+		const method = String(options?.method ?? 'GET').toUpperCase()
+		if (readOnly.on === true && method !== 'GET') {
+			toast('只看不发：现在是只读模式，点右上角 🔓 解锁后就能发 ✓', 2600)
+			return Promise.reject(apiError(0, '只读模式：这次请求没有发出去'))
+		}
 		// fetch 同样没有默认超时：黑洞连接会让它永远挂着（发送按钮一直转、取消也点不动）。
 		// 调用方自己带了 signal 就不插手（那是它自管的取消）。
 		const own = options?.signal === undefined && typeof AbortController === 'function'
@@ -1889,9 +2069,9 @@
 		return nodeShown($('welcome')) || nodeShown($('ask')) || nodeShown($('offline'))
 	}
 
-	/** 现在开着的是哪个"工具抽屉"（会话 / 删除 / 录音 / 生图 / 背景 / 权限）；没有就 null。 */
+	/** 现在开着的是哪个"工具抽屉"（会话 / 删除 / 状态 / 结束进程 / 关机 / 录音 / 生图 / 背景 / 权限）；没有就 null。 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
+		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -4267,6 +4447,17 @@
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
 				body: JSON.stringify({ sessionId: target, text: body, images: inlineImages, fileRefs: refs, requestId: clientId }),
+			}).then((result) => {
+				// 2.7.0 ★8：发出去了就从离线箱里撤掉 ✓（重试路径同一条靠 requestId 认领 ✓）。
+				outboxRemove(clientId)
+				return result
+			}).catch((error) => {
+				// 2.7.0 ★8：**只**收网络层失败 ✓ —— 403/400 是"发不出去"，进箱只会一直卡着 ✗。
+				if (isOfflineError(error)) {
+					outboxAdd({ clientId, sessionId: target, text: body, images: inlineImages, fileRefs: refs })
+					toast('现在没网：这条已经收进「离线发件箱」，有网就自动发 ✓', 3200)
+				}
+				throw error
 			})
 			const attempt = (tries) => post(images, fileRefs).catch((error) => {
 				// 网络层失败（隧道一抖就是 TypeError: Load failed）自动再来一次 ——
@@ -4497,6 +4688,7 @@
 		$('recPlay').style.display = 'none'
 		$('recSend').style.display = 'none'
 		$('recRedo').style.display = 'none'
+		$('recStudy').style.display = 'none'
 		recPaint()
 		// 电平表：AnalyserNode 取时域均方根，够用又便宜。
 		try {
@@ -4552,12 +4744,14 @@
 				$('recState').textContent = '这段没录到声音，重录一次吧。'
 				$('recSend').style.display = 'none'
 				$('recRedo').style.display = ''
+		$('recStudy').style.display = ''
 				return
 			}
 			$('recPlay').src = URL.createObjectURL(rec.blob)
 			$('recPlay').style.display = ''
 			$('recSend').style.display = ''
 			$('recRedo').style.display = ''
+		$('recStudy').style.display = ''
 			const kb = Math.round(rec.blob.size / 1024)
 			$('recState').textContent = `录好了：${seconds} 秒、${kb} KB（${mime.includes('opus') ? 'opus' : mime.split('/')[1] ?? mime}）。听一遍，满意就发。`
 		}
@@ -4591,6 +4785,7 @@
 		$('recPlay').style.display = 'none'
 		$('recSend').style.display = 'none'
 		$('recRedo').style.display = 'none'
+		$('recStudy').style.display = 'none'
 		$('recTime').textContent = '00:00'
 		$('recState').textContent = '按下面的键开始录音。'
 		$('recToggle').textContent = '● 开始录音'
@@ -5705,6 +5900,700 @@
 	}
 
 	/* --- 会话列表的入口（2.5.0）：点顶部那一行开面板，点行切会话，点 📌/⭐ 只改标记 --- */
+	/* --------- 学习向：转写 → 提纲 / 复习卡（2.7.0 ★9）--------- */
+	/*
+	 * 分工（和桥那头一致 ✓）：**转写原文落盘靠桥** ✓（确定性 ✓），**提纲/复习卡靠会话里的 agent** ✓
+	 * （它有上下文、有模型 ✓，不另造一套调用 ✗）。这条按钮就是把"要求"说清楚发进去 ✓。
+	 */
+	const STUDY_PROMPT = [
+		'请把上面这条录音的**转写**整理成学习材料，输出两部分：',
+		'',
+		'1. **提纲**：按逻辑分段，每段 1 行要点（别复述原话，要提炼）。',
+		'2. **复习卡**：10 张问答卡，格式 `Q: … / A: …`，覆盖最容易忘的点。',
+		'',
+		'然后把「转写原文 + 提纲 + 复习卡」一起写到电脑上的一个 Markdown 文件里，',
+		'放在 `~/.dsh/mobile-bridge/notes/` 目录下，文件名用日期 + 主题。写完把路径告诉我。',
+	].join('\n')
+
+	async function askStudyCard() {
+		if (!state.sessionId) { toast('先选一个会话 ✓', 2400); return }
+		if (readOnly.on === true) { toast('只看不发模式下发不出去 —— 先解锁 🔓', 2600); return }
+		try {
+			await api('api/prompt', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: state.sessionId, text: STUDY_PROMPT, requestId: 'study' + Date.now().toString(36) }),
+			})
+			toast('已经让 agent 出提纲 + 复习卡了 ✓（做完会把文件路径告诉你）', 3200)
+			hide($('recopen'))
+		} catch (error) {
+			toast('没发出去：' + error.message, 2800)
+		}
+	}
+
+	$('recStudy').addEventListener('click', () => { void askStudyCard() })
+
+	/* --------- 离线发件箱（2.7.0 ★8）--------- */
+	/*
+	 * 现场：断网（地铁/电梯）时点发送只能干等 ✗ —— 现在改成"先收进箱子" ✓：
+	 *   · **只收网络层失败**（`error.status` 不是数字 / 0 ✓）；服务端明确拒绝（403 PIN 错、400 参数错 ✓）
+	 *     **绝不进箱** ✗ —— 那是"发不出去"，进箱只会一直在那儿、还挡着后面的人 ✓；
+	 *   · 箱子存在 localStorage（`dshm.outbox` ✓）—— 刷新/切回 App 都在 ✓；
+	 *   · **靠 requestId 幂等** ✓：宿主对同一个 requestId 是幂等的（发送那段注释写着 ✓），
+	 *     所以"重试 + 自动补发"最多还是**一条**消息 ✓（不然补发一次就多一条 ✗）。
+	 */
+	const outbox = { items: [], busy: false }
+
+	function isOfflineError(error) {
+		return error === null || error === undefined || typeof error.status !== 'number' || error.status === 0
+	}
+
+	function outboxSave() {
+		try { writeLocal('dshm.outbox', outbox.items.length === 0 ? '' : JSON.stringify(outbox.items)) } catch { /* 存不下就算了 ✓ */ }
+	}
+
+	function outboxLoad() {
+		try {
+			const raw = readLocal('dshm.outbox')
+			outbox.items = raw === '' ? [] : JSON.parse(raw)
+		} catch { outbox.items = [] }
+		if (Array.isArray(outbox.items) === false) outbox.items = []
+	}
+
+	function outboxRender() {
+		const strip = $('outboxStrip')
+		if (strip === null) return
+		const count = outbox.items.length
+		strip.style.display = count === 0 ? 'none' : 'block'
+		if (count > 0) strip.textContent = `📮 离线发件箱 ${count} 条待发 —— 点这里立刻试一次（有网会自动发 ✓）`
+	}
+
+	function outboxAdd(entry) {
+		// 同一个 requestId 只留一条 ✓（重试路径可能进来两次 ✓）。
+		if (outbox.items.some((item) => item.clientId === entry.clientId)) return
+		outbox.items.push({ at: Date.now(), ...entry })
+		// 上限：箱子是"没网时的救急"，不是仓库 ✗（最多 20 条，超了丢最旧的 ✓）。
+		if (outbox.items.length > 20) outbox.items = outbox.items.slice(-20)
+		outboxSave()
+		outboxRender()
+	}
+
+	function outboxRemove(clientId) {
+		const before = outbox.items.length
+		outbox.items = outbox.items.filter((item) => item.clientId !== clientId)
+		if (outbox.items.length !== before) { outboxSave(); outboxRender() }
+	}
+
+	async function outboxFlush() {
+		if (outbox.busy === true || outbox.items.length === 0) return
+		// 只读模式下**不许**把箱子倒出去 ✓（★7 的纪律在这儿也成立 ✓）。
+		if (readOnly.on === true) return
+		outbox.busy = true
+		try {
+			for (const item of [...outbox.items]) {
+				try {
+					await api('api/prompt', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({
+							sessionId: item.sessionId, text: item.text,
+							images: item.images ?? [], fileRefs: item.fileRefs ?? [],
+							requestId: item.clientId,
+						}),
+					})
+					outboxRemove(item.clientId)
+					toast('离线发件箱：发出 1 条 ✓', 2200)
+				} catch (error) {
+					if (isOfflineError(error)) break           // 还是没网 → 停手，等下一次 ✓
+					outboxRemove(item.clientId)                // 服务端明确拒绝 → 别一直卡着箱子 ✗
+					toast('有一条没能补发（' + String(error?.message ?? '') + '）', 3000)
+				}
+			}
+		} finally {
+			outbox.busy = false
+			outboxSave()
+			outboxRender()
+		}
+	}
+
+	$('outboxStrip').addEventListener('click', () => { void outboxFlush() })
+	window.addEventListener('online', () => { void outboxFlush() })
+	// 没网时浏览器不一定给 online 事件（隧道断、WiFi 还在 ✓）→ 有货就每 20 秒试一次 ✓。
+	setInterval(() => { if (outbox.items.length > 0) void outboxFlush() }, 20000)
+	outboxLoad()
+	outboxRender()
+
+	/* --------- 只看不发（2.7.0 ★7）--------- */
+	/*
+	 * 状态放在 localStorage（`dshm.readonly` ✓）—— 刷新/切回 App 都还在 ✓
+	 * （"出门前锁上，路上翻进度"这个用法，锁丢了就等于没做 ✗）。
+	 */
+	const readOnly = { on: false }
+
+	function renderReadOnly() {
+		const strip = $('roStrip')
+		if (strip !== null) strip.style.display = readOnly.on === true ? 'block' : 'none'
+		const button = $('roBtn')
+		if (button !== null) {
+			button.textContent = readOnly.on === true ? '🔒' : '🔓'
+			button.title = readOnly.on === true ? '只看不发已开：点一下解锁' : '只看不发：点一下锁住发送，防误触'
+		}
+		const send = $('send')
+		if (send !== null) {
+			send.disabled = readOnly.on === true
+			send.style.opacity = readOnly.on === true ? '.5' : ''
+		}
+		if (document.body !== null && document.body !== undefined) {
+			document.body.classList.toggle('readonly', readOnly.on === true)
+		}
+	}
+
+	function setReadOnly(on, announce = true) {
+		readOnly.on = on === true
+		writeLocal('dshm.readonly', readOnly.on ? '1' : '')
+		renderReadOnly()
+		if (announce === true) toast(readOnly.on ? '只看不发已开 ✓（再点一下解锁）' : '可以发了 ✓', 2400)
+	}
+
+	$('roBtn').addEventListener('click', () => { setReadOnly(readOnly.on !== true) })
+	// 启动时恢复（`readLocal` 在别处也用，这里只是读一个键 ✓）。
+	if (readLocal('dshm.readonly') === '1') setReadOnly(true, false)
+
+	/* --------- 定时任务（2.7.0 ★6）--------- */
+	const schPanel = { tasks: [], busy: false }
+
+	/** 一条任务怎么念给用户听（重复规则说人话 ✓，没有规则就报下次时间 ✓）。 */
+	function describeSchedule(task) {
+		const repeat = task.repeat ?? null
+		const kind = repeat?.kind ?? ''
+		if (kind === 'daily') return '每天 ' + String(repeat.time ?? '').slice(0, 5)
+		if (kind === 'hourly' || kind === 'every') return '每 ' + Math.round(Number(repeat.everySeconds ?? repeat.seconds ?? 0) / 60) + ' 分钟'
+		if (kind === 'weekly') return '每周 ' + String(repeat.time ?? '').slice(0, 5)
+		if (kind === 'cron') return 'cron ' + String(repeat.expression ?? '')
+		if (typeof task.scheduledAt === 'string' && task.scheduledAt !== '') {
+			const at = new Date(task.scheduledAt)
+			return Number.isNaN(at.getTime()) ? String(task.scheduledAt) : at.toLocaleString()
+		}
+		return '（没写下次时间）'
+	}
+
+	function renderSchedule() {
+		const box = $('schList')
+		if (box === null) return
+		if (schPanel.tasks.length === 0) { box.innerHTML = '<div class="hint">这份会话还没有定时任务。</div>'; return }
+		box.innerHTML = schPanel.tasks.map((task) => '<div class="proc">'
+			+ '<div class="pt">' + escapeHtml(task.title || task.prompt.slice(0, 24)) + ' <span class="pid">' + escapeHtml(describeSchedule(task)) + '</span></div>'
+			+ '<div class="pm">' + escapeHtml(task.prompt.slice(0, 120)) + '</div>'
+			+ '<button class="sessbtn sessdel" data-schdel="' + escapeHtml(task.id) + '">删除</button>'
+			+ '</div>').join('')
+	}
+
+	async function loadSchedule() {
+		if (schPanel.busy) return
+		schPanel.busy = true
+		const box = $('schList')
+		if (box !== null) box.innerHTML = '<div class="hint">正在读…</div>'
+		try {
+			const body = await api('api/schedule?sessionId=' + encodeURIComponent(state.sessionId ?? ''))
+			schPanel.tasks = body.tasks ?? []
+			renderSchedule()
+			setDelText('schError', '')
+		} catch (error) {
+			if (box !== null) box.innerHTML = ''
+			setDelText('schError', '读不到：' + error.message)
+		} finally {
+			schPanel.busy = false
+		}
+	}
+
+	/** 预设 → 宿主那套"六选一"的定时器（键名必须和 schedule_create 一模一样 ✓）。 */
+	function scheduleSelector(kind) {
+		if (kind === 'nightly') return { daily: { time: '23:00:00', time_zone: 'Asia/Shanghai' } }
+		if (kind === 'hourly') return { every_seconds: 3600 }
+		if (kind === 'in1h') return { after_seconds: 3600 }
+		if (kind === 'in10m') return { after_seconds: 600 }
+		return null
+	}
+
+	async function createSchedule(kind) {
+		if (!state.sessionId) { toast('先选一个会话 —— 定时任务要绑到会话上 ✓', 2600); return }
+		const selector = scheduleSelector(kind)
+		if (selector === null) return
+		const prompt = String($('schPrompt')?.value ?? '').trim()
+		if (prompt === '') { setDelText('schError', '先写"到点要发什么" ✓'); return }
+		try {
+			await api('api/schedule', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'create', sessionId: state.sessionId, prompt, ...selector }),
+			})
+			const box = $('schPrompt')
+			if (box !== null) box.value = ''
+			toast('已建好：' + describeSchedule({ repeat: selector.daily ? { kind: 'daily', time: selector.daily.time } : null, scheduledAt: null }), 2600)
+			setDelText('schError', '')
+			await loadSchedule()
+		} catch (error) {
+			setDelText('schError', '没建成：' + error.message)
+		}
+	}
+
+	async function deleteSchedule(id) {
+		try {
+			await api('api/schedule', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'delete', sessionId: state.sessionId, id }),
+			})
+			toast('已删除', 2000)
+			await loadSchedule()
+		} catch (error) {
+			setDelText('schError', '没删掉：' + error.message)
+		}
+	}
+
+	function openSchedule() {
+		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
+		const entry = currentSessionEntry()
+		setDelText('schWhich', '绑在这份会话上：' + (entry?.title ?? state.sessionId))
+		show($('schopen'))
+		void loadSchedule()
+	}
+
+	$('schBtn').addEventListener('click', () => { openSchedule() })
+	$('schBack').addEventListener('click', () => hide($('schopen')))
+	$('schRefresh').addEventListener('click', () => { void loadSchedule() })
+	$('schList').addEventListener('click', (event) => {
+		const target = event.target
+		if (target === null || target === undefined || typeof target.closest !== 'function') return
+		const button = target.closest('[data-schdel]')
+		if (button !== null) void deleteSchedule(String(button.getAttribute('data-schdel')))
+	})
+	for (const button of document.querySelectorAll('[data-sch]')) {
+		button.addEventListener('click', () => { void createSchedule(String(button.getAttribute('data-sch'))) })
+	}
+
+	/* --------- 会话导出 / 分享（2.7.0 ★5）--------- */
+	const exportUrl = (extra = '') => 'api/export/session?id=' + encodeURIComponent(state.sessionId ?? '') + extra
+
+	function openExport() {
+		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
+		const entry = currentSessionEntry()
+		setDelText('expWhich', '这份对话：' + (entry?.title ?? state.sessionId))
+		setDelText('expInfo', '正在算份量…')
+		const link = $('expDownload')
+		if (link !== null) {
+			link.setAttribute('href', exportUrl())
+			link.setAttribute('download', '')
+		}
+		show($('exportopen'))
+		api(exportUrl('&info=1'))
+			.then((body) => setDelText('expInfo', `用户 ${body.users} 条 · 助手 ${body.assistants} 条 · 工具 ${body.toolCalls} 次 · 约 ${Math.max(1, Math.round(body.bytes / 1024))} KB`))
+			.catch((error) => setDelText('expInfo', '算不出来：' + error.message))
+	}
+
+	async function exportText() {
+		const res = await fetch(exportUrl())
+		if (res.ok !== true) throw new Error('HTTP ' + res.status)
+		return await res.text()
+	}
+
+	async function copyExport() {
+		try {
+			const text = await exportText()
+			if (copyText(text) === true) toast('已复制 ' + text.length + ' 字 —— 粘到微信就行 ✓', 2600)
+			else toast('复制失败（浏览器不让）', 2400)
+		} catch (error) {
+			toast('导出失败：' + error.message, 2800)
+		}
+	}
+
+	async function shareExport() {
+		try {
+			const text = await exportText()
+			if (typeof navigator.share === 'function') {
+				await navigator.share({ title: '对话记录', text })
+				return
+			}
+			// 没系统分享（桌面浏览器常见）→ 退回复制 ✓，别让按钮点了没反应 ✗。
+			if (copyText(text) === true) toast('这个浏览器没有系统分享 —— 已经复制全文，粘贴即可 ✓', 3200)
+			else toast('这个浏览器既不能分享也不能复制 ✗', 2600)
+		} catch (error) {
+			if (String(error?.name) !== 'AbortError') toast('分享失败：' + error.message, 2800)
+		}
+	}
+
+	$('expBtn').addEventListener('click', () => { openExport() })
+	$('expBack').addEventListener('click', () => hide($('exportopen')))
+	$('expCopy').addEventListener('click', () => { void copyExport() })
+	// ★9：把这份对话（或转写）**存到电脑**的 notes 目录 ✓ —— 手机上留一份、电脑上留一份 ✓。
+	// ★10：生成 / 撤销受限只读链接（默认关 + **现输 PIN** ✓；撤销是安全方向，不用 PIN ✓）。
+	let shareToken = ''
+	$('shareGo').addEventListener('click', () => {
+		void (async () => {
+			const pin = String($('sharePin')?.value ?? '').trim()
+			if (pin === '') { setDelText('shareError', '先输 PIN —— 生成只读链接必须确认是本人 ✓'); return }
+			try {
+				const body = await api('api/share', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ sessionId: state.sessionId, pin, hours: 24 }),
+				})
+				shareToken = String(body.token ?? '')
+				const box = $('shareUrl')
+				if (box !== null) box.value = String(body.url ?? '')
+				$('shareRevoke').style.display = shareToken === '' ? 'none' : ''
+				setDelText('shareError', String(body.message ?? '已生成 ✓') + ' 点上面的框复制 ✓')
+			} catch (error) {
+				setDelText('shareError', error?.status === 403 && String(error.message).includes('默认关闭')
+					? String(error.message)
+					: '没生成：' + error.message)
+			}
+		})()
+	})
+	$('shareRevoke').addEventListener('click', () => {
+		void (async () => {
+			if (shareToken === '') return
+			try {
+				await api('api/share/revoke', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ token: shareToken }),
+				})
+				shareToken = ''
+				const box = $('shareUrl')
+				if (box !== null) box.value = ''
+				$('shareRevoke').style.display = 'none'
+				toast('已撤销：那条链接立刻打不开了 ✓', 2800)
+				setDelText('shareError', '')
+			} catch (error) {
+				setDelText('shareError', '没撤销：' + error.message)
+			}
+		})()
+	})
+	$('expNote').addEventListener('click', () => {
+		void (async () => {
+			try {
+				const text = await exportText()
+				const entry = currentSessionEntry()
+				const body = await api('api/note', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ sessionId: state.sessionId, title: entry?.title ?? '对话记录', text }),
+				})
+				toast(String(body.message ?? '已存到电脑 ✓') + '：' + String(body.file ?? '').split('\\').pop(), 3600)
+			} catch (error) {
+				toast('没存下来：' + error.message, 2800)
+			}
+		})()
+	})
+	$('expShare').addEventListener('click', () => { void shareExport() })
+
+	/* --------- 剪贴板 & 截屏（2.7.0 ★4）--------- */
+	async function loadClipboard() {
+		const box = $('clipPcText')
+		try {
+			const body = await api('api/clipboard')
+			if (box !== null) box.value = String(body.text ?? '')
+			setDelText('clipError', body.text === '' ? '（电脑剪贴板现在是空的）' : '')
+		} catch (error) {
+			if (box !== null) box.value = ''
+			setDelText('clipError', '读不到：' + error.message)
+		}
+	}
+
+	async function sendClipboard() {
+		const box = $('clipPhoneText')
+		const text = String(box?.value ?? '')
+		if (text.trim() === '') { toast('先写点东西再发', 2000); return }
+		try {
+			const body = await api('api/clipboard', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ text }),
+			})
+			toast(String(body.message ?? '已经放进电脑剪贴板了'), 2400)
+			if (box !== null) box.value = ''
+			await loadClipboard()
+		} catch (error) {
+			toast('没放进去：' + error.message, 2800)
+		}
+	}
+
+	function loadScreen() {
+		const image = $('screenImg')
+		if (image === null) return
+		// 截图接口要登录态 —— 用 <img> 取图时浏览器会自动带上同源 cookie ✓，所以能直接当图片加载 ✓。
+		image.style.display = 'block'
+		image.src = 'api/screen?t=' + Date.now()
+		image.onerror = () => {
+			image.style.display = 'none'
+			setDelText('screenHint', '截不到（多半是锁屏 / 没有交互桌面）—— 电脑那边解锁后再点一次 ✓')
+		}
+		image.onload = () => { setDelText('screenHint', '刚截的（只缩小到 1280 宽，用完即删 ✓）') }
+	}
+
+	$('clipBtn').addEventListener('click', () => { show($('clipopen')); void loadClipboard() })
+	$('clipBack').addEventListener('click', () => hide($('clipopen')))
+	$('clipRefresh').addEventListener('click', () => { void loadClipboard() })
+	$('clipSend').addEventListener('click', () => { void sendClipboard() })
+	$('screenBtn').addEventListener('click', () => { loadScreen() })
+
+	/* ------------------------------------- 电脑状态盘 / 结束进程（2.7.0 ★3） */
+	/*
+	 * 用户要的：「不用回电脑前就知道：CPU/内存/磁盘/网速 ✓、哪个 node 卡住了 ✓、一键 kill ✓」
+	 * —— 今天真实疼过两次（"重启后连不上"就是端口被同一个 node 占着 ✓）。
+	 * 数据全由桥现采（`lib/system.js` ✓），这一层只负责画 + 给一个"结束"入口 ✓。
+	 */
+	const sysPanel = { data: null, busy: false, pid: 0 }
+
+	function sysRow(label, value, note = '') {
+		return '<div class="sysrow"><span class="k">' + escapeHtml(label) + '</span><span class="v">' + escapeHtml(value) + '</span>'
+			+ (note === '' ? '' : '<span class="n">' + escapeHtml(note) + '</span>') + '</div>'
+	}
+
+	function renderSystem() {
+		const box = $('sysBody')
+		if (box === null || sysPanel.data === null) return
+		const data = sysPanel.data
+		const host = data.host ?? {}
+		const html = []
+		html.push(renderPowerBlock())
+		html.push('<div class="syscard">')
+		html.push(sysRow('CPU', host.cpuPercent === null || host.cpuPercent === undefined ? '（再刷一次）' : host.cpuPercent + '%', (host.cores ?? 0) + ' 核'))
+		html.push(sysRow('内存', (host.memoryUsedPercent ?? 0) + '%', '可用 ' + (host.memoryFreeMB ?? 0) + ' MB / 共 ' + (host.memoryTotalMB ?? 0) + ' MB'))
+		// 注意用词：这个 RSS 属于**整个 DSH 进程**（桥跑在它里面 ✓），不是"桥自己吃掉的" ✗。
+		html.push(sysRow('DSH 进程占用', (host.bridgeRssMB ?? 0) + ' MB', '已跑 ' + (host.uptimeHours ?? 0) + ' 小时（手机桥是它的一部分）'))
+		for (const disk of data.disks ?? []) {
+			html.push(sysRow('磁盘 ' + disk.drive, disk.freeGB + ' GB 可用', '共 ' + disk.totalGB + ' GB（剩 ' + disk.percentFree + '%）'))
+		}
+		html.push(sysRow('网速', data.net === null || data.net === undefined ? '（再刷一次）' : '↓ ' + data.net.rxKBps + ' KB/s，↑ ' + data.net.txKBps + ' KB/s', '整机网卡合计'))
+		html.push('</div>')
+
+		// 端口被谁占着 —— "重启后连不上"最常见的那一条 ✓
+		const ports = Object.entries(data.ports ?? {})
+		if (ports.length > 0) {
+			html.push('<div class="hint">端口：' + ports.map(([port, pid]) => port + ' ← PID ' + pid).join('、') + '</div>')
+		}
+
+		html.push('<div class="hint">' + escapeHtml(String(data.killNote ?? '')) + '</div>')
+		html.push('<div class="sessgroup">进程（node 优先 + 内存最大的 12 个；共 ' + (data.processTotal ?? 0) + ' 个）</div>')
+		for (const proc of data.processes ?? []) {
+			const marks = []
+			if (proc.isSelf === true) marks.push('DSH 本体')
+			if (proc.isChild === true) marks.push('DSH 子进程')
+			if (proc.killable !== true && proc.why !== '') marks.push(proc.why)
+			html.push('<div class="proc' + (proc.isNode === true ? ' node' : '') + '">'
+				+ '<div class="pt">' + escapeHtml(proc.name) + ' <span class="pid">#' + proc.pid + '</span></div>'
+				+ '<div class="pm">' + proc.mb + ' MB · CPU ' + proc.cpuSeconds + 's' + (marks.length === 0 ? '' : ' · ' + escapeHtml(marks.join('；'))) + '</div>'
+				+ (proc.command === '' ? '' : '<div class="pc">' + escapeHtml(proc.command) + '</div>')
+				+ (data.killEnabled === true && proc.killable === true
+					? '<button class="sessbtn sessdel" data-kill="' + proc.pid + '" title="结束这个进程（要输 PIN）">结束</button>'
+					: '')
+				+ '</div>')
+		}
+		html.push('<div class="hint">读不到的数据我不会编：显示"（再刷一次）"就是还没有第二次采样。</div>')
+		box.innerHTML = html.join('')
+	}
+
+	async function loadSystem() {
+		if (sysPanel.busy) return
+		sysPanel.busy = true
+		const box = $('sysBody')
+		if (box !== null && sysPanel.data === null) box.innerHTML = '<div class="hint">正在读电脑状态…</div>'
+		try {
+			sysPanel.data = await api('api/system')
+			// 关机/重启那块（含"关机前自检"）顺便一起拿 ✓ —— 同一个面板里，分开取只会多一次往返 ✓。
+			try { sysPanel.power = await api('api/power') } catch { sysPanel.power = null }
+			renderSystem()
+		} catch (error) {
+			if (box !== null) box.innerHTML = '<div class="err-box">读不到电脑状态：' + escapeHtml(error.message) + '</div>'
+		} finally {
+			sysPanel.busy = false
+		}
+	}
+
+	/** 一键动作那一段（锁屏 / 关机 / 重启 / 取消）：渲染在状态盘最上面 ✓。 */
+	function renderPowerBlock() {
+		const power = sysPanel.power
+		if (power === null || power === undefined) return ''
+		const html = ['<div class="syscard">', '<div class="sessgroup">电脑端一键动作</div>']
+		html.push('<div class="actions"><button class="go" data-lock="1">🔒 锁屏（一键，不用 PIN）</button></div>')
+		if (power.powerEnabled === true) {
+			html.push('<div class="actions"><button data-power="shutdown">⏻ 关机…</button><button data-power="restart">↻ 重启…</button></div>')
+		} else {
+			html.push('<div class="hint">' + escapeHtml(String(power.note ?? '')) + '</div>')
+		}
+		if (power.pending !== null && power.pending !== undefined) {
+			html.push('<div class="hint" style="color:var(--warn)">已排定：'
+				+ escapeHtml(power.pending.kind === 'shutdown' ? '关机' : '重启') + '（' + power.pending.seconds + ' 秒后）</div>')
+			html.push('<div class="actions"><button class="go" data-power-cancel="1">取消关机 / 重启</button></div>')
+		}
+		html.push('</div>')
+		return html.join('')
+	}
+
+	function openKill(pid) {
+		const target = (sysPanel.data?.processes ?? []).find((entry) => entry.pid === pid)
+		if (target === undefined) { toast('这个进程已经不在了（刷新一下看看）', 2400); return }
+		sysPanel.pid = pid
+		setDelText('killTitle', target.name + '（PID ' + pid + '，' + target.mb + ' MB）')
+		setDelText('killWhy', target.why === '' ? '' : target.why)
+		setDelText('killError', '')
+		const pin = $('killPin')
+		if (pin !== null) pin.value = ''
+		hide($('sysopen'))
+		show($('killopen'))
+		try { pin?.focus?.() } catch { /* 聚焦失败无所谓 */ }
+	}
+
+	async function confirmKill() {
+		if (sysPanel.pid === 0) return
+		const pin = String($('killPin')?.value ?? '').trim()
+		if (pin === '') { setDelText('killError', '先输入 PIN —— 结束进程必须确认是本人。'); return }
+		const button = $('killGo')
+		if (button !== null) button.disabled = true
+		try {
+			const body = await api('api/system/kill', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ pid: sysPanel.pid, pin }),
+			})
+			hide($('killopen'))
+			toast('已结束：' + String(body.name ?? 'PID ' + sysPanel.pid) + (body.alive === true ? '（它还在收尾）' : ''), 2600)
+			sysPanel.data = null
+			show($('sysopen'))
+			await loadSystem()
+		} catch (error) {
+			const message = String(error?.message ?? '')
+			setDelText('killError', error?.status === 403
+				? (message.includes('默认关闭') ? message : 'PIN 不正确 —— 没有结束任何进程')
+				: '结束失败：' + message)
+			const pinBox = $('killPin')
+			if (pinBox !== null && error?.status === 403 && message.includes('PIN') === true) pinBox.value = ''
+		} finally {
+			if (button !== null) button.disabled = false
+		}
+	}
+
+	/* --------- 一键动作：锁屏 / 关机 / 重启（2.7.0 ★4）--------- */
+	const powerPanel = { kind: '', armed: false, power: null }
+
+	function renderPowerChecks(power) {
+		const box = $('powerChecks')
+		if (box === null) return
+		const checks = power?.preflight ?? []
+		box.innerHTML = '<div class="sessgroup">关机前自检</div>' + checks.map((entry) =>
+			'<div class="sysrow"><span class="k">' + (entry.ok === true ? '✓' : '⚠️') + '</span>'
+			+ '<span class="v">' + escapeHtml(String(entry.name)) + '</span>'
+			+ '<span class="n">' + escapeHtml(String(entry.hint ?? '')) + '</span></div>').join('')
+	}
+
+	function openPower(kind) {
+		powerPanel.kind = kind
+		powerPanel.armed = false
+		powerPanel.power = sysPanel.power
+		setDelText('powerTitle', kind === 'shutdown' ? '关机' : '重启')
+		setDelText('powerNote', String(sysPanel.power?.note ?? ''))
+		setDelText('powerError', '')
+		renderPowerChecks(sysPanel.power)
+		const button = $('powerGo')
+		if (button !== null) { button.textContent = '继续'; button.disabled = false }
+		const pin = $('powerPin')
+		if (pin !== null) pin.value = ''
+		hide($('sysopen'))
+		show($('poweropen'))
+	}
+
+	async function confirmPower() {
+		if (powerPanel.kind === '') return
+		const button = $('powerGo')
+		const pin = String($('powerPin')?.value ?? '').trim()
+		// 第一次点：只"上膛"（并要求 PIN 已填）✓；第二次点才真的发请求 ✓ —— 这就是"点两次" ✓。
+		if (powerPanel.armed !== true) {
+			if (pin === '') { setDelText('powerError', '先输入 PIN —— 关机/重启必须确认是本人。'); return }
+			powerPanel.armed = true
+			if (button !== null) button.textContent = '真的要' + (powerPanel.kind === 'shutdown' ? '关机' : '重启') + '？再点一次'
+			setDelText('powerError', '再点一次就执行（执行后有 20 秒可以取消）。')
+			return
+		}
+		if (button !== null) button.disabled = true
+		try {
+			const body = await api('api/power', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: powerPanel.kind, pin }),
+			})
+			hide($('poweropen'))
+			toast(String(body.message ?? '已执行'), 4000)
+			sysPanel.data = null
+			show($('sysopen'))
+			await loadSystem()
+		} catch (error) {
+			const message = String(error?.message ?? '')
+			setDelText('powerError', error?.status === 403
+				? (message.includes('默认关闭') ? message : 'PIN 不正确 —— 没有执行任何动作')
+				: '没执行成功：' + message)
+			powerPanel.armed = false
+			if (button !== null) button.textContent = '继续'
+		} finally {
+			if (button !== null) button.disabled = false
+		}
+	}
+
+	async function runLock() {
+		try {
+			const body = await api('api/power', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'lock' }),
+			})
+			toast(String(body.message ?? '已锁屏'), 2200)
+		} catch (error) {
+			toast('锁屏失败：' + error.message, 2600)
+		}
+	}
+
+	async function cancelPower() {
+		try {
+			const body = await api('api/power', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'cancel' }),
+			})
+			toast(String(body.message ?? '已经取消'), 2600)
+		} catch (error) {
+			toast('取消失败：' + error.message, 2600)
+		}
+		sysPanel.data = null
+		await loadSystem()
+	}
+
+	$('powerBack').addEventListener('click', () => { hide($('poweropen')); show($('sysopen')) })
+	$('powerGo').addEventListener('click', () => { void confirmPower() })
+	$('powerPin').addEventListener('keydown', (event) => {
+		if (event.key === 'Enter') { event.preventDefault(); void confirmPower() }
+	})
+
+	$('sysBtn').addEventListener('click', () => { show($('sysopen')); void loadSystem() })
+	$('sysBack').addEventListener('click', () => hide($('sysopen')))
+	$('sysRefresh').addEventListener('click', () => { sysPanel.data = null; void loadSystem() })
+	$('killBack').addEventListener('click', () => { hide($('killopen')); show($('sysopen')) })
+	$('killGo').addEventListener('click', () => { void confirmKill() })
+	$('killPin').addEventListener('keydown', (event) => {
+		if (event.key === 'Enter') { event.preventDefault(); void confirmKill() }
+	})
+	// 进程行的「结束」按钮 + 一键动作那几个键：事件委托（列表每次刷新都重建 ✓）
+	$('sysBody').addEventListener('click', (event) => {
+		const target = event.target
+		if (target === null || target === undefined || typeof target.closest !== 'function') return
+		const kill = target.closest('[data-kill]')
+		if (kill !== null) { openKill(Number(kill.getAttribute('data-kill'))); return }
+		const power = target.closest('[data-power]')
+		if (power !== null) { openPower(String(power.getAttribute('data-power'))); return }
+		if (target.closest('[data-lock]') !== null) { void runLock(); return }
+		if (target.closest('[data-power-cancel]') !== null) { void cancelPower() }
+	})
+
 	sessBtn.addEventListener('click', () => { renderSessList(); show($('sessopen')) })
 	$('sessBack').addEventListener('click', () => hide($('sessopen')))
 	/*

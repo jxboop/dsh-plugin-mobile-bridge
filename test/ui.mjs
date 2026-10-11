@@ -122,6 +122,14 @@ const CORRECT_PIN = '123456'
 const archiveRemoved = new Set()
 /** 删除请求的请求体（断言带没带 sessionId / PIN / stop）。 */
 const archiveRequests = []
+/** 2.7.0 ★3：结束进程的请求体。 */
+const killRequests = []
+/** 2.7.0 ★4：一键动作（锁屏/关机/重启/取消）的请求体。 */
+const powerRequests = []
+/** 2.7.0 ★4：发到电脑剪贴板的请求体。 */
+const clipboardWrites = []
+/** 2.7.0 ★6：定时任务的请求体。 */
+const scheduleWrites = []
 
 const requests = []
 const opened = []
@@ -315,6 +323,74 @@ async function stubFetch(input, options = {}) {
 	if (path === '/api/model') {
 		pickedModelRequests.push({ body: (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })() })
 		return jsonResponse({ selected: { provider: 'deepseek-official', model: 'deepseek-chat' } })
+	}
+	/* 2.7.0 ★3/★4：电脑状态盘 + 一键动作。桩只给形状；**真参数**在 harness 里验 ✓。 */
+	if (path === '/api/system/kill') {
+		killRequests.push(JSON.parse(String(options.body ?? '{}')))
+		return jsonResponse({ killed: true, pid: 7777, name: 'node.exe', alive: false })
+	}
+	if (path === '/api/system') {
+		return jsonResponse({
+			host: { platform: 'win32', cores: 8, cpuPercent: 12, memoryTotalMB: 48970, memoryFreeMB: 33000, memoryUsedPercent: 33, bridgeRssMB: 520, uptimeHours: 3 },
+			disks: [{ drive: 'C:', freeGB: 8, totalGB: 175, percentFree: 4 }],
+			net: { rxKBps: 12, txKBps: 3 },
+			ports: { 3080: 4242, 3081: 4242 },
+			processTotal: 300,
+			killEnabled: false,
+			killNote: '结束进程默认关闭 —— 要开就在 mobile-bridge.json 里加 "processControl": true（改完立刻生效，不用重启）✓',
+			processes: [
+				{ pid: 4242, parentPid: 1, name: 'node.exe', mb: 520, cpuSeconds: 300, startedAt: '', command: 'dsh web', isNode: true, isSelf: true, isChild: false, killable: false, why: '这就是 DSH 本体（手机桥跑在它里面）—— 绝不能杀' },
+				{ pid: 7777, parentPid: 1, name: 'node.exe', mb: 40, cpuSeconds: 2, startedAt: '', command: 'some-stuck-thing', isNode: true, isSelf: false, isChild: false, killable: true, why: '' },
+			],
+		})
+	}
+	// ⚠️ 用 startsWith：请求带着 `?sessionId=…` ✓（写成精确匹配 = 桩永远不命中 ✗）
+	if (path.startsWith('/api/schedule')) {
+		if (options.method === 'POST') {
+			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+			scheduleWrites.push(body)
+			return jsonResponse(body.action === 'delete'
+				? { deleted: true, id: body.id }
+				: { created: true, task: { id: 'schedule-new', title: 'x', prompt: body.prompt, scheduledAt: null, repeat: null, status: 'active', sessionId: body.sessionId } })
+		}
+		return jsonResponse({
+			sessionId: 'session-live',
+			count: 1,
+			tasks: [{ id: 'schedule-1', title: '整理今天的笔记', prompt: '整理今天的笔记', scheduledAt: '2026-10-13T15:00:00.000Z', repeat: { kind: 'daily', time: '23:00:00', timeZone: 'Asia/Shanghai' }, status: 'active', sessionId: 'session-live' }],
+			note: 'x',
+		})
+	}
+	if (path === '/api/clipboard') {
+		if (options.method === 'POST') {
+			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+			clipboardWrites.push(body)
+			return jsonResponse({ ok: true, bytes: String(body.text ?? '').length, message: '已经放进电脑剪贴板了' })
+		}
+		return jsonResponse({ text: '电脑上复制的那段文字', length: 11 })
+	}
+	if (path === '/api/screen') {
+		// 1×1 的 PNG（内容不重要，页面只把它塞进 <img> ✓）
+		return { ok: true, status: 200, headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'image/png' : null) }, async json() { return {} } }
+	}
+	if (path === '/api/power') {
+		if (options.method === 'POST') {
+			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+			powerRequests.push(body)
+			return jsonResponse(body.action === 'lock'
+				? { ok: true, action: 'lock', message: '已锁屏' }
+				: { ok: true, action: body.action, seconds: 20, message: '已排定：20 秒后关机 —— 这期间可以点「取消」' })
+		}
+		return jsonResponse({
+			lockEnabled: true,
+			powerEnabled: true,
+			delaySeconds: 20,
+			note: '关机 / 重启已开启：每次都要现输 PIN，并且要点两次才执行；执行后有 20 秒可以取消 ✓',
+			preflight: [
+				{ name: '手机桥在监听', ok: true, hint: '端口 3081' },
+				{ name: '开机自启已装', ok: false, hint: '没装：关完得自己点桌面图标才能连上' },
+			],
+			pending: null,
+		})
 	}
 	/*
 	 * 2.6.0：删除会话（POST /api/session/archive）。桩要能演三种答案：
@@ -552,7 +628,21 @@ const dom = new JSDOM(html, {
 		// over plain http anyway.
 		window.document.execCommand = (command) => {
 			if (command !== 'copy') return false
-			const area = window.document.querySelector('textarea[readonly]')
+			/*
+			 * 真浏览器里 `copy` 作用于**当前选中/聚焦**的那个临时 textarea（页面 `copyText()` 会
+			 * 先建它、`select()` 它、再 execCommand ✓）。原来这条桩写成"取第一个 readonly textarea" ✗ ——
+			 * 2.7.0 加了「电脑剪贴板」那个只读框（`#clipPcText`）之后，它排在前面，于是复制到空字符串 ✗。
+			 * 桩要照着真行为写：优先**聚焦中**的 textarea ✓。
+			 */
+			// 真实语义是"复制当前选区"。jsdom 里 `select()`/`setSelectionRange()` 会更新选区 ✓，
+			// 所以先读选区（最忠实 ✓）；取不到再退到聚焦的 textarea、最后退到最后一个 textarea ✓。
+			const selection = (() => { try { return String(window.getSelection?.() ?? '') } catch { return '' } })()
+			if (selection !== '') { copied.push(selection); return true }
+			const active = window.document.activeElement
+			const areas = window.document.querySelectorAll('textarea')
+			const area = (active !== null && active !== undefined && active.tagName === 'TEXTAREA')
+				? active
+				: areas[areas.length - 1]
 			copied.push(area ? area.value : '')
 			return true
 		}
@@ -3440,6 +3530,232 @@ check('说明指向了下拉框或读取状态',
 	permState.elevated = true
 	$('composer').dataset.perm = 'danger-full-access'
 	await nextFrame()
+}
+
+/* --- 2.7.0 ★3/★4：状态盘 + 一键动作（"点两次"这条一定要钉住 ✓）------------- */
+click(tabButton('task'))
+await wait(40)
+{
+	click($('sysBtn'))
+	await wait(120)
+	check('📊 打开状态盘：CPU / 内存 / 磁盘 / 端口都被画出来了',
+		window.getComputedStyle($('sysopen')).display !== 'none'
+		&& $('sysBody').textContent.includes('12%')
+		&& $('sysBody').textContent.includes('C:')
+		&& $('sysBody').textContent.includes('3080'),
+		$('sysBody').textContent.replace(/\s+/g, ' ').slice(0, 80))
+	check('DSH 本体那一行写明"绝不能杀"，而且没有「结束」键（默认关也不给）',
+		$('sysBody').textContent.includes('绝不能杀')
+		&& $('sysBody').querySelector('[data-kill="4242"]') === null,
+		String($('sysBody').textContent.includes('绝不能杀')))
+	check('默认关时面板上写着怎么开（processControl）',
+		$('sysBody').textContent.includes('processControl'))
+	check('一键动作那段在：锁屏 + 关机/重启 都在状态盘上',
+		$('sysBody').textContent.includes('锁屏')
+		&& $('sysBody').querySelector('[data-power="shutdown"]') !== null
+		&& $('sysBody').querySelector('[data-power="restart"]') !== null,
+		String($('sysBody').querySelector('[data-power="shutdown"]') !== null))
+
+	// 锁屏：一键、不要 PIN ✓
+	const lockBefore = powerRequests.length
+	click($('sysBody').querySelector('[data-lock]'))
+	await wait(120)
+	check('锁屏一键：直接发 action=lock，不弹 PIN 纸',
+		powerRequests.length === lockBefore + 1 && powerRequests.at(-1)?.action === 'lock'
+		&& window.getComputedStyle($('poweropen')).display === 'none',
+		JSON.stringify(powerRequests.at(-1) ?? null))
+
+	// 关机：**必须点两次**才真的发请求 ✓（这条最重要）
+	click($('sysBody').querySelector('[data-power="shutdown"]'))
+	await wait(120)
+	check('点「关机」只开纸（带自检 + PIN），**不发请求**',
+		window.getComputedStyle($('poweropen')).display !== 'none'
+		&& $('powerChecks').textContent.includes('开机自启')
+		&& powerRequests.length === lockBefore + 1,
+		`请求数=${powerRequests.length - lockBefore}`)
+	$('powerPin').value = '935881'
+	click($('powerGo'))
+	await wait(60)
+	check('第一次点「继续」只是上膛：按钮变成"再点一次"，**仍然没发请求**',
+		$('powerGo').textContent.includes('再点一次') && powerRequests.length === lockBefore + 1,
+		`按钮=${$('powerGo').textContent} 请求=${powerRequests.length - lockBefore}`)
+	click($('powerGo'))
+	await wait(150)
+	check('第二次点才真的执行：请求里带着 action=shutdown（PIN 也带上）',
+		powerRequests.length === lockBefore + 2
+		&& powerRequests.at(-1)?.action === 'shutdown' && powerRequests.at(-1)?.pin === '935881',
+		JSON.stringify(powerRequests.at(-1) ?? null))
+	click($('sysBack'))
+	await wait(60)
+}
+
+/* --- 2.7.0 ★4：剪贴板 & 截屏 -------------------------------------------- */
+{
+	click($('clipBtn'))
+	await wait(150)
+	check('📋 打开剪贴板纸：电脑剪贴板的内容被填进来了（只读）',
+		window.getComputedStyle($('clipopen')).display !== 'none'
+		&& $('clipPcText').value === '电脑上复制的那段文字'
+		&& $('clipPcText').hasAttribute('readonly'),
+		JSON.stringify($('clipPcText').value))
+
+	$('clipPhoneText').value = '手机这边写的字'
+	click($('clipSend'))
+	await wait(150)
+	check('「放进电脑剪贴板」把手机上的字发过去了（带 text 字段）',
+		clipboardWrites.length === 1 && clipboardWrites[0].text === '手机这边写的字',
+		JSON.stringify(clipboardWrites[0] ?? null))
+	check('发完清空输入框（免得下次误发一遍）', $('clipPhoneText').value === '')
+
+	click($('screenBtn'))
+	await wait(80)
+	check('「截一张现在看看」把截图接口挂到 <img> 上（同源 cookie 会自动带上，所以能直接当图片取 ✓）',
+		$('screenImg').getAttribute('src')?.startsWith('api/screen?t=') === true
+		&& window.getComputedStyle($('screenImg')).display !== 'none',
+		String($('screenImg').getAttribute('src')))
+	click($('clipBack'))
+	await wait(60)
+}
+
+/* --- 2.7.0 ★6：定时任务面板 --------------------------------------------
+ * 上一轮这块**崩过** ✗：前面的"删除会话"用例会把当前会话置空、还会把 `session-live`
+ * 移出列表，于是 `switchTo('session-live')` 直接抛异常、整份 ui 测试没跑完 ✓。
+ * 现在的写法两条护栏：**挑列表里现有的第一个会话** ✓ + 每个 DOM 查找都判空 ✓。
+ */
+{
+	openSessions()
+	await wait(30)
+	const rows = sessionRows()
+	check('（前置）定时面板要用到一个活着的会话（列表非空 ✓）', rows.length > 0, rows.join(', '))
+	if (rows.length > 0) {
+		click($('sessList').querySelector(`[data-session="${rows[0]}"]`))
+		await wait(80)
+		click($('schBtn'))
+		await wait(200)
+		const listText = $('schList') === null ? '' : $('schList').textContent.replace(/\s+/g, ' ')
+		check('📅 打开定时任务纸：这份会话的任务列出来了（标题 + 重复规则说人话「每天 23:00」✓）',
+			window.getComputedStyle($('schopen')).display !== 'none'
+			&& listText.includes('整理今天的笔记') && listText.includes('每天 23:00'), listText.slice(0, 60))
+		const promptBox = $('schPrompt')
+		// ⚠️ 这个文件里只有 `window`，**没有裸 `document`** ✗（写成 document.querySelector 会
+		// ReferenceError 把整份测试中断 ✓ —— 这一版就是这么崩的 ✓）。
+		const preset = window.document.querySelector('[data-sch="nightly"]')
+		if (promptBox !== null && preset !== null) {
+			promptBox.value = '整理今天的笔记'
+			click(preset)
+			await wait(180)
+			const sent = scheduleWrites.at(-1) ?? null
+			check('预设「每晚 23:00」发出去的就是宿主那套 daily（键名必须一模一样 ✓）',
+				sent?.action === 'create' && sent?.daily?.time === '23:00:00'
+				&& sent?.daily?.time_zone === 'Asia/Shanghai' && typeof sent?.sessionId === 'string' && sent.sessionId !== '',
+				JSON.stringify(sent))
+			check('建完清空输入框（免得下次误发一遍 ✓）', promptBox.value === '')
+		}
+		const delButton = $('schList') === null ? null : $('schList').querySelector('[data-schdel]')
+		if (delButton !== null) {
+			click(delButton)
+			await wait(180)
+			check('删除按钮发的是 {action:delete, id}（id 从列表里来，不靠用户输 ✓）',
+				scheduleWrites.at(-1)?.action === 'delete' && scheduleWrites.at(-1)?.id === 'schedule-1',
+				JSON.stringify(scheduleWrites.at(-1) ?? null))
+		} else {
+			check('（前置）列表里有「删除」按钮（没有它这条就白测了 ✗）', false, listText.slice(0, 40))
+		}
+		click($('schBack'))
+		await wait(60)
+	}
+}
+
+/* --- 2.7.0 ★7：只看不发（防误触）-----------------------------------------
+ * 验法要"硬"一点 ✓：不只是看图标变没变，而是**真去点一个写操作**，看它有没有发出去 ✓
+ * （用定时任务那个预设按钮当靶子：它会 `POST /api/schedule`，而 `scheduleWrites` 记着每一次 ✓）。
+ */
+{
+	const writesBefore = scheduleWrites.length
+	click($('roBtn'))
+	await wait(80)
+	check('开只读：条幅出现、发送键禁用、图标变 🔒',
+		window.getComputedStyle($('roStrip')).display !== 'none'
+		&& $('send').disabled === true
+		&& $('roBtn').textContent.includes('🔒'),
+		`strip=${window.getComputedStyle($('roStrip')).display} send=${$('send').disabled}`)
+	check('只读状态会持久化（刷新/切回 App 都还在 ✓ —— 锁丢了等于没做 ✗）',
+		window.localStorage.getItem('dshm.readonly') === '1', String(window.localStorage.getItem('dshm.readonly')))
+
+	// 真去点一个写操作：必须**发不出去** ✓
+	openSessions()
+	await wait(30)
+	const rows = sessionRows()
+	if (rows.length > 0) {
+		click($('sessList').querySelector(`[data-session="${rows[0]}"]`))
+		await wait(80)
+		click($('schBtn'))
+		await wait(200)
+		const promptBox = $('schPrompt')
+		const preset = window.document.querySelector('[data-sch="nightly"]')
+		if (promptBox !== null && preset !== null) {
+			promptBox.value = '只读模式下不该发出去'
+			click(preset)
+			await wait(200)
+			check('只读时点"写"操作：请求**一条都没发** ✓（挡在 api() 那一层，所有写接口都过不去 ✓）',
+				scheduleWrites.length === writesBefore, `${scheduleWrites.length - writesBefore} 条发出去了`)
+			check('并且当场说清楚为什么没发（不是默默没反应 ✗）',
+				$('toast') !== null && $('toast').textContent.includes('只读'), $('toast') === null ? '(没有提示)' : $('toast').textContent.slice(0, 40))
+			click($('schBack'))
+			await wait(60)
+		}
+	}
+
+	// 解锁后同一个操作要能发出 ✓（不然就成了"坏了"而不是"锁上了" ✗）
+	click($('roBtn'))
+	await wait(80)
+	check('解锁：条幅收起、发送键恢复、图标回 🔓',
+		window.getComputedStyle($('roStrip')).display === 'none'
+		&& $('send').disabled === false
+		&& $('roBtn').textContent.includes('🔓'))
+	check('解锁后 localStorage 里的标记也清了 ✓', window.localStorage.getItem('dshm.readonly') !== '1')
+}
+
+/* --- 2.7.0 ★8：离线发件箱 -------------------------------------------------
+ * 验法：**把 window.fetch 临时换成一个"网络层失败"**（reject 一个没有 status 的错 ✓）——
+ * 页面里 `isOfflineError` 认的就是这种 ✓（403/400 那种有 status 的**不许进箱** ✗）。
+ */
+{
+	const realFetch = window.fetch
+	const sentText = '离线时写的这句：等有网了再发'
+	// ① 断网 → 发送 → 应该进箱（而不是干等 ✗）
+	window.fetch = () => Promise.reject(new TypeError('Load failed'))
+	input.value = sentText
+	click($('send'))
+	await wait(260)
+	window.fetch = realFetch
+
+	const stored = (() => { try { return JSON.parse(window.localStorage.getItem('dshm.outbox') ?? '[]') } catch { return [] } })()
+	check('断网时发送：这条被收进离线箱（不再干等 ✗）', Array.isArray(stored) && stored.some((item) => item.text === sentText),
+		JSON.stringify(stored).slice(0, 80))
+	check('箱子里存了 requestId（补发靠它幂等 —— 不会变成两条 ✓）',
+		typeof stored[0]?.clientId === 'string' && stored[0].clientId !== '', String(stored[0]?.clientId))
+	check('条幅把"有几条待发"说出来了 ✓',
+		window.getComputedStyle($('outboxStrip')).display !== 'none' && $('outboxStrip').textContent.includes('1 条'),
+		$('outboxStrip').textContent.slice(0, 40))
+
+	// ② 有网了 → 自动补发 → 箱子空、条幅收起 ✓
+	window.dispatchEvent(new window.Event('online'))
+	await wait(400)
+	const after = (() => { try { return JSON.parse(window.localStorage.getItem('dshm.outbox') ?? '[]') } catch { return [] } })()
+	check('恢复网络（online 事件）后自动补发：箱子清空 ✓', Array.isArray(after) && after.length === 0, JSON.stringify(after))
+	check('补发完条幅收起 ✓', window.getComputedStyle($('outboxStrip')).display === 'none')
+
+	// ③ 服务端**明确拒绝**（有 status 的错）不许进箱 ✗
+	const failing = () => Promise.reject(Object.assign(new Error('HTTP 400'), { status: 400 }))
+	window.fetch = failing
+	input.value = '这条会被服务端拒，不该进箱'
+	click($('send'))
+	await wait(300)
+	window.fetch = realFetch
+	const rejected = (() => { try { return JSON.parse(window.localStorage.getItem('dshm.outbox') ?? '[]') } catch { return [] } })()
+	check('服务端明确拒绝（400/403）**不进箱** ✗（那是"发不出去"，进箱只会一直卡着 ✓）',
+		Array.isArray(rejected) && rejected.length === 0, JSON.stringify(rejected))
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */
