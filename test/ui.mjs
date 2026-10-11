@@ -288,6 +288,9 @@ async function stubFetch(input, options = {}) {
 		welcomedOnServer = true
 		return jsonResponse({ ok: true })
 	}
+	if (path.startsWith('/api/models')) {
+		return jsonResponse({ groups: [{ provider: 'deepseek', label: 'DeepSeek', models: [{ id: 'deepseek-chat', label: 'deepseek-chat' }] }] })
+	}
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	// 文档预览（2.1.0）：页面会把文档取回来渲染，桩里给一段 Markdown 原文。
 	if (path.startsWith('/api/file')) {
@@ -1133,6 +1136,22 @@ check('the panel carries its own title', sheet.querySelector('.sheetbar .title')
 check('the header is left alone', $('heading').textContent === '会话', $('heading').textContent)
 check('workspaces render as picks', window.document.querySelectorAll('#workspaces .pick').length === 2)
 check('the first workspace starts selected', window.document.querySelectorAll('#workspaces .pick.on').length === 1)
+// 用户 2026-10-11：「添加模型调用，手机上能调用不同模型」——新建面板要能列出宿主的模型目录 ✓。
+await wait(60)
+check('模型目录拉下来了（新建面板里能选不同模型）',
+	$('modelPick') !== null && $('modelPick').options.length === 2
+	&& $('modelHint').textContent.includes('1 个模型'),
+	`${$('modelPick')?.options.length} 个选项 / ${$('modelHint').textContent}`)
+{
+	$('modelPick').value = $('modelPick').options[1].value
+	$('modelPick').dispatchEvent(new window.Event('change', { bubbles: true }))
+	check('选了模型后写清"这个会话以后就用它"（按会话生效，不是只这一条）',
+		$('modelHint').textContent.includes('deepseek-chat') && $('modelHint').textContent.includes('之后这个会话就用它'),
+		$('modelHint').textContent)
+	$('modelPick').value = ''
+	$('modelPick').dispatchEvent(new window.Event('change', { bubbles: true }))
+}
+
 check('presets populate the picker', $('preset').options.length === 3, `${$('preset').options.length} options`)
 
 /*

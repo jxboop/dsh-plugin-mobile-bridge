@@ -855,6 +855,11 @@
 					<div class="hint" id="presetHint"></div>
 				</div>
 				<div class="field">
+					<label>模型（2.4.0 起可换）</label>
+					<select class="plain" id="modelPick"><option value="">（用预设/宿主的默认）</option></select>
+					<div class="hint" id="modelHint"></div>
+				</div>
+				<div class="field">
 					<label>第一条任务（可留空）</label>
 					<textarea class="plain" id="firstText" placeholder="想让它先做什么？"></textarea>
 				</div>
@@ -1125,6 +1130,8 @@
 		sessions: [],
 		workspaces: [],
 		presets: [],
+		/** 模型目录（2.4.0）：宿主的 modelCatalog() 透传，按 provider 分组。 */
+		models: [],
 		pickedWorkspace: null,
 		balance: null,
 		balanceBusy: false,
@@ -1723,6 +1730,7 @@
 	function openSheet() {
 		show(sheet)
 		loadWorkspaces()
+		void loadModels()
 	}
 
 	function closeSheet() {
@@ -4758,6 +4766,58 @@
 		renderPresetHint()
 	}
 
+	/* ------------------------------------------------- 模型选择（2.4.0） */
+	/**
+	 * 用户要求：「添加模型调用，手机上能调用不同模型」。
+	 *
+	 * 目录来自宿主的 `modelCatalog()`（按 provider 分组，和桌面端**同一份** ✓）；
+	 * 选择是**按会话**生效的（`selectModel({sessionId,provider,model})` ✓）——
+	 * 新建面板里选的模型，会在会话创建后立刻落上去 ✓（所以"以后每条都按它走"✓，
+	 * 而不是"只有下一条"✗，避免会话历史里出现前后不一致的记录）。
+	 */
+	function renderModels() {
+		const pick = $('modelPick')
+		if (pick === null) return
+		pick.innerHTML = '<option value="">（用预设/宿主的默认）</option>' + state.models.flatMap((group) =>
+			group.models.map((model) => '<option value="' + escapeHtml(group.provider + '|' + model.id) + '">'
+				+ escapeHtml((group.label ?? group.provider) + ' · ' + (model.label ?? model.id)) + '</option>')).join('')
+		renderModelHint()
+	}
+
+	function renderModelHint() {
+		const node = $('modelHint')
+		if (node === null) return
+		const raw = $('modelPick').value
+		if (raw === '') {
+			const total = state.models.reduce((sum, group) => sum + group.models.length, 0)
+			node.textContent = total === 0
+				? '（宿主没报出模型目录，就用默认的）'
+				: '当前共 ' + total + ' 个模型可选；不选就用预设/宿主的默认。'
+			return
+		}
+		const [provider, model] = raw.split('|')
+		node.textContent = '新建的会话会用：' + provider + ' · ' + model + '（之后这个会话就用它）'
+	}
+	$('modelPick').addEventListener('change', renderModelHint)
+
+	async function loadModels() {
+		if (state.models.length > 0) return
+		try {
+			const body = await api('api/models')
+			state.models = (Array.isArray(body.groups) ? body.groups : [])
+				.map((group) => ({
+					provider: String(group?.provider ?? ''),
+					label: String(group?.label ?? group?.provider ?? ''),
+					models: (Array.isArray(group?.models) ? group.models : []).map((model) => ({
+						id: String(model?.id ?? ''),
+						label: String(model?.label ?? model?.id ?? ''),
+					})).filter((model) => model.id !== ''),
+				}))
+				.filter((group) => group.provider !== '' && group.models.length > 0)
+		} catch { /* 拿不到就只剩"用默认"，不影响新建 ✓ */ }
+		renderModels()
+	}
+
 	/**
 	 * 「本次将用：X」——把"默认预设是哪个"写出来（用户报"手机新建明显变贵"，这就是让花销
 	 * 在选择前可见的那一步 ✓）。选了具体的就显示它 + 它的说明（说明里通常写着这预设干什么、
@@ -4814,7 +4874,25 @@
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
 			body: JSON.stringify(request),
-		}).then((created) => {
+		}).then(async (created) => {
+			/*
+			 * 新建时选了模型 → 立刻落到这个会话上（2.4.0）✓。
+			 * 宿主的选择是**按会话**生效的，做完这一步，这个会话以后每条都按它走 ✓
+			 * （否则会话历史里会出现"前后用的模型对不上"的记录 ✗）。
+			 */
+			const modelPick = $('modelPick').value
+			if (modelPick !== '') {
+				const [provider, model] = modelPick.split('|')
+				try {
+					await api('api/model', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ sessionId: created.sessionId, provider, model }),
+					})
+				} catch (error) {
+					$('createHint').textContent = '会话建好了，但切模型没成功：' + error.message
+				}
+			}
 			// 跳到新会话之前，把现在这个的现场存下来（切回来时秒开）。
 			rememberSession(state.sessionId)
 			state.sessionId = created.sessionId
@@ -4831,6 +4909,8 @@
 				// 下拉里，后面每次新建都悄悄带上它 ✗）。复位后回到「（用默认）」，并且把提示同步。
 				$('preset').value = ''
 				renderPresetHint()
+				$('modelPick').value = ''
+				renderModelHint()
 				$('createHint').textContent = '创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。'
 				closeSheet()
 				switchTab('task')

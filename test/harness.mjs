@@ -177,6 +177,18 @@ const listItems = [
 ]
 
 const stubController = {
+	// 模型目录 / 按会话切模型（2.4.0，宿主真实接口同形）。
+	modelCatalog: async () => ({
+		groups: [
+			{ provider: 'deepseek', label: 'DeepSeek', models: [{ id: 'deepseek-chat', label: 'deepseek-chat' }, { id: 'deepseek-reasoner', label: 'deepseek-reasoner' }] },
+			{ provider: 'zhipu', label: '智谱', models: [{ id: 'glm-4-flash', label: 'glm-4-flash' }] },
+		],
+	}),
+	selectModel: async (request) => {
+		services.selectedModels.push(request)
+		if (String(request?.model ?? '') === 'nope') throw new Error('unknown model')
+		return { selected: { provider: request.provider, model: request.model } }
+	},
 	async list() {
 		return { items: listItems }
 	},
@@ -225,6 +237,8 @@ const stubController = {
 let badgeTap = null
 
 const services = {
+	/** 记录"切模型"的请求（2.4.0）。 */
+	selectedModels: [],
 	// 桌面角标靠 webServer.tapIndex 注入。以前 harness 里没有这个服务，于是
 	// installBadge 整个走不到 —— 一个作用域写错（模块级函数里用了 createBridge
 	// 内的 record()）就让 start() 抛错：角标消失、隧道自检永不启动，
@@ -1409,6 +1423,46 @@ check('默认预设被标出来（手机新建面板据此显示"本次将用哪
 check('预设的说明也带上（选了具体那个时显示它干什么用的）',
 	workspaceBody.presets?.find((preset) => preset.id === 'video')?.description === '带视频工具的预设',
 	JSON.stringify(workspaceBody.presets?.find((preset) => preset.id === 'video')))
+
+/* --- 模型选择（2.4.0，用户：「手机上能调用不同模型」）----------------------- */
+{
+	const catalog = await (await fetch(`${base}/api/models`, authed)).json()
+	check('模型目录透传出来了（按 provider 分组，和桌面端同一份）',
+		Array.isArray(catalog.groups) && catalog.groups.length === 2
+		&& catalog.groups[0].models.length === 2,
+		JSON.stringify(catalog.groups?.map((g) => [g.provider, g.models.length])))
+
+	const beforeSelect = services.selectedModels.length
+	const picked = await fetch(`${base}/api/model`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-x', provider: 'zhipu', model: 'glm-4-flash' }),
+	})
+	const pickedBody = await picked.json()
+	check('切模型落在指定会话上（sessionId 一起传下去）',
+		picked.status === 200 && services.selectedModels.length === beforeSelect + 1
+		&& services.selectedModels.at(-1).sessionId === 'session-x'
+		&& services.selectedModels.at(-1).provider === 'zhipu'
+		&& pickedBody.selected?.model === 'glm-4-flash',
+		JSON.stringify(services.selectedModels.at(-1)))
+
+	const bad = await fetch(`${base}/api/model`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-x', provider: 'zhipu', model: 'nope' }),
+	})
+	check('宿主要是不认这个模型，如实回错（不假装成功）', bad.status === 500, String(bad.status))
+
+	const missing = await fetch(`${base}/api/model`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ sessionId: 'session-x' }),
+	})
+	check('缺参数就 400（不许默默用别的模型）', missing.status === 400, String(missing.status))
+
+	const anon = await fetch(`${base}/api/models`)
+	check('没登录拿不到模型目录', anon.status === 401, String(anon.status))
+}
 
 const createResponse = await fetch(`${base}/api/session`, {
 	method: 'POST',
