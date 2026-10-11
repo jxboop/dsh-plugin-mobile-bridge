@@ -428,6 +428,20 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 	check('更新历史覆盖全部版本（不筛标题，一节都不许丢）',
 		Array.isArray(sections) && sections.length >= 25 && sections[0].version === pkgVersion,
 		`共 ${sections.length} 版，最新 ${sections[0]?.version}`)
+	/*
+	 * 用户 2026-10-11：「说明更新内容读者都不明白什么意思」——说明页要读 `USERNEWS.md`
+	 * 里那**一句人话** ✓，而不是 CHANGELOG 里的工程措辞（字段名/测试/光杆标题……✗）。
+	 */
+	{
+		const friendly = sections.find((section) => section.version === '2.4.2')
+		check('最新版本用的是"用户向"那句话（不是工程措辞）',
+			friendly !== undefined && (friendly.lines ?? []).some((line) => String(line).includes('模型')) === true
+			&& (friendly.lines ?? []).every((line) => /字段名|CHANGELOG|测试|投影|光杆/.test(String(line)) === false),
+			JSON.stringify(friendly?.lines ?? null))
+		const plain = sections.filter((section) => (section.lines ?? []).some((line) => String(line).includes('修好了')))
+		check('修 bug 的版本说的是"修好了：……”（人话），不是"🔴 根因"',
+			plain.length >= 3, String(plain.length))
+	}
 	check('每一节都有可读内容（没有小标题的用正文兜底）',
 		Array.isArray(sections) && sections.every((section) => Array.isArray(section.lines) && section.lines.length > 0),
 		JSON.stringify(sections.filter((s) => (s.lines ?? []).length === 0).map((s) => s.version)))
