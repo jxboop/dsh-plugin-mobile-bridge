@@ -817,6 +817,9 @@
 				<div class="field">
 					<label>Agent 预设</label>
 					<select class="plain" id="preset"><option value="">（用默认）</option></select>
+					<!-- 用户报「手机新建对话明显会变贵」：以前"默认到底是哪个预设"在手机上看不见 ✗，
+					     现在写出来 —— 贵不贵在选择之前就看得见（预设决定模型、工具与提示词规模）。 -->
+					<div class="hint" id="presetHint"></div>
 				</div>
 				<div class="field">
 					<label>第一条任务（可留空）</label>
@@ -4687,8 +4690,33 @@
 
 	function renderPresets() {
 		$('preset').innerHTML = '<option value="">（用默认）</option>' + state.presets.map((preset) =>
-			'<option value="' + escapeHtml(preset.id) + '">' + escapeHtml(preset.name) + '</option>').join('')
+			'<option value="' + escapeHtml(preset.id) + '">' + escapeHtml(preset.name) + (preset.isDefault === true ? '（默认）' : '') + '</option>').join('')
+		renderPresetHint()
 	}
+
+	/**
+	 * 「本次将用：X」——把"默认预设是哪个"写出来（用户报"手机新建明显变贵"，这就是让花销
+	 * 在选择前可见的那一步 ✓）。选了具体的就显示它 + 它的说明（说明里通常写着这预设干什么、
+	 * 带哪些工具）。
+	 */
+	function renderPresetHint() {
+		const node = $('presetHint')
+		if (node === null) return
+		const picked = $('preset').value
+		if (picked === '') {
+			const fallback = state.presets.find((preset) => preset.isDefault === true)
+			node.textContent = fallback === undefined
+				? '本次将用宿主当前的默认预设。'
+				: '本次将用默认预设：' + fallback.name + '（想换更轻的就选上面一项）。'
+			return
+		}
+		const chosen = state.presets.find((preset) => preset.id === picked)
+		const note = typeof chosen?.description === 'string' ? chosen.description : ''
+		node.textContent = chosen === undefined
+			? '本次将用：' + picked
+			: '本次将用：' + chosen.name + (note === '' ? '' : ' —— ' + note)
+	}
+	$('preset').addEventListener('change', renderPresetHint)
 
 	$('workspaces').addEventListener('click', (event) => {
 		const button = event.target.closest('.pick')
@@ -4735,6 +4763,10 @@
 			return after.then(() => {
 				$('firstText').value = ''
 				$('cwd').value = ''
+				// 预设**用完就复位**（用户报"手机新建明显变贵"：以前某次手选过的重预设会一直留在
+				// 下拉里，后面每次新建都悄悄带上它 ✗）。复位后回到「（用默认）」，并且把提示同步。
+				$('preset').value = ''
+				renderPresetHint()
 				$('createHint').textContent = '创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。'
 				closeSheet()
 				switchTab('task')

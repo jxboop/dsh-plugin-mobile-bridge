@@ -244,6 +244,15 @@ const services = {
 			{ id: 'video', name: '视频' },
 			{ id: 'rotten', name: '坏掉的预设', broken: 'composition file is missing' },
 		],
+		// 宿主真实实现会给 `isDefault`（手机"新建"面板靠它显示"本次将用哪个预设"，
+		// 因为用户报过"手机新建明显会变贵" —— 得让花销在选择之前看得见）。
+		remoteExportList: async () => ({
+			presets: [
+				{ id: 'default', name: '默认', isDefault: true },
+				{ id: 'video', name: '视频', isDefault: false, description: '带视频工具的预设' },
+				{ id: 'rotten', name: '坏掉的预设', broken: 'composition file is missing' },
+			],
+		}),
 	},
 	credentials: {
 		resolve: async (ref) => (ref === 'DEEPSEEK_API_KEY' ? { value: 'sk-test-0123456789', source: 'test' } : undefined),
@@ -1378,6 +1387,17 @@ check('workspaces are listed with id, title and path',
 check('a broken preset is withheld from the picker',
 	workspaceBody.presets?.length === 2 && workspaceBody.presets.every((preset) => preset.id !== 'rotten'),
 	JSON.stringify(workspaceBody.presets?.map((preset) => preset.id)))
+/*
+ * 「手机新建明显会变贵」那条：手机"新建"面板要能显示**默认预设是哪个**（贵不贵在选择前看得见），
+ * 所以 /api/workspaces 必须把宿主标记的 isDefault 透传出来，并且**只有一个**是默认。
+ */
+check('默认预设被标出来（手机新建面板据此显示"本次将用哪个预设"）',
+	workspaceBody.presets?.filter((preset) => preset.isDefault === true).length === 1
+	&& workspaceBody.presets.find((preset) => preset.isDefault === true)?.id === 'default',
+	JSON.stringify(workspaceBody.presets?.map((preset) => [preset.id, preset.isDefault === true])))
+check('预设的说明也带上（选了具体那个时显示它干什么用的）',
+	workspaceBody.presets?.find((preset) => preset.id === 'video')?.description === '带视频工具的预设',
+	JSON.stringify(workspaceBody.presets?.find((preset) => preset.id === 'video')))
 
 const createResponse = await fetch(`${base}/api/session`, {
 	method: 'POST',

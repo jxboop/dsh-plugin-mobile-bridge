@@ -365,7 +365,7 @@ async function stubFetch(input, options = {}) {
 				{ id: 'ws-1', title: 'deepseek学习', path: 'D:\\learn\\deepseek学习' },
 				{ id: 'ws-2', title: '皇室', path: 'D:\\tool\\皇室' },
 			],
-			presets: [{ id: 'default', name: '默认' }, { id: 'video', name: '视频' }],
+			presets: [{ id: 'default', name: '默认', isDefault: true }, { id: 'video', name: '视频' }],
 		})
 	}
 	if (path.startsWith('/api/session')) return jsonResponse({ sessionId: 'session-created', agentPreset: 'default' })
@@ -1092,6 +1092,22 @@ check('the header is left alone', $('heading').textContent === '会话', $('head
 check('workspaces render as picks', window.document.querySelectorAll('#workspaces .pick').length === 2)
 check('the first workspace starts selected', window.document.querySelectorAll('#workspaces .pick.on').length === 1)
 check('presets populate the picker', $('preset').options.length === 3, `${$('preset').options.length} options`)
+
+/*
+ * 「手机新建对话明显会变贵」（2026-10-11）：面板要**把本次会用哪个预设写出来** ——
+ * 以前"（用默认）"背后是哪个预设手机上根本看不见 ✗，贵不贵只能事后从余额上发现。
+ */
+check('新建面板写清"本次将用默认预设：X"（把默认预设名摆出来）',
+	$('presetHint').textContent.includes('本次将用默认预设') && $('presetHint').textContent.includes('默认'),
+	$('presetHint').textContent)
+{
+	$('preset').value = 'video'
+	$('preset').dispatchEvent(new window.Event('change', { bubbles: true }))
+	check('选了具体预设：提示换成它（贵不贵在选择前看得见）',
+		$('presetHint').textContent.includes('视频'), $('presetHint').textContent)
+	$('preset').value = ''
+	$('preset').dispatchEvent(new window.Event('change', { bubbles: true }))
+}
 
 click(window.document.querySelectorAll('#workspaces .pick')[1])
 await wait(40)
