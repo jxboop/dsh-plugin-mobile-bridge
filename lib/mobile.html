@@ -663,15 +663,26 @@
 		margin-top: 6px; padding: 8px 12px; font-size: 12px; font-weight: 600;
 		color: var(--accent); background: none; border: 1px dashed var(--field-line); border-radius: 10px;
 	}
+	/*
+	 * 说明页的盒子改用**半透明毛玻璃**（用户 2026-10-11：「说明文字框也要改成透明的呀，
+	 * 不然看不见背景」）—— 原来 `.whatsnew` / `.wnsum` 是 `--panel` / `--bg` **实色** ✗，
+	 * 把刚加的渐变背景整个盖住了 ✓。现在透出来但压一层 blur + 描边，长文照样读得清 ✓。
+	 */
 	.whatsnew {
-		margin: 12px 0; padding: 11px 13px; border: 1px solid var(--field-line);
-		border-radius: 13px; background: var(--panel); box-shadow: var(--glass-edge);
+		margin: 12px 0; padding: 11px 13px; border: 1px solid var(--glass-edge);
+		border-radius: 13px; box-shadow: var(--glass-edge);
+		background: color-mix(in srgb, var(--panel) 55%, transparent);
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
 	}
 	.wnhead { font-size: 13px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 	.wnbody { font-size: 13px; line-height: 1.7; color: var(--muted); }
 	.wnbody .wnver { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 	/* 「1.0 → 今 按主题的汇总」：用户要的是汇总，不是一版版罗列 —— 这块是主角，逐版清单退到下面。 */
-	.wnsum { border: 1px solid var(--field-line); border-radius: 12px; padding: 9px 11px; margin-bottom: 10px; background: var(--bg); }
+	.wnsum {
+		border: 1px solid var(--field-line); border-radius: 12px; padding: 9px 11px; margin-bottom: 10px;
+		background: color-mix(in srgb, var(--bg) 45%, transparent);
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+	}
 	.wnsumhead { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
 	.wnsumrow { font-size: 13px; line-height: 1.62; color: var(--muted); margin-bottom: 5px; }
 	.wnsumlabel { color: var(--text); font-weight: 600; margin-right: 6px; }
