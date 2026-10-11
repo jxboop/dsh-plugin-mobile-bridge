@@ -1545,6 +1545,32 @@ check('提问卡片不在 #view-task 里面（切页签也看得见）',
 	$('ask').closest('#view-task') === null && $('ask').parentElement?.id === 'app',
 	$('ask').parentElement?.id)
 
+/*
+ * 2.5.1（交接文档 ⑤「查审批没弹出来」）：接线本来是好的（`approval/request` 与
+ * `user-questions/request` 都接了、两种卡片都画得出来），真正的缺口是**被盖住** ——
+ * 每个"工具抽屉"（会话列表 / 删除纸 / 录音 / 生图 / 背景 / 权限）都是 `position:fixed`
+ * 的全屏纸（z-index 50），抽屉开着时卡片整个看不见，而宿主只等 120 秒就退回电脑。
+ * 这一条就是钉住"抽屉开着也能看见卡片"。
+ */
+click($('sessBtn'))
+await wait(40)
+check('（前置）会话列表开着', window.getComputedStyle($('sessopen')).display !== 'none')
+source.emit({ t: 'interaction', kind: 'approval', id: 'ask-cover', payload: { toolName: 'pwsh', reason: '要跑一条命令' } })
+await wait(80)
+check('抽屉开着时来了审批：先把抽屉收掉，卡片就看得见（用户不会再"根本没提示"）',
+	window.getComputedStyle($('sessopen')).display === 'none'
+	&& window.getComputedStyle($('ask')).display !== 'none'
+	&& $('ask').textContent.includes('pwsh'),
+	`列表=${window.getComputedStyle($('sessopen')).display} 卡片=${window.getComputedStyle($('ask')).display}`)
+check('卡片的层级高过所有工具抽屉（.sheet 是 50）—— 万一还有纸开着也不会被盖住',
+	Number.parseInt(window.getComputedStyle($('ask')).zIndex, 10) > 50,
+	`ask z-index=${window.getComputedStyle($('ask')).zIndex} / sheet=${window.getComputedStyle($('sessopen')).zIndex}`)
+check('卡片一到会明确叫一声（振动 + 一句话，不指望用户自己盯着屏幕）',
+	$('toast').textContent.includes('点头') || $('toast').textContent.includes('问你'),
+	$('toast').textContent)
+source.emit({ t: 'interaction-end', id: 'ask-cover' })
+await wait(60)
+
 // 重推同一个 id 必须保住草稿：重连、多开一条流，宿主都会重推；直接覆盖会把勾选清光。
 const QA = { questions: [{ id: 'q1', question: '再问一次', options: [{ label: '甲' }, { label: '乙' }] }] }
 source.emit({ t: 'interaction', kind: 'question', id: 'ask-4', payload: QA })

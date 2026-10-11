@@ -751,7 +751,17 @@
 		font: inherit; font-size: 16px; font-weight: 600; box-shadow: var(--glass-edge);
 	}
 
-	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ---- */	#ask { flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto; }
+	/* ---- 提问 / 审批卡片：agent 需要人拍板时，出现在输入框上方 ----
+	   2.5.1（交接文档 ⑤「查审批没弹出来」）：卡片是**流内元素**，而所有"工具抽屉"
+	   （会话列表 / 删除纸 / 录音 / 生图 / 背景 / 权限）都是 `position:fixed` 的全屏纸
+	   （z-index 50）—— 抽屉开着时卡片被整个盖住，用户看到的就是"审批没弹出来" ✗，
+	   而宿主那边只等 120 秒就把它退回电脑（桌面上两分钟后才冒出来）。
+	   两手都要：卡片一到先**收掉抽屉**（见 interaction 帧那段），再给它一个高于
+	   .sheet(50) 和 #viewer(80)、但低于 #boot(90) / #offline(95) / #toast(120) 的层级做保险。 */
+	#ask {
+		position: relative; z-index: 85;
+		flex: none; margin: 0 10px 8px; display: grid; gap: 8px; max-height: 45vh; overflow-y: auto;
+	}
 	.askcard {
 		background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 11px 12px;
 		box-shadow: var(--glass-edge), var(--glass-shadow);
@@ -2987,6 +2997,20 @@
 				// 里恰好写着"需要你拍板时会弹出卡片"。真有提问就先让位，别让它空等
 				// 两分钟然后退回电脑。
 				hide(welcome)
+				/*
+				 * 2.5.1（交接文档 ⑤「查审批没弹出来」）：光让说明页让位**不够** ——
+				 * 每个"工具抽屉"（会话列表 / 删除纸 / 录音 / 生图 / 背景 / 权限）都是
+				 * `position:fixed` 的全屏纸（z-index 50）。抽屉开着时卡片被整个盖住 ✗，
+				 * 用户看到的就是"审批没弹出来"；而宿主只等 120 秒
+				 * （INTERACTION_TIMEOUT_MS）就把它退回电脑 —— 于是桌面上两分钟后才冒出来，
+				 * 用户只会觉得"手机上根本没提示"。
+				 * 所以：卡片一到就把抽屉收掉（面板只是 hide，**已经写好的文稿不丢** ✓），
+				 * 再振动一下 + 一句话把人叫回来（两者都可能被浏览器忽略，失败就算了）。
+				 */
+				const drawer = openToolPanel()
+				if (drawer !== null) hide(drawer)
+				try { navigator.vibrate?.(120) } catch { /* 不支持振动就算了 */ }
+				toast(payload.kind === 'approval' ? 'agent 要你点头（卡片在下面）' : 'agent 在问你（卡片在下面）', 2600)
 				// 已经存在的卡片必须【保住草稿】。重连、或又开了一条流，宿主都会把
 				// 同一个 id 重推一次；直接覆盖会把用户勾到一半的选择清光 ——
 				// 而那句"草稿存在 state 上就不会丢"的注释正是为这个写的。
