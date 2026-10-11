@@ -219,6 +219,8 @@ function bootstrapBody() {
 	}
 }
 
+const pickedModelRequests = []
+
 async function stubFetch(input, options = {}) {
 	const full = resolveRequest(input)
 	const path = full.startsWith(SECRET_PREFIX) ? `/${full.slice(SECRET_PREFIX.length)}` : full
@@ -288,8 +290,12 @@ async function stubFetch(input, options = {}) {
 		welcomedOnServer = true
 		return jsonResponse({ ok: true })
 	}
+	if (path === '/api/model') {
+		pickedModelRequests.push({ body: (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })() })
+		return jsonResponse({ selected: { provider: 'deepseek-official', model: 'deepseek-chat' } })
+	}
 	if (path.startsWith('/api/models')) {
-		return jsonResponse({ groups: [{ provider: 'deepseek', label: 'DeepSeek', models: [{ id: 'deepseek-chat', label: 'deepseek-chat' }] }] })
+		return jsonResponse({ groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }] }] })
 	}
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
 	// 文档预览（2.1.0）：页面会把文档取回来渲染，桩里给一段 Markdown 原文。
@@ -1145,8 +1151,8 @@ check('模型目录拉下来了（新建面板里能选不同模型）',
 {
 	$('modelPick').value = $('modelPick').options[1].value
 	$('modelPick').dispatchEvent(new window.Event('change', { bubbles: true }))
-	check('选了模型后写清"这个会话以后就用它"（按会话生效，不是只这一条）',
-		$('modelHint').textContent.includes('deepseek-chat') && $('modelHint').textContent.includes('之后这个会话就用它'),
+	check('选了模型后写清"当前会话立刻切、新建也用它"（按会话生效，不是只这一条）',
+		$('modelHint').textContent.includes('deepseek-chat') && $('modelHint').textContent.includes('当前会话立刻切'),
 		$('modelHint').textContent)
 	$('modelPick').value = ''
 	$('modelPick').dispatchEvent(new window.Event('change', { bubbles: true }))

@@ -855,7 +855,7 @@
 					<div class="hint" id="presetHint"></div>
 				</div>
 				<div class="field">
-					<label>模型（2.4.0 起可换）</label>
+					<label>模型（改了立刻生效）</label>
 					<select class="plain" id="modelPick"><option value="">（用预设/宿主的默认）</option></select>
 					<div class="hint" id="modelHint"></div>
 				</div>
@@ -4796,24 +4796,49 @@
 			return
 		}
 		const [provider, model] = raw.split('|')
-		node.textContent = '新建的会话会用：' + provider + ' · ' + model + '（之后这个会话就用它）'
+		node.textContent = '已选 ' + provider + ' · ' + model + ' —— 当前会话立刻切，新建的会话也用它 ✓'
 	}
-	$('modelPick').addEventListener('change', renderModelHint)
+	$('modelPick').addEventListener('change', () => {
+		renderModelHint()
+		// 用户 2026-10-11：「然后可以切的也做」——**当前会话立刻切**（不用等新建）✓。
+		// 新建面板里改一下就生效：有会话就落到这个会话上，没会话就等创建时用 ✓。
+		void applyModelNow()
+	})
+
+	/** 把当前选中的模型立刻落到**当前会话**上（没有会话就只是记住，等新建时用 ✓）。 */
+	async function applyModelNow() {
+		const raw = $('modelPick').value
+		if (raw === '' || state.sessionId === null || state.sessionId === '') return
+		const [provider, model] = raw.split('|')
+		try {
+			await api('api/model', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ sessionId: state.sessionId, provider, model }),
+			})
+			toast('已切到 ' + model + '（这个会话以后就用它）', 2200)
+		} catch (error) {
+			toast('切换失败：' + error.message, 2600)
+		}
+	}
 
 	async function loadModels() {
 		if (state.models.length > 0) return
 		try {
 			const body = await api('api/models')
 			state.models = (Array.isArray(body.groups) ? body.groups : [])
-				.map((group) => ({
-					provider: String(group?.provider ?? ''),
-					label: String(group?.label ?? group?.provider ?? ''),
+				.map((group, index) => ({
+					// ⚠️ 宿主给的是 `id` / `name`（不是 provider / label）——2026-10-11 现场：
+					// 我按 provider/label 读，结果每个分组的 provider 都是空串、被下面的过滤全丢掉 ✗，
+					// 手机上就是"模型没有选项" ✗。所以两种都认，最后兜一个分组序号。
+					provider: String(group?.provider ?? group?.id ?? group?.providerId ?? ('g' + index)),
+					label: String(group?.name ?? group?.label ?? group?.provider ?? group?.id ?? ('分组 ' + (index + 1))),
 					models: (Array.isArray(group?.models) ? group.models : []).map((model) => ({
 						id: String(model?.id ?? ''),
-						label: String(model?.label ?? model?.id ?? ''),
+						label: String(model?.name ?? model?.label ?? model?.id ?? ''),
 					})).filter((model) => model.id !== ''),
 				}))
-				.filter((group) => group.provider !== '' && group.models.length > 0)
+				.filter((group) => group.models.length > 0)
 		} catch { /* 拿不到就只剩"用默认"，不影响新建 ✓ */ }
 		renderModels()
 	}
