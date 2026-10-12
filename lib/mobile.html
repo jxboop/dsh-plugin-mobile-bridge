@@ -417,9 +417,18 @@
 	#viewer.on { display: flex; }
 	#viewer .bar { display: flex; align-items: center; gap: 10px; color: #eaf2ff; font-size: 13px; flex: none; }
 	#viewer .bar .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	#viewer .stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+	#viewer .stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 6px; }
 	#viewer img, #viewer video { max-width: 100%; max-height: 100%; border-radius: 10px; }
+	/* 2.11.0 ★8「并排对比（挑封面）」：两张各占一半 ✓ —— 钉住那张不动、另一张随手指翻 ✓。
+	   ⚠️ 对比时**必须各给一个最小宽度** ✗：不然 flex 会把窄图挤成一条线 ✓、看不出差别 ✓。 */
+	#viewer .pane { flex: 1 1 0; min-width: 0; max-width: 50%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; }
+	#viewer .pane img, #viewer .pane video { min-width: 0; }
+	#viewer .panelabel { flex: none; font-size: 11px; color: #9fb3d0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	#viewer .tip { flex: none; text-align: center; color: #9fb3d0; font-size: 12px; padding-top: 8px; }
+	/* 看图的底栏：上一张 / 计数 / 下一张 + 钉住 + 选这张 ✓（拇指够得到 ✓）。 */
+	#viewer .nav { flex: none; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 0 4px; flex-wrap: wrap; }
+	#viewer .nav .count { color: #9fb3d0; font-size: 12px; min-width: 56px; text-align: center; }
+	#viewer .nav button.on { background: var(--accent); color: #04213d; border-color: var(--accent); }
 
 	/* 思考与输出分开：思考是回答之外的一块可折叠区域，不再混在气泡里当斜体段落 */
 	.think {
@@ -862,7 +871,16 @@
 		<a class="iconbtn" id="viewerOpen" target="_blank" rel="noreferrer">新窗口打开</a>
 	</div>
 	<div class="stage" id="viewerStage"></div>
-	<div class="tip">长按图片（或视频）→「存储到照片」就能存进手机相册</div>
+	<!-- 2.11.0 ★8：左右滑（或按这两个键）在**这条消息里的一组图**之间翻 ✓；
+	     「📌 钉住」之后钉住的那张留在左边、另一张随手指翻 = 并排对比 ✓；「选这张」把路径写进输入框 ✓。 -->
+	<div class="nav">
+		<button class="iconbtn" id="viewerPrev" title="上一张">‹</button>
+		<span class="count" id="viewerCount"></span>
+		<button class="iconbtn" id="viewerNext" title="下一张">›</button>
+		<button class="iconbtn" id="viewerPin" title="钉住这张，和别的并排比">📌 钉住</button>
+		<button class="iconbtn" id="viewerPick" title="把这张的文件路径写进输入框，好告诉 agent 用哪张">选这张</button>
+	</div>
+	<div class="tip" id="viewerTip">左右滑看同组的下一张 · 长按图片（或视频）→「存储到照片」就能存进相册</div>
 </div>
 
 <!-- 进插件时的加载页：HTML 一渲染就显示，JS 再按真实进度推进（连上电脑 / 会话列表 /
@@ -981,6 +999,10 @@
 				<button class="iconbtn" id="checkRefresh">重新检查</button>
 			</div>
 			<div class="scroll pad" id="checkBody"></div>
+			<!-- 2.11.0 ★11：弱网模式的开关放在这儿 ✓（不往工具键那一排再加键 ✗ —— 用户已经嫌挤过 ✓）。 -->
+			<label class="field" style="margin:6px 12px 2px"><input type="checkbox" id="weakOn"> <b>弱网模式</b>：文字先发，图片/文件留着等网络好了自动补发</label>
+			<div class="hint" style="margin:0 12px 12px">上行很慢（隧道/地铁/信号差）时开它 ✓：文字立刻到，附件**单独补发一条**（agent 晚一轮看到 ✓）。
+				附件太大这台手机存不下时会自动改成"一起发" ✓（绝不悄悄丢掉图片 ✗）。</div>
 			<!-- 2.8.0 ★4「诊断包」：出问题时别只说"不 work" ✓ —— 一键拿一份**脱敏后**的日志包 ✓。
 			     写成普通 <a download>（和"导出 Markdown"同一套 ✓）：同源自动带 cookie ✓，不用额外代码 ✓。 -->
 			<div class="actions" style="flex:none;padding:8px 14px 4px">
@@ -2573,6 +2595,13 @@
 		swipe.decided = false
 		// 只有说明页 / 提问卡片能让滑动整个失效；工具抽屉（录音/生图/背景/权限）不再挡（1.9.0）。
 		if (takeoverOpen()) return
+		/*
+		 * ⚠️ **全屏看图器开着时也要让开** ✗（2.11.0 ★8 顺出来的）：
+		 * 看图器是全屏的 ✓、它自己认左右滑翻"同组的图" ✓ —— 不加这条守卫，
+		 * 在看图器里滑一下，**底下的页面也跟着换** ✓（用户看到的是"关掉图发现换页了" ✗）。
+		 */
+		const viewer = $('viewer')
+		if (viewer !== null && viewer.classList.contains('on')) return
 		if (swipeIgnored(event.target)) return
 		const touch = event.touches?.[0]
 		if (touch === undefined) return
@@ -3312,7 +3341,8 @@
 		const shot = event.target.closest && event.target.closest('img.shot, video.shot')
 		if (shot) {
 			const full = shot.getAttribute('data-full') ?? shot.getAttribute('src')
-			if (full) { openViewer(full, shot.getAttribute('alt') ?? '素材'); return }
+			// ★8：把**点中的那张节点**也传进去 ✓ —— 看图器要靠它认出"同一组图" ✓。
+			if (full) { openViewer(full, shot.getAttribute('alt') ?? '素材', shot); return }
 		}
 		const tool = event.target.closest('.tool')
 		if (!tool) return
@@ -4597,31 +4627,154 @@
 
 	/* ------------------------------------------------------- 看大图 / 存相册 */
 
+	/*
+	 * 2.11.0 ★8「图片对比 / 相册滑动」（池子原话：多张图并排对比 ✓、大图左右滑 ✓）：
+	 *
+	 * 设计取舍（**不新建面板** ✗）：全部长在现有的全屏看图器上 ✓ ——
+	 *   · **一组图**的定义：点的那张所在的气泡/交付块里的所有图 ✓（没有第二张就退回整个对话，最多 40 张 ✓）；
+	 *   · **左右滑** = 在同组之间翻 ✓（`‹ ›` 两个键给不想滑的人 / 桌面 ✓，计数 `3 / 7` 让人知道有多少张 ✓）；
+	 *   · **并排对比（挑封面）** = 「📌 钉住这张」✓ —— 钉住的那张留在左边、另一张随手指翻 ✓
+	 *     （比"把 7 张缩成 7 条线"有用得多 ✓：挑封面要的是"这张 vs 那张" ✓）；
+	 *   · **「选这张」** = 把**文件路径**写进输入框 ✓（`data-path` 里就是电脑上的真路径 ✓）——
+	 *     用户真正要做的是"告诉 agent 用哪张" ✓，发一条 URL 它多半用不上 ✗。
+	 *
+	 * ⚠️ 看图器是全屏的 ✓ —— 里面的左右滑**绝不能同时翻页** ✗（见 `swipeStart` 里那条守卫 ✓）。
+	 */
+	const VIEWER_SET_MAX = 40
+	const viewerSet = { items: [], at: 0, pinned: -1 }
+
+	/** 从点中的那张往上找"同一组"：所在的气泡/交付块 ✓；只有一张就退回整个对话（有上限 ✓）。 */
+	function viewerGroupOf(node) {
+		const shotSelector = 'img.shot[data-full], video.shot'
+		const read = (root) => Array.from(root.querySelectorAll(shotSelector)).map((element) => ({
+			src: element.getAttribute('data-full') ?? element.getAttribute('src') ?? '',
+			name: element.getAttribute('alt') ?? '素材',
+			path: element.getAttribute('data-path') ?? '',
+			video: element.tagName === 'VIDEO',
+		})).filter((entry) => entry.src !== '')
+		const container = node.closest === undefined ? null : node.closest('.bubble, .deliver, .note, .shotwrap')
+		const near = container === null ? [] : read(container)
+		if (near.length >= 2) return near
+		return read(log).slice(0, VIEWER_SET_MAX)
+	}
+
+	/** 把"这一张"画到格子里（图/视频各走各的 ✓）。 */
+	function viewerPane(entry, label) {
+		const pane = document.createElement('div')
+		pane.className = 'pane'
+		if (label !== '') {
+			const tag = document.createElement('div')
+			tag.className = 'panelabel'
+			tag.textContent = label
+			pane.appendChild(tag)
+		}
+		const node = document.createElement(entry.video === true ? 'video' : 'img')
+		node.src = entry.src
+		if (entry.video === true) { node.controls = true; node.playsInline = true; node.setAttribute('playsinline', '') }
+		else node.alt = entry.name
+		pane.appendChild(node)
+		return pane
+	}
+
+	/** 按当前状态重画看图器：钉住了就并排两张 ✓，否则一张 ✓。 */
+	function renderViewer() {
+		const stage = $('viewerStage')
+		const current = viewerSet.items[viewerSet.at]
+		if (current === undefined) { closeViewer(); return }
+		stage.textContent = ''
+		const pinned = viewerSet.pinned >= 0 ? viewerSet.items[viewerSet.pinned] : null
+		if (pinned !== null && viewerSet.pinned !== viewerSet.at) {
+			stage.appendChild(viewerPane(pinned, '📌 钉住的'))
+			stage.appendChild(viewerPane(current, `${viewerSet.at + 1} / ${viewerSet.items.length}`))
+		} else {
+			stage.appendChild(viewerPane(current, ''))
+		}
+		$('viewerName').textContent = current.name
+		$('viewerOpen').href = current.src
+		$('viewerCount').textContent = viewerSet.items.length > 1 ? `${viewerSet.at + 1} / ${viewerSet.items.length}` : '就一张'
+		$('viewerPrev').disabled = viewerSet.items.length < 2
+		$('viewerNext').disabled = viewerSet.items.length < 2
+		const pin = $('viewerPin')
+		pin.classList.toggle('on', viewerSet.pinned === viewerSet.at)
+		pin.textContent = viewerSet.pinned === viewerSet.at ? '📌 已钉住' : '📌 钉住'
+		$('viewerTip').textContent = pinned !== null && viewerSet.pinned !== viewerSet.at
+			? '📌 钉住的那张在左边不动 —— 左右滑 / 按 ‹ › 换右边那张，挑好了按「选这张」'
+			: '左右滑看同组的下一张 · 长按图片（或视频）→「存储到照片」就能存进相册'
+	}
+
+	function viewerStep(delta) {
+		if (viewerSet.items.length < 2) return
+		viewerSet.at = (viewerSet.at + delta + viewerSet.items.length) % viewerSet.items.length
+		renderViewer()
+	}
+
 	/**
 	 * 全屏看图。图用**真 URL**（`api/media` 或 `api/file`），不是 data: —— iOS 对
 	 * `data:` 图片的长按菜单里没有"存储到照片"，用户就没法把素材存进相册。
+	 * ⚠️ 看图器一打开就**挡住页面级左右翻页** ✓（见 `swipeStart` 的守卫 ✓）——
+	 * 不然在看图器里滑一下，底下的页面也跟着换 ✓（★8 之前没暴露，因为看图器里本来不能滑 ✓）。
 	 */
-	function openViewer(src, name) {
-		const viewer = $('viewer')
-		const stage = $('viewerStage')
-		stage.textContent = ''
-		const node = /\.(mp4|mov|webm|m4v)(\?|$)/i.test(src) || src.includes('video')
-			? document.createElement('video')
-			: document.createElement('img')
-		node.src = src
-		if (node.tagName === 'VIDEO') { node.controls = true; node.playsInline = true; node.setAttribute('playsinline', '') }
-		node.alt = name
-		stage.appendChild(node)
-		$('viewerName').textContent = name
-		$('viewerOpen').href = src
-		viewer.classList.add('on')
+	function openViewer(src, name, node) {
+		const group = node === undefined || node === null ? [] : viewerGroupOf(node)
+		viewerSet.items = group.length > 0 ? group : [{ src, name, path: '', video: /\.(mp4|mov|webm|m4v)(\?|$)/i.test(src) }]
+		viewerSet.pinned = -1
+		const at = viewerSet.items.findIndex((entry) => entry.src === src)
+		viewerSet.at = at < 0 ? 0 : at
+		renderViewer()
+		$('viewer').classList.add('on')
 	}
 	function closeViewer() {
 		$('viewerStage').textContent = ''
 		$('viewer').classList.remove('on')
+		viewerSet.items = []
+		viewerSet.at = 0
+		viewerSet.pinned = -1
 	}
 	$('viewerClose').addEventListener('click', closeViewer)
-	$('viewer').addEventListener('click', (event) => { if (event.target === $('viewer')) closeViewer() })
+	$('viewer').addEventListener('click', (event) => { if (event.target === $('viewer') || event.target === $('viewerStage')) closeViewer() })
+	$('viewerPrev').addEventListener('click', () => { viewerStep(-1) })
+	$('viewerNext').addEventListener('click', () => { viewerStep(1) })
+	$('viewerPin').addEventListener('click', () => {
+		viewerSet.pinned = viewerSet.pinned === viewerSet.at ? -1 : viewerSet.at
+		renderViewer()
+		toast(viewerSet.pinned === viewerSet.at ? '钉住了 ✓ 左右滑换右边那张，比着挑 ✓' : '取消钉住 ✓', 2600)
+	})
+	$('viewerPick').addEventListener('click', () => {
+		const current = viewerSet.items[viewerSet.at]
+		if (current === undefined) return
+		// 优先用**电脑上的真路径** ✓（`data-path` ✓）—— agent 拿到 URL 多半用不上 ✗。
+		const what = current.path !== '' ? current.path : current.src
+		const line = (current.path !== '' ? '用这张图：' : '用这张图（这个链接）：') + what
+		const existing = String(text.value ?? '')
+		text.value = existing.trim() === '' ? line : existing.replace(/\s*$/, '') + '\n' + line
+		growComposer()
+		closeViewer()
+		toast(current.path !== '' ? '路径已写进输入框 ✓（按发送就告诉它用哪张）' : '这张没有电脑路径，链接已写进输入框 ✓', 3600)
+		try { text.focus() } catch { /* 无所谓 */ }
+	})
+	// 看图器里自己认左右滑 ✓（40px 就算翻 ✓，比页面翻页的 60px 更灵敏 —— 看图时手指更随意 ✓）。
+	let viewerSwipe = 0
+	$('viewer').addEventListener('touchstart', (event) => {
+		const touch = event.touches?.[0]
+		viewerSwipe = touch === undefined ? 0 : touch.clientX
+	}, { passive: true })
+	$('viewer').addEventListener('touchend', (event) => {
+		if (viewerSwipe === 0) return
+		const touch = event.changedTouches?.[0] ?? event.touches?.[0]
+		const start = viewerSwipe
+		viewerSwipe = 0
+		if (touch === undefined) return
+		const dx = touch.clientX - start
+		if (Math.abs(dx) < 40) return
+		viewerStep(dx < 0 ? 1 : -1)
+	}, { passive: true })
+	// 桌面/外接键盘也能翻 ✓（只在看图器开着时接管 ✓）。
+	document.addEventListener('keydown', (event) => {
+		if ($('viewer').classList.contains('on') !== true) return
+		if (event.key === 'ArrowLeft') { event.preventDefault(); viewerStep(-1) }
+		else if (event.key === 'ArrowRight') { event.preventDefault(); viewerStep(1) }
+		else if (event.key === 'Escape') closeViewer()
+	})
 
 	/* -------------------------------------------------------------- 任务 */
 
@@ -5018,6 +5171,7 @@
 
 	function send() {
 		const body = text.value.trim()
+		const sendStartedAt = Date.now()
 		if (body === '' && state.images.length === 0 && state.files.length === 0) {
 			// 以前这里**静默 return**：附件没挂上（读图失败/挑选器没返回文件）时，用户按「发送」
 			// 什么都不会发生 —— 也就是用户嘴里的"发不出去"，而且屏幕上一点解释都没有。
@@ -5059,52 +5213,53 @@
 		}
 		const files = state.files.concat(overflow)
 		if (overflow.length > 0) flash('图片比较大，超出的会切片上传（慢一点，但不会再失败）。', 4000)
+		/*
+		 * 2.11.0 ★11「弱网模式」：**文字先走、附件留下** ✓ ——
+		 * 慢上行下最难受的是"图把文字堵在后面"（一条要等半分钟 ✓，用户等的其实是字 ✓）。
+		 *
+		 * 四条取舍（都写在这儿，别让后面的人猜 ✓）：
+		 *   · 只在这个模式**开着**、且**确实有附件**时才分流 ✓（没附件 → 一点区别都没有 ✓）；
+		 *   · 附件**进离线发件箱** ✓（那条路已经有 requestId 幂等 + 自动补发 + 20 秒重试 ✓，
+		 *     绝不另起一套 ✗）—— 所以它在有网时会**单独发一条**（agent 晚一轮看到 ✓），
+		 *     这一点必须跟用户说清 ✗（不说就会以为丢了 ✓）；
+		 *   · ⚠️ 附件要落到 localStorage ✗ —— **存不下就绝不"留着"** ✓：退回"现在一起发" ✓
+		 *     （宁可慢，也不能在刷新后把用户的图悄悄弄丢 ✗）；
+		 *   · 内联图片和文件走同一条路 ✓（两者都是 `{name, mediaType, data}` ✓）——
+		 *     弱网模式下**都**延后 ✓（用户原话就是"只发文字、图片延后" ✓）。
+		 */
+		const attachments = images.concat(files)
+		const weakDeferred = weakNetOn() === true && attachments.length > 0 && weakCanStore(attachments)
+		/*
+		 * ⚠️ 这两句**不能在发送前 flash** ✗：`send()` 马上会写「📡 正在发送…」✓，
+		 * 把那句话盖掉 ✓（我就被这条绊了一次：用户看不到"附件留着了"✓）。
+		 * 所以攒下来，**等这条发完再弹** ✓。
+		 */
+		let sendNote = ''
+		if (weakNetOn() === true && attachments.length > 0 && weakDeferred !== true) {
+			sendNote = '弱网模式想把这些附件留到有网再发，但**这台手机存不下**（空间不够/无痕模式）—— 这次就一起发了（慢一点）✓'
+		}
+		if (weakDeferred === true) {
+			outboxAddFiles({ clientId: 'w' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10), sessionId: target, files: attachments })
+			sendNote = `弱网模式：文字先发 ✓；${attachments.length} 个附件留着了，网络好了会**单独再发一条**（顶上那条横幅点一下可以立刻试 ✓）`
+		}
 		sendBtn.disabled = true
 		// 附件先分片传上去（大文件一整块发会被隧道入口掐断），拿到路径再发任务。
 		//
 		// 2026-10-09「传图太慢、要能多张一起发」：附件之间也并行（2 路），而每个附件内部
 		// 已经 3 片并发 —— 合计最多 6 个请求在飞，手机上行到这就吃满了。进度按**片**汇总成
 		// 一个数字，用户看到的是"5/12 片"稳步走，而不是每张图各自跳。
-		const prepared = files.length === 0
-			? Promise.resolve([])
-			: (async () => {
-				const refs = []
-				const totalChunks = files.reduce((sum, file) => sum + Math.max(1, Math.ceil(file.data.length / CHUNK_BYTES)), 0)
-				const label = files.length > 1 ? `${files.length} 个附件` : files[0].name
-				let doneChunks = 0
-				let shownAt = 0
-				const tick = () => {
-					doneChunks += 1
-					// 片很小、完成很密：限流到 ~6 次/秒，别让 flash 变成抖动源。
-					const now = Date.now()
-					if (now - shownAt < 160 && doneChunks < totalChunks) return
-					shownAt = now
-					flash(`正在上传 ${label} … ${doneChunks}/${totalChunks} 片`, 0)
-				}
-				const uploadOne = async (index) => {
-					const file = files[index]
-					try {
-						refs[index] = await uploadInChunks(file, file.name, index + 1, files.length, tick)
-					} catch (error) {
-						error.upload = true
-						throw error
-					}
-				}
-				let nextFile = 0
-				const worker = async () => {
-					while (nextFile < files.length) {
-						const index = nextFile
-						nextFile += 1
-						await uploadOne(index)
-					}
-				}
-				await Promise.all(Array.from({ length: Math.min(2, files.length) }, worker))
-				return refs.filter(Boolean)
-			})()
+		//
+		// 2.11.0 ★11：这段抽成了 `prepareRefs()` ✓ —— 弱网模式把附件**延后**发时，
+		// 补发那条路（离线发件箱）也得会传附件 ✓，不能只有 send() 会 ✗。
+		const prepared = weakDeferred === true ? Promise.resolve([]) : prepareRefs(files)
 		prepared.then((fileRefs) => {
 			// 一次发送用一个固定 requestId：隧道抖一下自动重试时复用它，
 			// 宿主对同一个 id 是幂等的 —— 重试不会变成两条消息。
 			const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+			// ★11：弱网模式下**一个附件都不带** ✓（都留在箱子里了 ✓）—— 这条就是"纯文字"那条 ✓。
+			const inlineNow = weakDeferred === true ? [] : images
+			// ★11：**"正在发送"要看得见** ✓ —— 慢网下这几秒是用户最容易以为"没反应"的时候 ✓。
+			flash('📡 正在发送…', 0)
 			const post = (inlineImages, refs) => api('api/prompt', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -5121,7 +5276,7 @@
 				}
 				throw error
 			})
-			const attempt = (tries) => post(images, fileRefs).catch((error) => {
+			const attempt = (tries) => post(inlineNow, fileRefs).catch((error) => {
 				// 网络层失败（隧道一抖就是 TypeError: Load failed）自动再来一次 ——
 				// 用户看到的"发不出去"，其实往往只差再试一遍。
 				const transient = error === null || error === undefined || typeof error.status !== 'number'
@@ -5136,20 +5291,42 @@
 				 * （用户报的"发图发不出去"就是这么来的：服务端一行日志都没有）。
 				 * 别再让用户手点第二次 —— 把图片改成切片上传（384 KB/片）再发一次。
 				 */
-				if (images.length === 0) throw error
-				const total = images.reduce((sum, image) => sum + image.data.length, 0)
-				reportToBridge('send-inline-failed', `${String(error?.message ?? error)}；改走切片上传（内联 ${images.length} 张 / ${total} 字节）`, total)
+				if (inlineNow.length === 0) throw error
+				const total = inlineNow.reduce((sum, image) => sum + image.data.length, 0)
+				reportToBridge('send-inline-failed', `${String(error?.message ?? error)}；改走切片上传（内联 ${inlineNow.length} 张 / ${total} 字节）`, total)
 				flash('这张图内联发送被网络掐断了，正在改用切片上传重发…', 7000)
 				const again = []
-				for (let index = 0; index < images.length; index += 1) {
+				for (let index = 0; index < inlineNow.length; index += 1) {
 					again.push(await uploadInChunks(
-						{ name: images[index].name || 'image', mediaType: images[index].mediaType, data: images[index].data },
-						images[index].name || 'image', index + 1, images.length))
+						{ name: inlineNow[index].name || 'image', mediaType: inlineNow[index].mediaType, data: inlineNow[index].data },
+						inlineNow[index].name || 'image', index + 1, inlineNow.length))
 				}
 				return post([], fileRefs.concat(again))
 			})
 		}).then((result) => {
+			clearFlashIf('📡 正在发送…')
+			// ★11：`sendNote`（弱网模式留下的附件 / 存不下改一起发）**现在**才弹 ✓ ——
+			// 发送前弹会被「正在发送…」盖掉 ✓。
+			if (sendNote !== '') flash(sendNote, 8000)
 			text.value = ''
+			/*
+			 * ★11：这一条**慢**（>6 秒）而且没开弱网模式 → 主动问一次 ✓
+			 * （用户不必知道"弱网模式"这个词，他只知道"发一条要等半天" ✓）。
+			 * ⚠️ **一个会话只问一次** ✗（每次都弹 = 骚扰 ✓）。
+			 */
+			const elapsed = Date.now() - sendStartedAt
+			if (elapsed > 6000 && weakNetOn() !== true && slowNetAsked !== true) {
+				slowNetAsked = true
+				flash(`这一条发了 ${Math.round(elapsed / 1000)} 秒 —— 网有点慢？\n开「弱网模式」以后：文字立刻到，图片留着慢慢补 ✓`, 12000, {
+					label: '开弱网模式',
+					run: () => {
+						writeLocal('dshm.weaknet', '1')
+						syncWeakToggle()
+						toast('弱网模式开了 ✓ 下次发图：文字先走 ✓', 3600)
+					},
+				})
+			}
+			growComposer()
 			growComposer()
 			// 预填的那句话已经发出去了：下次再开生图面板就说清"这次会直接发"。
 			if (gen.sent === true) $('genFirst').textContent = '描述写好点「生成」就发出去（会话空着会先把话放进输入框让你过目）。'
@@ -5184,7 +5361,65 @@
 			// 2.8.0 ★4：服务端明确拒绝（400/403/413）也给「重试」✓ —— 但话要说清是**没发出去** ✓。
 			flash('发送失败：' + error.message, 0, { label: '重试', run: () => send() })
 		})
-			.finally(() => { sendBtn.disabled = false })
+			.finally(() => {
+				sendBtn.disabled = false
+				// ★11：不管成没成，"正在发送…"这句不能留在屏幕上 ✓（成功那条路会换成别的提示 ✓）。
+				clearFlashIf('📡 正在发送…')
+			})
+	}
+
+	/**
+	 * 2.11.0 ★11：只把**自己刚写的那句**提示收掉 ✓ —— 不能无脑 `hide(banner)` ✗
+	 * （那会把别人刚弹的错误提示一起吞掉 ✓）。
+	 */
+	function clearFlashIf(message) {		if (banner === null || banner === undefined) return
+		if (String(banner.textContent ?? '').trim() !== String(message).trim()) return
+		if (flashAction !== null) return
+		if (flashTimer !== 0) { clearTimeout(flashTimer); flashTimer = 0 }
+		hide(banner)
+	}
+
+	/**
+	 * 2.11.0 ★11：把附件**分片传上去**，拿到路径（从 `send()` 里抽出来的 ✓）。
+	 *
+	 * 抽出来的理由：弱网模式把附件**延后**发时，补发那条路（离线发件箱的 `outboxFlush` ✓）
+	 * 也得会传附件 ✓ —— 不然"留着的那张图"永远发不出去 ✓。
+	 * 进度按**片**汇总（不是每张图各自跳 ✓），限流到 ~6 次/秒（别让 flash 变成抖动源 ✓）。
+	 */
+	async function prepareRefs(files) {
+		if (files.length === 0) return []
+		const refs = []
+		const totalChunks = files.reduce((sum, file) => sum + Math.max(1, Math.ceil(file.data.length / CHUNK_BYTES)), 0)
+		const label = files.length > 1 ? `${files.length} 个附件` : files[0].name
+		let doneChunks = 0
+		let shownAt = 0
+		const tick = () => {
+			doneChunks += 1
+			const now = Date.now()
+			if (now - shownAt < 160 && doneChunks < totalChunks) return
+			shownAt = now
+			flash(`正在上传 ${label} … ${doneChunks}/${totalChunks} 片`, 0)
+		}
+		const uploadOne = async (index) => {
+			const file = files[index]
+			try {
+				refs[index] = await uploadInChunks(file, file.name, index + 1, files.length, tick)
+			} catch (error) {
+				error.upload = true
+				throw error
+			}
+		}
+		// 附件之间并行 2 路；每个附件内部 3 片并发 —— 合计最多 6 个请求在飞（手机上行到这就吃满了 ✓）。
+		let nextFile = 0
+		const worker = async () => {
+			while (nextFile < files.length) {
+				const index = nextFile
+				nextFile += 1
+				await uploadOne(index)
+			}
+		}
+		await Promise.all(Array.from({ length: Math.min(2, files.length) }, worker))
+		return refs.filter(Boolean)
 	}
 
 	/**
@@ -6628,7 +6863,7 @@
 	}
 
 	function outboxSave() {
-		try { writeLocal('dshm.outbox', outbox.items.length === 0 ? '' : JSON.stringify(outbox.items)) } catch { /* 存不下就算了 ✓ */ }
+		try { return writeLocal('dshm.outbox', outbox.items.length === 0 ? '' : JSON.stringify(outbox.items)) === true } catch { return false }
 	}
 
 	function outboxLoad() {
@@ -6644,17 +6879,47 @@
 		if (strip === null) return
 		const count = outbox.items.length
 		strip.style.display = count === 0 ? 'none' : 'block'
-		if (count > 0) strip.textContent = `📮 离线发件箱 ${count} 条待发 —— 点这里立刻试一次（有网会自动发 ✓）`
+		if (count === 0) return
+		// 2.11.0 ★11：箱子里现在可能装的是**弱网模式留下的附件** ✓ —— 说清"有几个附件" ✓，
+		// 不然用户看到"待发 1 条"会以为是文字没发出去 ✓。
+		const files = outbox.items.reduce((sum, item) => sum + (Array.isArray(item.files) ? item.files.length : 0), 0)
+		strip.textContent = files > 0
+			? `📮 弱网模式：${files} 个附件留着没发 —— 有网会自动补发 ✓（点这里立刻试一次）`
+			: `📮 离线发件箱 ${count} 条待发 —— 点这里立刻试一次（有网会自动发 ✓）`
 	}
 
 	function outboxAdd(entry) {
 		// 同一个 requestId 只留一条 ✓（重试路径可能进来两次 ✓）。
-		if (outbox.items.some((item) => item.clientId === entry.clientId)) return
+		if (outbox.items.some((item) => item.clientId === entry.clientId)) return true
 		outbox.items.push({ at: Date.now(), ...entry })
 		// 上限：箱子是"没网时的救急"，不是仓库 ✗（最多 20 条，超了丢最旧的 ✓）。
 		if (outbox.items.length > 20) outbox.items = outbox.items.slice(-20)
-		outboxSave()
+		const ok = outboxSave()
 		outboxRender()
+		return ok
+	}
+
+	/**
+	 * 2.11.0 ★11：弱网模式**留下的附件**怎么算存得下 ✓。
+	 *
+	 * ⚠️ 附件是 data URL ✓（一张几 MB 很正常 ✗）—— localStorage 一共只有 ~5MB ✓，
+	 * 存不下时**绝不能"留着"** ✗：刷新之后它就没影了，用户还以为会补发 ✓。
+	 * 所以：先按总量卡一道（1.2MB ✓，给别的键留地方 ✓），写入失败也算不成功 ✓
+	 * （`outboxAdd` 现在会回真假 ✓）。
+	 */
+	function weakCanStore(files) {
+		const bytes = files.reduce((sum, file) => sum + String(file?.data ?? '').length, 0)
+		return bytes > 0 && bytes <= 1.2 * 1024 * 1024
+	}
+
+	/** 弱网模式：附件进箱子等着 ✓（存不下就返回 false，调用方会退回"一起发"✓）。 */
+	function outboxAddFiles({ clientId, sessionId, files }) {
+		const item = { clientId, sessionId, text: '', images: [], fileRefs: [], files }
+		if (outboxAdd(item) === true) return true
+		// 写不进去（配额满/无痕）→ 把刚加的那条撤掉 ✓，别让箱子里挂一条"刷新就没"的假条目 ✗。
+		outbox.items = outbox.items.filter((entry) => entry.clientId !== clientId)
+		outboxRender()
+		return false
 	}
 
 	function outboxRemove(clientId) {
@@ -6671,17 +6936,20 @@
 		try {
 			for (const item of [...outbox.items]) {
 				try {
+					// ★11：箱子里可能装的是**附件**（弱网模式留下的 ✓）→ 先把它们传上去拿路径 ✓。
+					const itemFiles = Array.isArray(item.files) ? item.files : []
+					const refs = itemFiles.length > 0 ? await prepareRefs(itemFiles) : (item.fileRefs ?? [])
 					await api('api/prompt', {
 						method: 'POST',
 						headers: { 'content-type': 'application/json' },
 						body: JSON.stringify({
-							sessionId: item.sessionId, text: item.text,
-							images: item.images ?? [], fileRefs: item.fileRefs ?? [],
+							sessionId: item.sessionId, text: item.text ?? '',
+							images: item.images ?? [], fileRefs: refs,
 							requestId: item.clientId,
 						}),
 					})
 					outboxRemove(item.clientId)
-					toast('离线发件箱：发出 1 条 ✓', 2200)
+					toast(itemFiles.length > 0 ? `弱网模式：${itemFiles.length} 个附件补发成功 ✓` : '离线发件箱：发出 1 条 ✓', 2400)
 				} catch (error) {
 					if (isOfflineError(error)) break           // 还是没网 → 停手，等下一次 ✓
 					outboxRemove(item.clientId)                // 服务端明确拒绝 → 别一直卡着箱子 ✗
@@ -6701,6 +6969,37 @@
 	setInterval(() => { if (outbox.items.length > 0) void outboxFlush() }, 20000)
 	outboxLoad()
 	outboxRender()
+
+	/* --------- 弱网模式（2.11.0 ★11）--------- */
+	/**
+	 * 弱网模式开着没有？ ✓
+	 * 与"离线发件箱"的分工：离线箱管**没网** ✓（整条消息都发不出去 ✓）；弱网模式管**网很慢** ✓
+	 * （文字能过、附件过不去 ✓）。两者共用同一个箱子 ✓（同一套幂等 + 自动补发 ✓）。
+	 */
+	function weakNetOn() { return readLocal('dshm.weaknet') === '1' }
+
+	/** ★11：慢发送的"要不要开弱网"只问**一次** ✓（每次弹 = 骚扰 ✓）。 */
+	let slowNetAsked = false
+
+	function syncWeakToggle() {
+		const box = $('weakOn')
+		if (box !== null) box.checked = weakNetOn()
+	}
+
+	const weakBox = $('weakOn')
+	if (weakBox !== null) {
+		weakBox.addEventListener('change', () => {
+			if (writeLocal('dshm.weaknet', weakBox.checked === true ? '1' : '0') !== true) {
+				toast('这台手机存不下设置（无痕模式？）—— 这一项这次没记住 ✓', 4200)
+				syncWeakToggle()
+				return
+			}
+			toast(weakBox.checked === true
+				? '弱网模式开了 ✓ 以后文字先发、图片留着慢慢补 ✓'
+				: '弱网模式关了 ✓ 附件还是跟文字一起发 ✓', 3200)
+		})
+	}
+	syncWeakToggle()
 
 	/* --------- 一键自检（2.8.0 ★1）--------- */
 	/*
@@ -6917,7 +7216,7 @@
 	const BACKUP_MARK = 'dsh-plugin-mobile-bridge/phone-backup'
 	const BACKUP_VERSION = 1
 	/** 白名单**同时**是导出与导入的边界 ✓（两个方向用同一份，才不会有"导得出、导不回"✗）。 */
-	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong']
+	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong', 'dshm.weaknet']
 	const BACKUP_MAX_BYTES = 512 * 1024
 	const BACKUP_MAX_VALUE = 200 * 1024
 
@@ -7035,6 +7334,7 @@
 		 */
 		historyLoad()
 		renderKeyboardSettings()
+		syncWeakToggle()
 		scheduleRender()
 		return { ok: true, restored, skipped, failed, error: '' }
 	}

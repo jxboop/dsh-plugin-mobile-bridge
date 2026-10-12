@@ -83,8 +83,21 @@ const PAGE_URL = `http://127.0.0.1:3081${SECRET_PREFIX}`
 
 /** jsdom refuses real navigation; that refusal is how we observe a reload. */
 const jsdomErrors = []
+/**
+ * 页面自己的 `console` 输出（2026-10-12 加）✓。
+ *
+ * 为什么必须收：页面里的渲染是**包了 try/catch** 的 ✓（2.10.1 那条修复 ✓）——
+ * 好处是"一条消息画不出来"不会把整页弄死 ✓，坏处是**它从此可以静默地不再更新** ✗✗：
+ * `render()` 抛一次 → 屏幕上什么都不变 → 用户看到的是"消息不出现了" ✓，
+ * 而**所有测试断言照样绿** ✓（因为 DOM 只是没变，不是变错 ✗）。
+ * 真事：写 ★8 时就撞上了 —— 事件铺不上屏、log 冻在 643 个字符，查了三轮才想到看 console ✓。
+ * 所以把页面 console 收下来 ✓，并在收尾断言"整轮没有意外报错" ✓。
+ */
+const consoleLogs = []
 const virtualConsole = new VirtualConsole()
 virtualConsole.on('jsdomError', (error) => { jsdomErrors.push(String(error?.message ?? error)) })
+virtualConsole.on('error', (...args) => { consoleLogs.push(args.map((value) => String(value?.message ?? value)).join(' ')) })
+virtualConsole.on('warn', (...args) => { consoleLogs.push('warn: ' + args.map((value) => String(value?.message ?? value)).join(' ')) })
 
 const results = []
 const check = (name, ok, detail = '') => {
@@ -191,6 +204,8 @@ const xhrRequests = []
 let promptFailTimes = 0
 /** 让**下一次** /api/prompt 回一个带状态码的错（2.8.0 ★4 的「重试」按钮要这种"服务端明确拒绝"✓）。 */
 let promptFailStatus = 0
+/** 让**下一次** /api/prompt 拖一会儿才回（2.11.0 ★11：「正在发送…」得看得见 ✓）。 */
+let promptDelayMs = 0
 /** 手机上报给桥的客户端日志（`POST /api/clientlog`）。 */
 const clientLogs = []
 /** 上传接口的并发观测（峰值同时在飞的片数）。 */
@@ -553,6 +568,12 @@ async function stubFetch(input, options = {}) {
 		if (promptNeedsPin) return jsonResponse({ error: '需要重新输入 PIN 才能执行操作', needPin: true }, 403)
 		const body = JSON.parse(options.body ?? '{}')
 		promptIds.push(body.requestId)
+		// 2.11.0 ★11：故意拖一会儿 —— 「正在发送…」这条提示必须有东西可看 ✓。
+		if (promptDelayMs > 0) {
+			const hold = promptDelayMs
+			promptDelayMs = 0
+			await new Promise((resolve) => setTimeout(resolve, hold))
+		}
 		// 2.8.0 ★4：一次性让服务端**明确拒绝**（有状态码，不是网络层 ✓）——
 		// 「重试」这条路径要的正是这种错：网络层失败会进离线发件箱 ✓，走的是另一条路 ✓。
 		if (promptFailStatus !== 0) {
@@ -4329,6 +4350,132 @@ await wait(40)
 	await wait(80)
 }
 
+/* --- 2.11.0 ★8：图片对比 / 相册滑动 ----------------------------------------- */
+/*
+ * 用户要的（池子原话）：「多张图并排对比（挑封面 ✓）、大图左右滑动切换 ✓」。
+ * 设计落点：全屏看图器上长出来 ✓ —— 左右滑在同组图之间翻 ✓、「📌 钉住」= 钉住的那张留左边、
+ * 另一张随手指翻（并排对比 ✓）、「选这张」把**电脑上的真路径**写进输入框 ✓。
+ * ⚠️ 顺带钉一条**页面的坑**：看图器是全屏的 ✓，里面的滑动**绝不能同时翻页** ✗。
+ */
+{
+	await ensureAppVisible()
+	const say = (text, seq) => {
+		source.emit({ t: 'event', event: { type: 'assistant/message', seq, time: Date.now(), data: {
+			turn: 40, step: seq, message: { id: 'v' + seq, role: 'assistant', content: [{ type: 'text', text }] },
+		} } })
+	}
+	const swipeOn = async (node, from, to, steps = 4) => {
+		const x = from.x
+		const y = from.y
+		const fire = (type, px, py, changed = false) => {
+			const event = new window.Event(type, { bubbles: true, cancelable: true })
+			event.touches = changed ? [] : [{ clientX: px, clientY: py }]
+			event.changedTouches = changed ? [{ clientX: px, clientY: py }] : []
+			node.dispatchEvent(event)
+		}
+		fire('touchstart', x, y)
+		for (let i = 1; i <= steps; i += 1) fire('touchmove', x + (to.x - x) * (i / steps), y + (to.y - y) * (i / steps))
+		fire('touchend', to.x, to.y, true)
+		await wait(80)
+	}
+	/*
+	 * ⚠️ **教训（写在这儿，省得下次再查三轮 ✓）**：往长连接上 emit 合成消息，
+	 * 可能赶上"重连 → 重新拉一份快照 / 从会话缓存恢复 → 整个对话区重铺" ✓ 而被**整段冲掉** ✓
+	 * （现象：`#log` 冻在一个固定长度、"怎么发都不出现" ✗；当时**页面 console 里什么都没有** ✗
+	 *   —— 因为它是"没渲染"，不是"渲染报错" ✓）。
+	 * 所以：① 要验对话区的内容，尽量用**桩里就有的**数据 ✓；
+	 * ② 必须凭空造内容时，**自己往 DOM 里插** ✓（像下面这段一样 ✓）或者接受"它随时可能被重铺掉" ✗；
+	 * ③ 这类"静默不更新"的坑，靠 `consoleLogs`（本文件顶部 ✓）也抓不到 —— 只能靠"断言屏幕上真有"✓。
+	 */
+	const panes = () => Array.from($('viewerStage').querySelectorAll('.pane'))
+	const paneSrc = (index) => {
+		const media = panes()[index]?.querySelector('img, video')
+		return media === undefined ? '' : (media.getAttribute('src') ?? '')
+	}
+
+	/*
+	 * ⚠️ **这一段不回放合成消息** ✗（吃过亏 ✓，见下面 `liveSource` 那段注释 ✓）：
+	 * 直接在对话区里插一组图 ✓，点开它 ✓ —— 看大图那层是**独立浮层** ✓（自己的状态与 DOM ✓），
+	 * 与"重连后重铺对话区"无关 ✓。
+	 */
+	$('log').insertAdjacentHTML('beforeend',
+		'<div class="bubble" id="viewerFixture">看这三张：'
+		+ '<div class="shotwrap"><img class="shot" alt="cover-a.png" src="api/file?path=A.png" data-full="api/file?path=A.png" data-path="C:\\tmp\\cover-a.png"></div>'
+		+ '<div class="shotwrap"><img class="shot" alt="cover-b.png" src="api/file?path=B.png" data-full="api/file?path=B.png" data-path="C:\\tmp\\cover-b.png"></div>'
+		+ '<div class="shotwrap"><img class="shot" alt="cover-c.png" src="api/file?path=C.png" data-full="api/file?path=C.png" data-path="C:\\tmp\\cover-c.png"></div>'
+		+ '</div>')
+	const shots = Array.from($('log').querySelectorAll('#viewerFixture img.shot'))
+	check('（前置）插进对话区的那一组图认得出来（三张 ✓）', shots.length === 3, `shots=${shots.length}`)
+
+	// ① 点第二张打开 → 计数对、单张显示 ✓。
+
+	click(shots[1])
+	await wait(140)
+	check('点开大图：计数显示"2 / 3" ✓（知道自己在一组里的位置 ✓）',
+		$('viewer').classList.contains('on') && String($('viewerCount').textContent) === '2 / 3'
+		&& panes().length === 1,
+		`count="${$('viewerCount').textContent}" panes=${panes().length}`)
+
+	// ② ‹ › 翻页 ✓。
+	const firstSrc = paneSrc(0)
+	click($('viewerNext'))
+	await wait(120)
+	check('按 › 翻到下一张 ✓（计数跟着走 ✓、图真的换了 ✓）',
+		String($('viewerCount').textContent) === '3 / 3' && paneSrc(0) !== firstSrc && paneSrc(0) !== '',
+		`count="${$('viewerCount').textContent}" src=${paneSrc(0).slice(-18)}`)
+
+	// ③ 📌 钉住 → 并排两张 ✓；再翻，**左边不动、右边换** ✓（这就是"挑封面"的关键 ✓）。
+	click($('viewerPin'))
+	await wait(120)
+	check('「📌 钉住」当下只做标记 ✓ —— **不会把同一张并排复制成两份** ✗（那对"挑封面"毫无用处 ✓）',
+		panes().length === 1 && String($('viewerPin').textContent).includes('已钉住'),
+		`panes=${panes().length} pin="${String($('viewerPin').textContent).trim()}"`)
+	const pinnedSrc = paneSrc(0)
+	const rightSrc = paneSrc(1)
+	click($('viewerNext'))
+	await wait(120)
+	check('钉住之后再翻：**左边那张一动不动** ✓、右边换成下一张 ✓（并排对比才成立 ✓）',
+		panes().length === 2 && paneSrc(0) === pinnedSrc && paneSrc(1) !== rightSrc,
+		`left 一样=${paneSrc(0) === pinnedSrc} right 换了=${paneSrc(1) !== rightSrc}`)
+
+	// ④ 「选这张」→ 把**电脑上的真路径**写进输入框 ✓（用户真正要做的是"告诉 agent 用哪张" ✓）。
+	const pickedPath = 'C:\\tmp\\cover-' + String($('viewerName').textContent ?? '').trim().slice(-5)
+	$('text').value = ''
+	click($('viewerPick'))
+	await wait(120)
+	check('「选这张」→ 看图器关掉 ✓，输入框里出现**这张的电脑路径** ✓（不是没用的链接 ✓）',
+		$('viewer').classList.contains('on') === false
+		&& String($('text').value).includes('用这张图：') && String($('text').value).includes('C:\\tmp\\'),
+		`value="${String($('text').value).slice(0, 46)}"`)
+	$('text').value = ''
+
+	// ⑤ 看图器里左右滑：翻的是**同组图** ✓，**页面绝不许跟着翻** ✗（这条是 ★8 顺出来的坑 ✓）。
+	click(shots[0])
+	await wait(140)
+	const beforeCount = String($('viewerCount').textContent)
+	await swipeOn($('viewer'), { x: 300, y: 400 }, { x: 120, y: 400 })
+	check('在看图器里左滑：翻到下一张 ✓，而**底下的页面没换** ✗（全屏层不该把滑动漏给翻页 ✓）',
+		String($('viewerCount').textContent) !== beforeCount
+		&& window.getComputedStyle($('view-new')).display === 'none'
+		&& $('viewer').classList.contains('on'),
+		`count ${beforeCount} → ${$('viewerCount').textContent} new页=${window.getComputedStyle($('view-new')).display}`)
+	// 再看图器开着时，从**页面**上滑：也要被挡住 ✓（守卫在 swipeStart 里 ✓）。
+	await swipeOn($('log'), { x: 300, y: 400 }, { x: 120, y: 400 })
+	check('看图器开着时从页面上滑：仍然**不翻页** ✓（守卫在起手处就拦住 ✓）',
+		window.getComputedStyle($('view-new')).display === 'none' && $('viewer').classList.contains('on'),
+		`new页=${window.getComputedStyle($('view-new')).display} viewer=${$('viewer').classList.contains('on') ? 'on' : 'off'}`)
+	click($('viewerClose'))
+	await wait(100)
+	check('关掉看图器：全屏层收起 ✓、状态清干净（再点开还是"1 / 3" ✓ 不残留上次的位置 ✓）',
+		$('viewer').classList.contains('on') === false)
+	click(shots[0])
+	await wait(140)
+	check('重新点开第一张：计数回到"1 / 3" ✓（上次翻到哪儿不该带过来 ✓）',
+		String($('viewerCount').textContent) === '1 / 3', String($('viewerCount').textContent))
+	click($('viewerClose'))
+	await wait(80)
+}
+
 /* --- 2.10.0 ★7：长输出折叠 / 代码高亮 / 表格横滑 ----------------------------- */
 /*
  * 用户要的：「长输出默认折叠（只看结论 ✓）、代码高亮 ✓、表格横向滑动 ✓、长代码折叠 ✓」。
@@ -4474,6 +4621,159 @@ await wait(40)
 		plainLong !== null && bigFold !== null && bigFold.open === false
 		&& String(bigFold.querySelector('summary')?.textContent ?? '').includes('共 40 行'),
 		plainLong === null ? '(没降级)' : `折叠=${bigFold === null ? '没有' : String(bigFold.querySelector('summary')?.textContent ?? '').slice(0, 30)}`)
+}
+
+/* --- 2.11.0 ★11：弱网模式（文字先走、附件留着自动补发）--------------------- */
+/*
+ * 用户要的（池子原话）：「只发文字、图片延后 ✓；『正在发送』状态看得见 ✓」。
+ * 关键纪律：**附件留不住就绝不假装留着** ✗（存不下 → 退回"一起发" ✓）——
+ * 悄悄丢用户的图是这个项目最不能犯的错 ✓。
+ */
+{
+	await ensureAppVisible()
+	const pick = (f) => {
+		Object.defineProperty($('file'), 'files', { value: [f], configurable: true })
+		$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
+	}
+	const prompts = () => requests.filter((entry) => entry.path.startsWith('/api/prompt'))
+	const lastBody = () => JSON.parse(prompts().pop().options.body)
+	const imageFile = (name, bytes) => new window.File([new Uint8Array(bytes)], name, { type: 'image/png' })
+	const outboxItems = () => {
+		const raw = window.localStorage.getItem('dshm.outbox') ?? ''
+		return raw === '' ? [] : JSON.parse(raw)
+	}
+	const setWeak = (on) => {
+		window.localStorage.setItem('dshm.weaknet', on === true ? '1' : '0')
+		$('weakOn').checked = on === true
+		$('weakOn').dispatchEvent(new window.Event('change', { bubbles: true }))
+	}
+
+	// ① 开关在 🩺 纸里 ✓（不往工具键那排再加键 ✓ —— 用户已经嫌挤过 ✓）。
+	click($('checkBtn'))
+	await wait(180)
+	check('弱网模式的开关在「一键自检」纸里 ✓（工具键那排不再加键 ✓），默认关 ✓',
+		visible($('weakOn')) && $('weakOn').checked === false,
+		`visible=${visible($('weakOn'))} checked=${$('weakOn').checked}`)
+	click($('weakOn'))
+	await wait(120)
+	check('打开后状态记在手机本地 ✓（`dshm.weaknet=1` ✓，也进备份 ✓）+ 有话说 ✓',
+		window.localStorage.getItem('dshm.weaknet') === '1'
+		&& String($('toast')?.textContent ?? '').includes('弱网模式开了'),
+		`dshm.weaknet=${window.localStorage.getItem('dshm.weaknet')} toast="${String($('toast')?.textContent ?? '').slice(0, 20)}"`)
+	click($('checkBack'))
+	await wait(100)
+
+	// ② 弱网模式 + 一张图 + 文字：**文字先发**（body 里一个附件都没有 ✓），图进箱子 ✓。
+	pick(imageFile('weak.png', [137, 80, 78, 71, 1, 2, 3, 4]))
+	await wait(200)
+	$('text').value = '弱网模式下的一条文字'
+	const beforeWeak = prompts().length
+	click($('send'))
+	await wait(260)
+	const weakBody = lastBody()
+	check('弱网模式：**文字先出去** ✓（这条 prompt 里没有内联图片 ✓），图片进「留着」的箱子 ✓',
+		prompts().length === beforeWeak + 1 && (weakBody.images ?? []).length === 0
+		&& weakBody.text === '弱网模式下的一条文字'
+		&& outboxItems().length === 1 && outboxItems()[0].files.length === 1,
+		JSON.stringify({ images: (weakBody.images ?? []).length, outbox: outboxItems().length, files: outboxItems()[0]?.files?.length }))
+	check('箱子的横幅看得懂 ✓（写明"几个附件留着"，不是含糊的"待发 1 条" ✗）',
+		visible($('outboxStrip')) && String($('outboxStrip').textContent).includes('弱网模式')
+		&& String($('outboxStrip').textContent).includes('1 个附件'),
+		String($('outboxStrip').textContent).slice(0, 40))
+	check('发完当场说清了"附件会**单独补发一条**" ✓（不说清，用户会以为图丢了 ✗）',
+		String($('banner')?.textContent ?? '').includes('附件') || String($('toast')?.textContent ?? '').includes('附件'),
+		`banner="${String($('banner')?.textContent ?? '').slice(0, 40)}"`)
+
+	// ③ 点横幅补发：**先分片上传、再发一条带路径的** ✓（复用离线箱那条幂等路 ✓）。
+	const uploadedBefore = uploaded.length
+	const beforeFlush = prompts().length
+	click($('outboxStrip'))
+	await wait(700)
+	const flushBody = lastBody()
+	check('点横幅补发：附件真的传上去了 ✓，并且**另发一条带路径的** ✓（agent 晚一轮看到 ✓）',
+		uploaded.length > uploadedBefore && prompts().length === beforeFlush + 1
+		&& (flushBody.fileRefs ?? []).length >= 1 && flushBody.text === '',
+		JSON.stringify({ 上传: uploaded.length - uploadedBefore, refs: (flushBody.fileRefs ?? []).length, text: flushBody.text }))
+	check('补发成功后箱子清空 ✓（横幅自己收起来 ✓）',
+		outboxItems().length === 0 && visible($('outboxStrip')) === false,
+		`outbox=${outboxItems().length} strip=${visible($('outboxStrip'))}`)
+
+	// ④ 关掉弱网模式：回到老行为 ✓（附件跟文字一起发 ✓）—— 这条是"别把老路弄坏" ✓。
+	setWeak(false)
+	await wait(80)
+	pick(imageFile('normal.png', [137, 80, 78, 71, 9, 9, 9]))
+	await wait(200)
+	$('text').value = '普通模式的一条'
+	click($('send'))
+	await wait(260)
+	const normalBody = lastBody()
+	check('关掉弱网模式：附件**跟着文字一起发** ✓（老行为一点没变 ✓）',
+		(normalBody.images ?? []).length === 1 && (normalBody.fileRefs ?? []).length === 0
+		&& outboxItems().length === 0,
+		JSON.stringify({ images: (normalBody.images ?? []).length, refs: (normalBody.fileRefs ?? []).length }))
+
+	// ⑤ ⚠️ 存不下就**绝不假装留着** ✗：一张 1.3MB 的图超过那道闸 → 退回"一起发" ✓ 并说清原因 ✓。
+	setWeak(true)
+	await wait(80)
+	pick(imageFile('huge.png', new Array(1_300_000).fill(65)))
+	await wait(400)
+	$('text').value = '这张太大，留不住'
+	const beforeHuge = prompts().length
+	click($('send'))
+	await wait(400)
+	const hugeBody = lastBody()
+	check('⚠️ 附件大到手机存不下：**不放进箱子** ✓、改成一起发 ✓，并如实说"存不下" ✓（绝不悄悄丢图 ✗）',
+		prompts().length === beforeHuge + 1 && outboxItems().length === 0
+		&& ((hugeBody.images ?? []).length + (hugeBody.fileRefs ?? []).length) >= 1
+		&& String($('banner')?.textContent ?? '').includes('存不下'),
+		JSON.stringify({ outbox: outboxItems().length, images: (hugeBody.images ?? []).length, refs: (hugeBody.fileRefs ?? []).length, banner: String($('banner')?.textContent ?? '').slice(0, 30) }))
+	setWeak(false)
+	await wait(80)
+
+	// ⑥ 「正在发送…」要看得见 ✓（慢网下这几秒最容易让人以为"没反应" ✓）。
+	promptDelayMs = 500
+	$('text').value = '慢一点发'
+	click($('send'))
+	await wait(200)
+	check('发送中：屏幕上写着「📡 正在发送…」✓（不是静悄悄等 ✓）',
+		String($('banner')?.textContent ?? '').includes('正在发送'), String($('banner')?.textContent ?? '').slice(0, 30))
+	await wait(600)
+	check('发完这句提示自己收走 ✓（不能留在屏幕上 ✗）',
+		visible($('banner')) === false,
+		`banner 可见=${visible($('banner'))} 文本="${String($('banner')?.textContent ?? '').slice(0, 24)}"`)
+
+	/*
+	 * ⑦ 慢发送 → 主动问一次要不要开弱网模式 ✓（用户不必知道"弱网模式"这个词 ✓）。
+	 * 用**假时钟**把这一条变慢 ✓（`Date.now` 是页面自己的时钟 ✓）—— 不真等 6 秒 ✓。
+	 */
+	const realNow = window.Date.now
+	let skew = 0
+	window.Date.now = () => realNow() + skew
+	try {
+		setWeak(false)
+		await wait(60)
+		promptDelayMs = 260
+		$('text').value = '这一条会很慢'
+		click($('send'))
+		await wait(60)
+		skew = 9000                       // 回包之前把时钟拨快 9 秒 ✓
+		await wait(500)
+		check('一条发了很久（>6 秒）→ 主动问「要不要开弱网模式」✓（带一个能点的键 ✓，不用用户去翻设置 ✓）',
+			String($('banner')?.textContent ?? '').includes('弱网模式')
+			&& String($('banner')?.innerHTML ?? '').includes('flashGo'),
+			String($('banner')?.textContent ?? '').slice(0, 44))
+		click($('flashGo'))
+		await wait(140)
+		check('点了就真的开上 ✓（状态写进手机本地 ✓，开关也跟着变 ✓）',
+			window.localStorage.getItem('dshm.weaknet') === '1' && $('weakOn').checked === true,
+			`dshm.weaknet=${window.localStorage.getItem('dshm.weaknet')} checked=${$('weakOn').checked}`)
+	} finally {
+		window.Date.now = realNow
+		setWeak(false)
+		await wait(80)
+	}
+	check('（收尾）弱网模式关掉、箱子空着 ✓（不给后面的用例留状态 ✓）',
+		window.localStorage.getItem('dshm.weaknet') === '0' && outboxItems().length === 0)
 }
 
 /* --- 2026-10-12：顶栏随页签收放 + 工具键可收起（用户当天报的两条）------------- */
@@ -4716,6 +5016,20 @@ await wait(120)
 check('the same stale tag never reloads twice (no loop)', reloads() === afterFirst, `${reloads()} reload(s)`)
 
 dom.window.close()
+
+/*
+ * 收尾：**页面自己的 console 不该有任何输出** ✓（2026-10-12 加；只放过 warn ✓）。
+ *
+ * 为什么必须有：页面渲染是**包了 try/catch** 的 ✓（2.10.1 那条修复 ✓）——
+ * 一条消息画不出来不会把整页弄死 ✓，但**界面会静默地不再更新** ✗：
+ * 断言看到的是"DOM 没变"，不是"变错" ✗ —— 全部照样绿 ✓。
+ * 真事：这轮写 ★8 时撞上过"事件铺不上屏、log 冻在固定长度" ✗，查了三轮 ✓。
+ * 判据收得**比"抓 error 关键词"更严** ✓：整轮跑下来页面一句都不该说 ✓
+ * （今天它确实一句都没说 ✓ —— 放宽松只会让下一个"静默不更新"继续溜过去 ✗）。
+ */
+const unexpected = consoleLogs.filter((line) => line.startsWith('warn:') === false)
+check('整轮下来，页面 console 一句意外的话都没有 ✓（有输出 = 某处"静默不更新/静默失败"的前兆 ✗）',
+	unexpected.length === 0, `${unexpected.length} 条：${unexpected.slice(-3).join(' || ').slice(0, 280)}`)
 
 const failed = results.filter((entry) => !entry.ok)
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`)
