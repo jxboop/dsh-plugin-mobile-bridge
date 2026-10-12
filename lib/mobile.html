@@ -1313,6 +1313,21 @@
 				面板是外挂进来的页面 ✓ —— 它与手机页**同源**，等于把手机端交给它 ✓（所以默认关 ✓，谁需要谁开 ✓）。
 			</div>
 		</section>
+		<!-- 3.3.0 个人知识库：**会话全文检索** ✓（搜的是**这台电脑上**的会话内容 ✓，本地优先 ✓、不入云 ✓）。
+		     结果直接来自宿主 ✓（它自己就有 search ✓）—— 这一版**不自建索引** ✗、**不自己造条数上限** ✗。 -->
+		<section class="sheet" id="kopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="kBack">← 返回</button>
+				<span class="title">搜一搜（这台电脑上的会话）</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<input id="kQuery" placeholder="搜什么？例如「弱网」「笔记」" style="width:100%;margin:6px 0">
+				<div class="actions"><button class="go" id="kGo">🔍 搜</button><button id="kClear">清空</button></div>
+				<div class="hint" id="kNote">输入关键词点「搜」✓（搜的是**这台电脑上**的会话内容 ✓，不会发到云上 ✗）。</div>
+				<div id="kList"></div>
+			</div>
+		</section>
 		<section class="sheet" id="bgopen" data-display="flex" style="display:none">
 			<div class="sheetbar">
 				<button class="iconbtn" id="bgBack">← 返回</button>
@@ -8091,6 +8106,133 @@
 
 	$('toolsToggle').addEventListener('click', () => { setToolsFolded(toolsFolded() !== true) })
 	renderTools()
+
+	/* 3.3.0：检索的入口（工具键那排 ✓，动态插 ✓ —— 与面板键同一个做法 ✓）。 */
+	{
+		const kKey = document.createElement('button')
+		kKey.id = 'kBtn'
+		kKey.textContent = '🔍'
+		kKey.title = '搜一搜：这台电脑上的会话内容 ✓'
+		kKey.addEventListener('click', () => { show($('kopen')); const box = $('kQuery'); if (box !== null) box.focus() })
+		$('toolKeys')?.appendChild(kKey)
+	}
+
+	/* --------- 个人知识库（3.3.0）：会话全文检索 --------- */
+	/*
+	 * 上游查实（第 32 轮 ✓）：`sessionController.search({ query })` → `{ items: [{ sessionId, snippet }], hasMore }` ✓。
+	 * 手机这半只做三件事：**输入 → 显示 → 点进去** ✓。
+	 * ⚠️ 三条诚实边界（与服务端一致 ✓）：① 搜的是**这台电脑上的**会话 ✓（不入云 ✓）；
+	 * ② 服务端说搜不了就**如实说** ✓（不显示空列表假装搜过 ✗）；
+	 * ③ 宿主说有更多就是有更多 ✓（**不自己造条数上限** ✗）。
+	 */
+	async function kSearch() {
+		const query = String($('kQuery').value ?? '').trim()
+		if (query === '') { setDelText('kNote', '先写一个关键词 ✓'); return }
+		setDelText('kNote', '搜…（就在这台电脑上搜 ✓）')
+		$('kList').textContent = ''
+		try {
+			const body = await api('api/knowledge/search?q=' + encodeURIComponent(query))
+			const items = Array.isArray(body?.items) ? body.items : []
+			if (items.length === 0) {
+				setDelText('kNote', '这台电脑上的会话里没搜到「' + query + '」✓（换个词试试 ✓）')
+				return
+			}
+			setDelText('kNote', '找到 ' + items.length + ' 条'
+				+ (body?.hasMore === true ? '（还有更多 ✓ —— 宿主自己给了上限 ✓，换个更准的词能收窄 ✓）' : ' ✓'))
+			const list = $('kList')
+			for (const item of items) {
+				const card = document.createElement('button')
+				card.className = 'wfcard'
+				card.style.cssText = 'display:block;width:100%;text-align:left;margin:6px 0'
+				const title = document.createElement('div')
+				title.style.fontWeight = '600'
+				title.textContent = String(item.title ?? '') !== '' ? String(item.title) : '（这个会话没有标题）'
+				const snippet = document.createElement('div')
+				snippet.style.cssText = 'color:#9fb3d0;font-size:13px'
+				snippet.textContent = String(item.snippet ?? '').slice(0, 200)
+				card.appendChild(title)
+				card.appendChild(snippet)
+				card.addEventListener('click', () => {
+					const id = String(item.sessionId ?? '')
+					if (id === '') return
+					hide($('kopen'))
+					switchSession(id)   /* 复用已有的"切到某个会话"那条路 ✓（不自己造 ✗） */
+				})
+				list.appendChild(card)
+			}
+		} catch (error) {
+			/* 「读不到就说读不到」✓ —— 服务端 503 的原话直接给用户看 ✓（不显示空列表假装搜过 ✗）。 */
+			// ⚠️ 别再前缀一次 ✗ —— 服务端那句话自己就以「搜不了」开头 ✓，
+			// 否则用户看到的是「搜不了：搜不了：…」✓（第 36 轮就发现了 ✓，这轮补上 ✓）。
+			const message = String(error?.message ?? error)
+			setDelText('kNote', message.startsWith('搜不了') ? message : '搜不了：' + message)
+		}
+	}
+	$('kGo').addEventListener('click', () => { void kSearch() })
+	$('kClear').addEventListener('click', () => { $('kQuery').value = ''; $('kList').textContent = ''; setDelText('kNote', '清空了 ✓') })
+	$('kQuery').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); void kSearch() } })
+	$('kBack').addEventListener('click', () => hide($('kopen')))
+
+	/* 3.3.0：**这周学了什么** ✓ —— 走桥的 `/api/knowledge/week` ✓（它只用已有的会话列表 ✓，
+	     不依赖本机那个没开的检索 ✓）。入口动态加在检索纸上 ✓（不新增工具键 ✗）。 */
+	{
+		const weekBtn = document.createElement('button')
+		weekBtn.id = 'kWeek'
+		weekBtn.textContent = '📅 这周学了什么'
+		weekBtn.addEventListener('click', () => { void kWeek() })
+		const box = $('kNote')
+		if (box !== null && box.parentNode !== null) box.parentNode.insertBefore(weekBtn, box)
+	}
+
+	async function kWeek() {
+		setDelText('kNote', '看看这 7 天里有活动的会话…（只读这台电脑上的 ✓）')
+		$('kList').textContent = ''
+		try {
+			const body = await api('api/knowledge/week?days=7')
+			const items = Array.isArray(body?.items) ? body.items : []
+			if (items.length === 0) {
+				setDelText('kNote', '这 7 天这台电脑上没有会话活动 ✓（不是"读不到"✗ —— 是真没有 ✓）')
+				return
+			}
+			/*
+			 * 复查实测：`days=30` 时后端 `count=86 / items=60` ✓ —— 只显示 60 会让人以为"就这 60 个" ✗。
+			 * 后端已经把 `truncated` 发出来了 ✓ → 这里**如实说** ✓（"还有更多 ✓ —— 只列了前 60 条 ✓"）。
+			 */
+			setDelText('kNote', '这 7 天有 ' + items.length + ' 个会话有活动 ✓（按最近活动排 ✓）'
+				+ (body?.truncated === true ? '；**还有更多** ✓ —— 这里只列了前 60 条 ✓' : ''))
+			const list = $('kList')
+			for (const item of items) {
+				const card = document.createElement('button')
+				card.className = 'wfcard'
+				card.style.cssText = 'display:block;width:100%;text-align:left;margin:6px 0'
+				const head = document.createElement('div')
+				head.style.fontWeight = '600'
+				/* ⚠️ 实测：这台宿主的会话列表**不带标题** ✗ → 标题空就显示**短编号**并说明这是编号 ✓
+				   （空白行用户没法认 ✗ —— 这一屏 42 条会全是空白 ✓）。 */
+				const title = String(item.title ?? '')
+				head.textContent = title !== '' ? title : '（没有标题 · 编号 ' + String(item.idShort ?? '') + '）'
+				const meta = document.createElement('div')
+				meta.style.cssText = 'color:#9fb3d0;font-size:13px'
+				const when = Number(item.updatedAt) > 0 ? new Date(Number(item.updatedAt)).toLocaleString() : '时间不明'
+				meta.textContent = when + (item.running === true ? ' · 正在跑 ✓' : '')
+				card.appendChild(head)
+				card.appendChild(meta)
+				card.addEventListener('click', () => {
+					const id = String(item.sessionId ?? '')
+					if (id === '') return
+					hide($('kopen'))
+					switchSession(id)
+				})
+				list.appendChild(card)
+			}
+		} catch (error) {
+			/* 同一条纪律 ✓：读不到就说读不到 ✗（**不显示空列表假装"这周你什么都没学"** ✓）。 */
+			const message = String(error?.message ?? error)
+			setDelText('kNote', message.startsWith('看不了') ? message : '看不了：' + message)
+		}
+	}
+
+
 
 	/* --------- 面板协议（3.1.0「手机端可扩展」）--------- */
 	/*

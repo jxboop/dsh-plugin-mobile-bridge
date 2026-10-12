@@ -664,6 +664,30 @@ async function stubFetch(input, options = {}) {
 			panels: [{ id: 'notes', title: '便签', icon: '📝', kind: 'tool', entry: 'index.html', builtin: true }],
 		})
 	}
+	if (path.startsWith('/api/knowledge/search')) {
+		// 3.3.0：会话全文检索 ✓ —— 「boom」模拟服务端说"搜不了" ✓（手机必须**如实显示原话** ✗ 不假装 ✓）。
+		const query = decodeURIComponent((path.split('q=')[1] ?? '').split('&')[0])
+		if (query === 'boom') return jsonResponse({ error: '搜不了：search backend unavailable (test stub)' }, 503)
+		return jsonResponse({
+			ok: true, query, hasMore: true,
+			items: [
+				{ sessionId: 'session-ui-test', title: '弱网那次的排查', snippet: '…关于「' + query + '」的一段…' },
+				{ sessionId: 'session-other', title: '', snippet: '另一段 ' + query },
+			],
+		})
+	}
+	if (path.startsWith('/api/knowledge/week')) {
+		// 3.3.0：这周学了什么 ✓ —— 「empty」模拟"这 7 天真没有活动" ✓（手机必须说清"不是读不到" ✗）。
+		const query = path.split('?')[1] ?? ''
+		if (query.includes('days=1')) return jsonResponse({ ok: true, days: 1, count: 0, items: [] })
+		return jsonResponse({
+			ok: true, days: 7, count: 2,
+			items: [
+				{ sessionId: 'session-ui-test', title: '', idShort: '88b54c99', updatedAt: Date.now() - 3600_000, running: false },
+				{ sessionId: 'session-run', title: '正在跑的那个', idShort: '22d713f7', updatedAt: Date.now() - 600_000, running: true },
+			],
+		})
+	}
 	if (path.startsWith('/api/speech')) {
 		// 3.0.0 ★③：`sttOffline` 切到"这台电脑没开语音"那条路 ✓（要验"如实说" ✓）。
 		if (sttOffline === true) {
@@ -5799,6 +5823,92 @@ await wait(40)
 		visible($('panelopen')) === false && $('panelFrame').getAttribute('src') === 'about:blank',
 		`open=${visible($('panelopen'))} src=${$('panelFrame').getAttribute('src')}`)
 }
+
+/* --- 3.3.0 个人知识库（会话全文检索 · 手机侧）--------------------------------- */
+/*
+ * 桥侧八条断言在 harness 里钉 ✓（含"发给宿主的请求体只有 query" ✓）；这里钉**手机侧三件事**：
+ * ① 工具键那排有一个 🔍 ✓、点开是检索纸 ✓；
+ * ② 搜出来**画成卡片**（标题 + 摘要 ✓ —— 标题空的那条要显示"（这个会话没有标题）"✗ 不能空白 ✓）；
+ * ③ 服务端说搜不了 → **原话显示** ✓（"读不到就说读不到" ✓ 不显示空列表假装搜过 ✗）。
+ */
+{
+	await ensureAppVisible()
+	const key = $('kBtn')
+	check('检索入口在工具键那排 ✓（🔍 ✓，与面板键同一个做法 ✓）',
+		key !== null && key.textContent === '🔍', key === null ? '(没有入口)' : key.textContent)
+	click(key)
+	await wait(160)
+	check('点开是检索纸 ✓（输入框 + 搜 / 清空 + 结果区 ✓）',
+		visible($('kopen')) && $('kQuery') !== null && $('kGo') !== null && $('kList') !== null,
+		`open=${visible($('kopen'))}`)
+	// ② 搜一次：卡片画出来 ✓
+	$('kQuery').value = '弱网'
+	click($('kGo'))
+	await wait(320)
+	const cards = $('kList').querySelectorAll('button')
+	check('⭐ 搜出来画成卡片 ✓：标题 + 摘要都在 ✓（空标题那条显示"（这个会话没有标题）" ✗ 不留空白 ✓）',
+		cards.length === 2 && String(cards[0].textContent).includes('弱网那次的排查')
+		&& String(cards[0].textContent).includes('关于「弱网」')
+		&& String(cards[1].textContent).includes('（这个会话没有标题）'),
+		cards.length + ' 张：' + String(cards[0]?.textContent ?? '').slice(0, 40))
+	check('纸上写清"还有更多" ✓（宿主自己给了上限 ✓ —— 界面**不自己编**条数 ✗）',
+		String($('kNote').textContent).includes('还有更多'), String($('kNote').textContent).slice(0, 40))
+	// ③ 搜不了：原话 ✓（这条是最要紧的"不假装" ✓）
+	$('kQuery').value = 'boom'
+	click($('kGo'))
+	await wait(320)
+	check('⭐ 服务端说搜不了 → **原话显示** ✓、结果区**空着** ✗（不显示空列表假装搜过 ✓）',
+		String($('kNote').textContent).includes('搜不了') && $('kList').querySelectorAll('button').length === 0,
+		`note="${String($('kNote').textContent).slice(0, 40)}" cards=${$('kList').querySelectorAll('button').length}`)
+	// 点一张卡片 → 纸收起 ✓（切会话本身在别处已验 ✓，这里只钉"点得动并且会收起" ✓）
+	$('kQuery').value = '弱网'
+	click($('kGo'))
+	await wait(320)
+	click($('kList').querySelectorAll('button')[0])
+	await wait(220)
+	check('点一条结果 → **纸收起** ✓（去看那个会话 ✓）', visible($('kopen')) === false,
+		`open=${visible($('kopen'))}`)
+}
+
+/* --- 3.3.0「这周学了什么」（手机侧）------------------------------------------- */
+	/*
+	 * 桥侧四条断言在 harness ✓；这里钉手机侧三件事：
+	 * ① 检索纸里有「📅 这周学了什么」✓、点它真的打桥 ✓；
+	 * ② 卡片：**标题空的那条显示短编号兜底** ✓（实测这台宿主的列表不带标题 ✓ —— 空白行用户没法认 ✗）、
+	 *    "正在跑"要标出来 ✓；
+	 * ③ **真没有活动** 与 **读不到** 是两件事 ✓（前者说"这 7 天没有活动 ✓"，不许说成"读不到" ✗）。
+	 */
+	{
+		await ensureAppVisible()
+		click($('kBtn'))
+		await wait(160)
+		check('检索纸里有「📅 这周学了什么」✓（动态加在纸上 ✓ —— 不新增工具键 ✗）',
+			$('kWeek') !== null && String($('kWeek').textContent).includes('这周学了什么'), $('kWeek') === null ? '(没有)' : String($('kWeek').textContent))
+		click($('kWeek'))
+		await wait(340)
+		const cards = $('kList').querySelectorAll('button')
+		check('⭐ 画成卡片 ✓：标题空的那条**显示短编号兜底** ✓（`88b54c99` ✓）、"正在跑"标出来 ✓',
+			cards.length === 2
+			&& String(cards[0].textContent).includes('88b54c99')
+			&& String(cards[1].textContent).includes('正在跑'),
+			cards.length + ' 张：' + String(cards[0]?.textContent ?? '').slice(0, 40))
+		check('纸上写着"这 7 天有 N 个会话有活动" ✓（按最近活动排 ✓）',
+			String($('kNote').textContent).includes('7 天') && String($('kNote').textContent).includes('2'),
+			String($('kNote').textContent).slice(0, 40))
+		/*
+		 * ③ 用 days=1（桩里回空）验"真没有"这条 ✓ —— 必须说"没有活动 ✓"，
+		 * **不许**说成"读不到" ✗（那是另一回事 ✓，混起来用户会以为桥坏了 ✓）。
+		 */
+/*
+		 * ⚠️ 这里原来有一条"（对照）清空后再点一次仍然画得出来" ✓ —— 复查点名为**假象断言** ✗：
+		 * 判据 `… || listAt !== ''` ✓、而 `listAt` 取自**刚被填满**的 `#kList` ✓ → **恒真、永不红** ✓。
+		 * 它注释说要验"这 7 天**真没有**活动"那条分支 ✓，但 `kWeek()` 写死 `days=7` ✓ →
+		 * 桩里那个空结果分支**永远走不到** ✓ → 那条分支**零覆盖** ✓（CHANGELOG 也自认过 ✓）。
+		 * **整条删掉** ✗ —— 不拿一条永远绿的"断言"充数 ✓（要真验它得先让 `kWeek` 能带天数参数 ✓，下一版做 ✓）。
+		 */
+		click($('kBack'))
+		await wait(140)
+	}
 
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build

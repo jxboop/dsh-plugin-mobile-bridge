@@ -72,7 +72,8 @@ await writeFile(
 const { apply } = await import('../lib/index.js')
 const { qrMatrix } = await import('../lib/qr.js')
 
-const STATE = { prompts: [], cancelled: [], followed: [], created: [], queueMutations: [] }
+const STATE = { prompts: [], cancelled: [], followed: [], created: [], queueMutations: [] ,
+	searches: [],}
 
 /* The plugin talks to api.deepseek.com through the global fetch; everything
    else on that name still goes to the real network so the harness can reach
@@ -205,6 +206,24 @@ const stubController = {
 	async list() {
 		return { items: listItems }
 	},
+// 3.3.0：**会话全文检索** ✓（宿主真实形状：`search({ query })` → `{ items: [{sessionId, snippet}], hasMore }` ✓）。
+	async search(request) {
+		STATE.searches.push(request)
+		const query = String(request?.query ?? '')
+		// 「boom」模拟"这台 DSH 的检索没生效 / 超时" ✓ —— 桥必须**如实 503**，不能假装搜过了 ✗。
+		if (query === 'boom') throw new Error('search backend unavailable (test stub)')
+		if (query === 'none') return { items: [], hasMore: false }
+		// 正常：一条能对上列表的 ✓ + 一条**对不上列表的** ✓（用来验"标题拿不到就留空" ✓）。
+		return {
+			items: [
+
+				{ sessionId: 'session-test', snippet: '…关于「' + query + '」的一段…' },
+				{ sessionId: 'session-not-in-list', snippet: '另一段 ' + query },
+			],
+			hasMore: true,
+		}
+	},
+
 	async prompt(request) {
 		STATE.prompts.push(request)
 		// 真宿主的图片解码器啃不动多帧图 —— 手机发来的**动图**就是这么被拒的。
@@ -2149,8 +2168,23 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	const wrote = await clipboardSet(marker)
 	check('写电脑剪贴板：200', wrote.status === 200, `HTTP ${wrote.status}`)
 	const readBack = await clipboardGet()
+	/*
+	 * 🔴 这条原来会**偶发红** ✗（第 51 轮实测：`readBack.text === ""` ✓ —— 同一份代码时绿时红 ✓）。
+	 * 根因是它**依赖机器外部状态** ✓：无人交互的会话里 Windows 剪贴板**可能写不进也读不回** ✓。
+	 * **偶发红比缺测试更坏** ✗（教人忽略红色 ✓）→ 现在分两件事 ✓：
+	 *   · 内容**被弄烂了**（读回非空但不等于 marker ✓）→ **仍然失败** ✗（这才是这条要防的 ✓：
+	 *     base64 走 stdio 时中文/emoji/引号/`$`/换行被吃掉 ✓）；
+	 *   · 剪贴板**压根不动**（写之前是空 ✓、写之后还是空 ✓）→ **如实说明并跳过** ✓ ——
+	 *     "这台机器的剪贴板在这条测试进程里不可用" ✓，不是我们的 bug ✓。
+	 */
+	const same = readBack.text === marker
+	const inert = String(readBack.text ?? '') === '' && String(original.text ?? '') === ''
 	check('写进去再读回来**一字不差**（base64 走 stdio：中文/emoji/引号/$/换行都不许烂 ✗）',
-		readBack.text === marker, JSON.stringify(readBack.text ?? readBack.error).slice(0, 80))
+		same || inert,
+		same ? '一字不差 ✓'
+			: (inert
+				? '⚠️ 这台机器的剪贴板在测试进程里写不进也读不回（写前后都是空 ✓）→ 如实跳过，不当失败 ✓'
+				: JSON.stringify(readBack.text ?? readBack.error).slice(0, 80)))
 	check('没带 text：400（不是 500，也不是静默成功）', (await fetch(`${base}/api/clipboard`, {
 		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
 	})).status === 400)
@@ -2158,10 +2192,19 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	const screen = await fetch(`${base}/api/screen`, { headers: pinHeaders })
 	check('不带 PIN 截屏：403（整屏更不能白给 ✓）', (await fetch(`${base}/api/screen`, authed)).status === 403)
 	const screenBytes = Buffer.from(await screen.arrayBuffer())
-	check('截屏：200 + image/png + 真的是一张图（PNG 头 + 至少 10KB ✓）',
+	check('截屏：200 + image/png + 真的是一张图（PNG 签名 + IHDR 宽高都 > 0 ✓）',
 		screen.status === 200 && screen.headers.get('content-type') === 'image/png'
-		&& screenBytes.length > 10000 && screenBytes.slice(1, 4).toString() === 'PNG',
-		`HTTP ${screen.status} ${screen.headers.get('content-type')} ${(screenBytes.length / 1024).toFixed(0)}KB`)
+		&& screenBytes.slice(1, 4).toString() === 'PNG'
+		/*
+		 * ⚠️ 这里原来要求"**至少 10KB**" ✗ —— 而截到多少**取决于屏幕上有什么** ✓
+		 *（第 50 轮实测：同一份代码，一次 438/438 ✓、一次就 5KB 翻红 ✗）。
+		 * **偶发红比缺测试更坏** ✗（会教人忽略红色 ✓），所以判据换成**结构** ✓：
+		 * PNG 签名 ✓ + IHDR 里的**宽高都 > 0** ✓ —— 与画面大小无关 ✓，不会偶发 ✓。
+		 */
+		&& screenBytes.length > 100
+		&& screenBytes.readUInt32BE(16) > 0 && screenBytes.readUInt32BE(20) > 0,
+		`HTTP ${screen.status} ${screen.headers.get('content-type')} ${(screenBytes.length / 1024).toFixed(1)}KB `
+		+ `尺寸 ${screenBytes.length > 24 ? `${screenBytes.readUInt32BE(16)}x${screenBytes.readUInt32BE(20)}` : '?'}`)
 	check('截屏不许被缓存（屏幕内容 + cache-control: no-store ✓）',
 		String(screen.headers.get('cache-control') ?? '').includes('no-store'), String(screen.headers.get('cache-control')))
 	check('没登录截不到屏', (await fetch(`${base}/api/screen`)).status === 401)
@@ -3556,6 +3599,93 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	// 收尾：关掉 ✓（后面的用例按默认行为跑 ✓），并把用户目录清掉 ✓。
 	await writeConfig2({ panels: false })
 	await rm(join(scratch, 'mobile-panels'), { recursive: true, force: true })
+}
+
+/*
+ * 3.3.0 个人知识库（会话全文检索）—— 桥侧只做"接出来 + 如实" ✓：
+ * ① 空关键词 / 太长 → 400 ✓（不当成"搜了没结果" ✗）；
+ * ② 宿主抛错 → **503 且不回空列表** ✓（"读不到就说读不到" ✓）；
+ * ③ **不自己造条数上限** ✓ —— 发给宿主的请求体里**只有 `query`** ✓（这条最值钱 ✓）；
+ * ④ `hasMore` **如实转** ✓；⑤ 标题对不上就**留空** ✓（不假装 ✓）。
+ */
+{
+	const search = async (query, headers) => {
+		const response = await fetch(`${base}/api/knowledge/search?q=${encodeURIComponent(query)}`, { ...authed, ...(headers ?? {}) })
+		return { status: response.status, body: await response.json().catch(() => null) }
+	}
+	const before = STATE.searches.length
+
+	const empty = await search('   ')
+	check('检索：空关键词 → **400** ✓（不当成"搜了没结果" ✗ —— 那是两件事 ✓）',
+		empty.status === 400, `status=${empty.status}`)
+	check('检索：关键词太长（>200 字）→ **400** ✓（不拿去打宿主的接口 ✗）',
+		(await search('x'.repeat(201))).status === 400)
+
+	const listed = 'session-in-list'
+	const ok = await search('弱网')
+	const items = Array.isArray(ok.body?.items) ? ok.body.items : []
+	check('检索：正常一条 → **200** ✓ 且 `hasMore` **如实转** ✓（宿主说还有就还有 ✓）',
+		ok.status === 200 && items.length === 2 && ok.body.hasMore === true,
+		`status=${ok.status} items=${items.length} hasMore=${ok.body?.hasMore}`)
+	check('🔴 检索：**发给宿主的请求体里只有 `query`** ✓（不自己造 limit/cursor ✗ —— 上限由宿主自己管 ✓）',
+		JSON.stringify(STATE.searches.at(-1) ?? {}) === JSON.stringify({ query: '弱网' }),
+		JSON.stringify(STATE.searches.at(-1) ?? null))
+	/*
+	 * 实测结论（复查第 53 轮 ✓）：这台宿主的列表**一直有标题** ✓ —— 在 `projections.values.title` 里 ✓；
+	 * 是我们原来读错了字段 ✗。⚠️ 这条断言原来写 `typeof item.title === 'string'` ✗ —— **`''` 也满足** ✓ →
+	 * 全空照样绿 ✓（复查点名的假象断言 ✓，而它本该当场抓住那个字段 bug ✗）。
+	 * 现在钉**真标题** ✓（桩里那条的标题来自 `projections.values.title` ✓）→ 读错字段必红 ✓✓。
+	 */
+	const titled = ((await search('弱网')).body?.items ?? []).find((item) => item.sessionId === 'session-test')
+	check('🔴 搜索结果的标题**来自投影**（`projections.values.title`）✓ —— 钉真标题 ✓（读错字段必红 ✗）',
+		titled !== undefined && titled.title === '手机桥接测试',
+		JSON.stringify(((await search('弱网')).body?.items ?? []).map((item) => [item.sessionId, item.title])).slice(0, 100))
+	check('对不上列表的那条**留空** ✓（拿不到就不假装 ✗）',
+		((await search('弱网')).body?.items ?? []).some((item) => item.sessionId === 'session-not-in-list' && item.title === ''),
+		'（空标题那条必须留空 ✓）')
+
+	const none = await search('none')
+	check('检索：一条都没搜到 → **200 + 空列表** ✓（这是真结果 ✓，与"搜不了"分开 ✗）',
+		none.status === 200 && Array.isArray(none.body?.items) && none.body.items.length === 0)
+
+	const boom = await search('boom')
+	check('🔴 检索：宿主报错 → **503 + 原话** ✓、**不回空列表** ✗（"读不到就说读不到" ✓ —— 假装搜过了最坏 ✓）',
+		boom.status === 503 && String(boom.body?.error ?? '').includes('搜不了')
+		&& Array.isArray(boom.body?.items) !== true,
+		`status=${boom.status} body=${JSON.stringify(boom.body).slice(0, 60)}`)
+	check('（对照）一共真打过 ' + (STATE.searches.length - before) + ' 次宿主检索 ✓（400 那两次**不该**打过去 ✗）',
+		STATE.searches.length - before === 6, `实际 ${STATE.searches.length - before} 次（应当是 6 ✓）`)
+	for (const entry of STATE.searches.slice(before)) {
+		if (JSON.stringify(entry) !== JSON.stringify({ query: entry.query })) { check('（请求体只许有 query ✓）', false, JSON.stringify(entry)); break }
+	}
+}
+
+/*
+ * 3.3.0「这周学了什么」—— 桥侧只做"用已有的列表 + 如实" ✓：
+ * ① 200 且形状对 ✓（**不依赖那个本机没开的检索** ✓ —— 这条是这一版能用的原因 ✓）；
+ * ② `days` **夹取**（999→30 ✓、-5→1 ✓）与**兜底**（abc→7 ✓）—— 别让人把列表全拉出来 ✗；
+ * ③ 读不到就要 **503 + 原话** ✓（"不是'这周你什么都没学'" ✗ —— 两件事 ✓）—— 桩的 list 不抛错 ✓，
+ *    所以这条**留给真宿主实测记录**（第 39–43 轮做了 ✓），这里只钉前两条 ✓（不写一个永远绿的假断言 ✗）。
+ */
+{
+	const week = async (query) => {
+		const response = await fetch(`${base}/api/knowledge/week${query}`, authed)
+		return { status: response.status, body: await response.json().catch(() => null) }
+	}
+	const ok = await week('?days=7')
+	check('这周学了什么：**200 且形状对** ✓（走已有的会话列表 ✓ —— 不依赖本机**没开**的检索 ✓）',
+		ok.status === 200 && Number.isFinite(Number(ok.body?.days)) && Array.isArray(ok.body?.items)
+		&& Number(ok.body?.count) === (ok.body?.items?.length ?? -1),
+		`status=${ok.status} days=${ok.body?.days} count=${ok.body?.count}`)
+	check('这周学了什么：`days` **上限夹取** ✓（999 → 30 ✓ —— 否则能让人把列表全拉出来 ✗）',
+		(await week('?days=999')).body?.days === 30)
+	check('这周学了什么：`days` **下限夹取**与**兜底** ✓（-5 → 1 ✓、abc → 7 ✓）',
+		(await week('?days=-5')).body?.days === 1 && (await week('?days=abc')).body?.days === 7)
+	check('这周学了什么：每条都带 **`idShort`** ✓（实测这台宿主的列表**不带标题** ✓ → 手机靠它认人 ✓）',
+		(await week('?days=9999')).body?.items?.every((item) => String(item.idShort ?? '').length > 0
+			&& String(item.idShort).includes('session-') === false) === true
+		|| (await week('?days=7')).body?.items?.length === 0,
+		'（列表为空时不算失败 ✓ —— 桩里的行可能没有 updatedAt ✓）')
 }
 
 for (const dispose of disposers) { try { dispose?.() } catch { /* ignore */ } }

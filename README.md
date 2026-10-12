@@ -417,9 +417,25 @@ node test/package.mjs && node test/harness.mjs && node test/qr.mjs && node test/
 node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs && node test/offline.mjs
 ```
 
-八个套件共 **1185 项**（package 16 · harness 426 · qr 12 · ui 630 · security 51 · crashprobe 17 ·
+八个套件共 **1207 项**（package 16 · harness 438 · qr 12 · ui 640 · security 51 · crashprobe 17 ·
 addresses 16 · offline 17）。**改完必跑全八个** ✓ —— 只跑某一个会漏掉内容规矩与界面回归
 （2.7.2 就是这么漏了两版的 ✓）。
+
+## 个人知识库（3.3.0 起）
+
+- **搜一搜**：工具键那排的 🔍 → 输入关键词 → 结果来自宿主自己的 `sessionController.search` ✓
+  （**不会唤醒 agent** ✓、**不建索引** ✓）。点一条结果直接切到那个会话 ✓。
+  ⚠️ **先在电脑上挂 `@deepseek-ai/dsh-session-query`（+ `-sqlite`）** ✓ —— 这台部署默认没挂 ✓，
+  没挂时界面会显示宿主的原话（`搜不了：…`）✓，**不会**假装搜过了没结果 ✗。
+- **这周学了什么**：同一张纸的 📅 → 最近 7 天有活动的会话（`days` 可传 1–30 ✓，夹取 ✓）。
+
+- ⚠️ **标题那段更正**：这一版最初写的是"这台宿主的列表**不带标题**" ✗ —— **那是我们读错了字段** ✓
+  （标题在 `projections.values.title` ✓，桥自己的 `summarize()` 一直读对 ✓；宿主 `/api/boot` 83 条**全非空** ✓）。
+  已修 ✓：`titleOfSummary()` 共用 ✓ —— 所以现在列表里显示的是**真标题** ✓，
+  短编号只是极少数兜底 ✓。**把我们的 bug 说成宿主的能力缺失，是这一版最该记住的教训** ✓。
+  不留空白行 ✗。**子会话也会混进来** ✓（筛不筛留到设置那一版 ✓）。
+- 两条路都是**只读** ✓、**不出这台电脑** ✓；读不到就说读不到 ✓（503 + 原话 ✓），
+  **不显示空列表假装搜过** ✗。
 
 ## 手机上把步骤拼起来跑（3.2.0 起）
 
