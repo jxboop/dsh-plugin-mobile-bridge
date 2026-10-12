@@ -4216,6 +4216,193 @@ await wait(40)
 		/已跑 2:0\d/.test(replaying) && replaying.includes('本轮 ↑2.0k ↓512'), replaying.slice(0, 90))
 }
 
+/* --- 2.10.0 ★6：键盘手感（Enter 模式 / ↑ 取上一条）-------------------------- */
+/*
+ * 用户要的三样：「↑ 取上一条 ✓、Enter 发送/换行可切换 ✓、长按空格移动光标 ✓」。
+ * 前两样能在这儿钉死 ✓；第三样（长按拖光标）jsdom **造不出触摸事件** ✗
+ * （没有 TouchEvent 构造器 ✓）→ 只标注"真机未验"✗，不假装验过 ✓（默认也是关的 ✓）。
+ */
+{
+	const promptCount = () => requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	const keydown = (key, options = {}) => $('text').dispatchEvent(new window.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }))
+
+	await ensureAppVisible()
+	click($('kbBtn'))
+	await wait(160)
+	check('⌨ 纸打开，三个开关的默认值都"不动老习惯" ✓（Enter 仍是换行 ✓、长按拖光标默认关 ✓）',
+		visible($('kbopen')) && $('kbEnter')?.checked === false
+		&& $('kbHistory')?.checked === true && $('kbCaret')?.checked === false,
+		`enter=${$('kbEnter')?.checked} history=${$('kbHistory')?.checked} caret=${$('kbCaret')?.checked}`)
+
+	// ① Enter：默认 = 换行（**不发请求** ✓ 不改老习惯）；勾上 = 直接发；Shift+Enter 仍换行；Ctrl+Enter 一直发 ✓。
+	$('text').value = '先试试回车'
+	const n0 = promptCount()
+	keydown('Enter')
+	await wait(120)
+	check('默认（没勾）按 Enter **不发** ✓ —— 就是换行，手机上原来的行为没被改掉 ✓',
+		promptCount() === n0, `${n0} -> ${promptCount()}`)
+	click($('kbEnter'))
+	await wait(100)
+	check('勾上后状态记在手机本地（`dshm.enterSend=1` ✓，也进备份 ✓）',
+		window.localStorage.getItem('dshm.enterSend') === '1', String(window.localStorage.getItem('dshm.enterSend')))
+	const n1 = promptCount()
+	keydown('Enter')
+	await wait(160)
+	check('勾上「Enter 直接发送」：回车就走 ✓（请求 +1）', promptCount() === n1 + 1, `${n1} -> ${promptCount()}`)
+	$('text').value = '换行的那种'
+	const n2 = promptCount()
+	keydown('Enter', { shiftKey: true })
+	await wait(120)
+	check('Shift+Enter 仍然是换行（**不发** ✓ —— 勾了也得留一条多行的路 ✓）',
+		promptCount() === n2, `${n2} -> ${promptCount()}`)
+	$('text').value = '快捷键那种'
+	const n3 = promptCount()
+	keydown('Enter', { ctrlKey: true })
+	await wait(160)
+	check('Ctrl / ⌘ + Enter 一直都是发送 ✓（老行为没被这次改动弄坏 ✓）',
+		promptCount() === n3 + 1, `${n3} -> ${promptCount()}`)
+	click($('kbEnter'))
+	await wait(80)
+
+	// ② ↑ 取上一条 / ↓ 往回翻 ✓。
+	//    注意：**记的是"你打出去的那句"** ✓ —— 这里最近真发出去的是 "快捷键那种" ✓
+	//    （"换行的那种"只按了 Shift+Enter，没发 → 不进历史 ✓）。
+	const lastSent = '快捷键那种'
+	$('text').value = ''
+	try { $('text').setSelectionRange(0, 0) } catch { /* 无所谓 */ }
+	keydown('ArrowUp')
+	await wait(100)
+	check('↑ 把上一条已发消息取回来了 ✓（空框时接管 ✓）',
+		$('text').value === lastSent, JSON.stringify(String($('text').value).slice(0, 30)))
+	keydown('ArrowDown')
+	await wait(100)
+	check('↓ 往回翻回"还没翻历史"的那份草稿 ✓（这里是空 ✓）',
+		$('text').value === '', JSON.stringify(String($('text').value).slice(0, 30)))
+	/*
+	 * 多行的保护：光标**不在第一行**时 ↑ 不接管 ✓（那是"看上一行" ✓）。
+	 * ⚠️ 光标在第 0 位时接管是**对的** ✓（shell 里也是这个语义 ✓）—— 我第一版断言写成了
+	 * "多行就不接管"，被这轮测试当场纠正 ✓（断言错、代码对 ✓）。
+	 */
+	$('text').value = '第一行\n第二行'
+	const len = String($('text').value).length
+	try { $('text').setSelectionRange(len, len) } catch { /* 无所谓 */ }
+	keydown('ArrowUp')
+	await wait(100)
+	check('光标在第二行时 **↑ 不接管** ✓（那是"看上一行"，抢过来只会让人骂 ✗）',
+		$('text').value === '第一行\n第二行', JSON.stringify(String($('text').value).slice(0, 30)))
+	$('text').value = ''
+	try { $('text').setSelectionRange(0, 0) } catch { /* 无所谓 */ }
+	check('（说明）长按拖光标这一样 jsdom 验不了 ✗ —— 造不出触摸事件，只能真机看 ✓（默认关 ✓）',
+		$('kbCaret')?.checked === false)
+	click($('kbBack'))
+	await wait(80)
+}
+
+/* --- 2.10.0 ★7：长输出折叠 / 代码高亮 / 表格横滑 ----------------------------- */
+/*
+ * 用户要的：「长输出默认折叠（只看结论 ✓）、代码高亮 ✓、表格横向滑动 ✓、长代码折叠 ✓」。
+ * 这里最要紧的一条是**往返** ✓：高亮只是加标签，**渲染出来的文字必须和原文一字不差** ✗ ——
+ * 手写高亮最典型的坏法就是"看起来像"，把内容啃掉一两个字符没人当场发现 ✓（照二维码那条教训 ✓）。
+ */
+{
+	await ensureAppVisible()
+	const say = (text, seq) => {
+		source.emit({ t: 'event', event: { type: 'assistant/message', seq, time: Date.now(), data: {
+			turn: 30, step: seq, message: { id: 'm' + seq, role: 'assistant', content: [{ type: 'text', text }] },
+		} } })
+	}
+	const q = (selector) => $('log').querySelector(selector)
+
+	// ① 代码块：认出围栏 ✓ / **往返一字不差** ✓ / 高亮真的标了 ✓ / 注入被转义 ✓。
+	const code = [
+		'function add(a, b) {',
+		'  // 注释里有 <尖括号> 和 #井号',
+		'  const s = "a & b <img src=x onerror=alert(1)>"',
+		'  return a + b + 42',
+		'}',
+	].join('\n')
+	say('看这段：\n```js\n' + code + '\n```\n完了', 700)
+	await wait(240)
+	const pre = q('pre.code')
+	const logHtml = $('log').innerHTML
+	check('围栏代码块被认出来了（`<pre class="code">` ✓）', pre !== null, pre === null ? '没有 pre.code' : '')
+	check('⚠️ 往返：渲染出来的代码文字与原文**一字不差** ✓（高亮只加标签、绝不啃内容 ✗）',
+		pre !== null && pre.textContent === code, JSON.stringify(String(pre?.textContent ?? '').slice(0, 70)))
+	check('关键字 / 字符串 / 注释真的被标出来了 ✓（`.hl-k` `.hl-s` `.hl-c` 都在）',
+		logHtml.includes('hl-k') && logHtml.includes('hl-s') && logHtml.includes('hl-c'))
+	check('代码里的 HTML 被原样转义 ✓（`<img … onerror>` 绝不许变成真元素 ✗）',
+		logHtml.includes('<img src=x') === false
+		&& pre !== null && String(pre.textContent).includes('<img src=x onerror=alert(1)>'))
+
+	// ② 行内格式：`**粗**` 与反引号代码 ✓（内容同样要一字不差 ✓）。
+	say('这里有 **粗体** 和 `inlineCode` 两样', 701)
+	await wait(200)
+	const strong = q('.bubble strong')
+	const inline = q('code.inline')
+	check('行内 `**粗**` 与 `` `代码` `` 都认 ✓（内容一字不差 ✓）',
+		strong !== null && strong.textContent === '粗体'
+		&& inline !== null && inline.textContent === 'inlineCode',
+		`strong=${JSON.stringify(String(strong?.textContent ?? ''))} code=${JSON.stringify(String(inline?.textContent ?? ''))}`)
+
+	// ③ 长代码块（>18 行）默认折起来 ✓（原生 details，展开不触发重绘 ✓）。
+	const longCode = Array.from({ length: 25 }, (_, i) => `const line${i} = ${i}  // 第 ${i} 行`).join('\n')
+	say('```js\n' + longCode + '\n```', 702)
+	await wait(200)
+	const codeFold = q('details.codefold')
+	check('长代码块默认折起来 ✓（`<details class="codefold">` 且没 open ✓ —— 原生折叠，展开不跳滚动 ✓）',
+		codeFold !== null && codeFold.open === false
+		&& String(codeFold.querySelector('summary')?.textContent ?? '').includes('25 行'),
+		String(codeFold?.querySelector('summary')?.textContent ?? '').slice(0, 40))
+
+	// ④ 表格：连续 `|` 行成表 ✓ + 外面那层能横滑 ✓（手机读表格的关键 ✓）。
+	say('| 列一 | 列二 | 列三 |\n| --- | --- | --- |\n| a | b | c |\n| d | e | f |', 703)
+	await wait(200)
+	const wrap = q('.tablewrap')
+	check('Markdown 表格被画成真表格 ✓（3 列表头 + 2 行数据 ✓）',
+		wrap !== null && wrap.querySelectorAll('th').length === 3 && wrap.querySelectorAll('tbody tr').length === 2,
+		wrap === null ? '没有 .tablewrap' : `th=${wrap.querySelectorAll('th').length} tr=${wrap.querySelectorAll('tbody tr').length}`)
+	check('表格外面那层**能左右滑** ✓（手机上表格被压成面条就完全没法读 ✗）',
+		wrap !== null && window.getComputedStyle(wrap).overflowX === 'auto',
+		wrap === null ? '(没有表格)' : `overflow-x=${window.getComputedStyle(wrap).overflowX}`)
+
+	// ⑤ 长回答（>22 行）默认折：开头几行留外面（"只看结论" ✓），其余进 details ✓。
+	const longText = Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行内容`).join('\n')
+	say(longText, 704)
+	await wait(220)
+	const fold = q('details.fold')
+	check('长回答默认折起来 ✓，且**开头 8 行留在外面** ✓（结论通常在开头 ✓）、summary 报出行数 ✓',
+		fold !== null && fold.open === false
+		&& String(fold.querySelector('summary')?.textContent ?? '').includes('共 30 行')
+		&& $('log').textContent.includes('第 1 行内容')
+		&& $('log').textContent.includes('第 8 行内容')
+		&& String(fold.textContent).includes('第 30 行内容'),
+		String(fold?.querySelector('summary')?.textContent ?? '').slice(0, 40))
+
+	// ⑥ 关掉「长回答默认折叠」→ 重画之后不再折 ✓（开关要真的管用 ✓）。
+	click($('kbBtn'))
+	await wait(140)
+	click($('kbFold'))
+	await wait(240)
+	check('关掉「长回答默认折叠」后，同一条不再折 ✓（开关真的管用，不是摆设 ✓）',
+		q('details.fold') === null && window.localStorage.getItem('dshm.foldLong') === '0',
+		`fold=${q('details.fold') === null ? 'none' : 'still there'} dshm.foldLong=${window.localStorage.getItem('dshm.foldLong')}`)
+	click($('kbFold'))
+	await wait(200)
+	check('再打开就折回来了 ✓', q('details.fold') !== null && window.localStorage.getItem('dshm.foldLong') === '1')
+	click($('kbBack'))
+	await wait(80)
+
+	// ⑦ 超长（>24KB）降级：只转义、不跑正则、不折叠 ✓（流式输出每 80ms 重画一次，排版不能吃掉帧率 ✓）。
+	say('x'.repeat(26000) + '\n尾巴', 705)
+	await wait(240)
+	const plainLong = q('.plainlong')
+	check('单条 >24KB 时降级成纯文本 ✓（`.plainlong` ✓，**这一条自己**里面不折不高亮 ✓）',
+		plainLong !== null && plainLong.querySelector('details.fold') === null
+		&& plainLong.querySelector('pre.code') === null
+		&& String(plainLong.textContent).startsWith('xxxx'),
+		plainLong === null ? '(没降级)' : `长度 ${String(plainLong.textContent).length}`)
+}
+
 /* --- 2026-10-12：顶栏随页签收放 + 工具键可收起（用户当天报的两条）------------- */
 /*
  * 用户原话：①「切换到余额界面时还有模型显示」②「底下功能栏太多了挡住视线，你加一个折叠功能」。
@@ -4368,8 +4555,9 @@ await wait(40)
 	check('导出的内容认得出是手机桥的备份（带标记 + 版本 + 时间 ✓）',
 		dump !== null && String(dump.mark).includes('phone-backup') && Number(dump.version) >= 1
 		&& typeof dump.exportedAt === 'string', JSON.stringify(dump ?? null).slice(0, 80))
-	check('导出带上了手机端设置（置顶那类 ✓）',
-		dump?.data?.['dshm.pins'] !== undefined, JSON.stringify(Object.keys(dump?.data ?? {})))
+	check('导出带上了手机端设置（置顶那类 ✓、还有 ★6 的 ↑ 历史 ✓）',
+		dump?.data?.['dshm.pins'] !== undefined && dump?.data?.['dshm.history'] !== undefined,
+		JSON.stringify(Object.keys(dump?.data ?? {})))
 	check('**网址里的密钥段不进备份** ✗✗（文件是要发给自己/存网盘的 ✓）',
 		Object.keys(dump?.data ?? {}).includes('dshm.canonical') === false
 		&& Object.keys(dump?.data ?? {}).includes('dshm.addresses') === false

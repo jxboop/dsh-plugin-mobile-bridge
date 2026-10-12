@@ -457,6 +457,24 @@
 
 	/* 2.8.0 ★12「实时耗时 / token 跳动」：跑任务时它挂在顶部条下面 ✓（跑完留一会儿就收 ✓）。
 	   等宽字体：数字每秒都在跳，比例字体下整行会左右抖 ✓。 */
+	/* 2.10.0 ★7「长回答 / 代码 / 表格」：能折的折、能滑的滑、代码认得出关键字 ✓。
+	   ⚠️ 表格**必须能横滑** ✗：手机上表格被压成"面条"是最常见的读不下去的原因 ✓。 */
+	.prewrap { margin: 6px 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--panel-2); }
+	.prewrap .prehead { font-size: 11px; color: var(--muted); padding: 3px 8px; border-bottom: 1px solid var(--line); }
+	.prewrap pre.code { margin: 0; padding: 8px; overflow-x: auto; font-family: var(--mono); font-size: 12px; line-height: 1.55; white-space: pre; }
+	details.codefold > summary { font-size: 11px; color: var(--muted); padding: 5px 8px; cursor: pointer; }
+	details.codefold[open] > summary { border-bottom: 1px solid var(--line); }
+	.hl-k { color: #7cc4ff; } .hl-s { color: #ffca7a; } .hl-c { color: var(--muted); font-style: italic; } .hl-n { color: #b6f0c8; }
+	code.inline { background: var(--panel-2); border-radius: 4px; padding: 1px 4px; font-family: var(--mono); font-size: 12.5px; }
+	.tablewrap { margin: 6px 0; overflow-x: auto; -webkit-overflow-scrolling: touch; border: 1px solid var(--line); border-radius: 8px; }
+	.tablewrap table { border-collapse: collapse; font-size: 12.5px; }
+	.tablewrap th, .tablewrap td { border: 1px solid var(--line); padding: 4px 9px; white-space: nowrap; text-align: left; }
+	.tablewrap th { background: var(--panel-2); font-weight: 600; }
+	details.fold { margin: 4px 0; }
+	details.fold > summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+	details.fold .foldbody { margin-top: 4px; }
+	.plainlong { white-space: pre-wrap; word-break: break-word; }
+
 	#runstrip {
 		flex: none; padding: 4px 12px; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
 		background: var(--panel); color: var(--muted); border-bottom: 1px solid var(--line);
@@ -948,6 +966,7 @@
 					<button id="roBtn" title="只看不发：出门看进度时一键锁住发送，不怕误触（再点一下解锁）">🔓</button>
 					<button id="checkBtn" title="一键自检：哪一环不对、以及"怎么办"（只读，不会启动任何东西）">🩺</button>
 					<button id="secBtn" title="安全审计：谁登录过、从哪来、有没有陌生设备；一键踢掉其它设备（要输 PIN）">🛡</button>
+					<button id="kbBtn" title="键盘手感：Enter 直接发送 / ↑ 取上一条已发消息 / 长按拖光标">⌨</button>
 					</div><!-- /#toolKeys：这一层才是"可收起的那排键" ✓ -->
 		<!-- 只看不发（2.7.0 池子里的 ★7）：**防误触**，不是安全边界 ✗ —— 真安全靠 PIN + 令牌 ✓。 -->
 		<div id="roStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482000;background:rgba(178,120,20,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px">🔒 只看不发 —— 点右上角 🔓 才发得出去（刷新也保持 ✓）</div>
@@ -1000,6 +1019,29 @@
 					<input type="file" id="backupFile" accept=".json,application/json" hidden>
 				</div>
 				<div class="hint" id="backupNote"></div>
+			</div>
+		</section>
+		<!-- 2.10.0 ★6「终端式键盘手感」：打长句子用的三样 ✓ —— 都只记在这台手机上 ✓（也进备份 ✓）。 -->
+		<section class="sheet" id="kbopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="kbBack">← 返回</button>
+				<span class="title">键盘手感</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="hint">打长句子用的三样 ✓ —— 只记在<b>这台手机</b>上（也进备份 ✓）。</div>
+				<label class="field"><input type="checkbox" id="kbEnter"> <b>Enter 直接发送</b>（Shift+Enter 换行）</label>
+				<div class="hint">不勾时 Enter 就是换行（手机上原来的行为 ✓，不改老习惯 ✗）；
+					不管勾没勾，Ctrl / ⌘ + Enter 一直都是发送 ✓。</div>
+				<label class="field"><input type="checkbox" id="kbHistory"> <b>↑ 取上一条已发消息</b>（↓ 往回翻）</label>
+				<div class="hint">只在这个框空着、或光标就在第一行时才接管 ↑/↓ ✓ ——
+					框里写了多行时，↑/↓ 还是正常的"看上一行"✓（抢过来只会让人骂 ✗）。最多记最近 20 条 ✓。</div>
+				<label class="field"><input type="checkbox" id="kbCaret"> <b>长按输入框再左右拖：移动光标</b></label>
+				<div class="hint">默认<b>关</b> ✗：长按会跟系统自己的"选词 / 放大镜"打架 ✓。想要终端那种手感再打开 ✓。</div>
+				<label class="field"><input type="checkbox" id="kbFold"> <b>长回答默认折起来</b>（只看开头几行）</label>
+				<div class="hint">长回答只露前 8 行，剩下的点「展开全文」✓；**代码块超过 18 行也会折** ✓（点开不跳动 ✓）。
+					表格会自动变成能左右滑的表 ✓。关掉它就全部铺开 ✓。</div>
+				<div class="hint" id="kbHint"></div>
 			</div>
 		</section>
 		<!-- 2.8.0 ★2「安全审计 + 陌生设备提醒」：谁登录过、从哪来、有没有陌生设备 ✓；
@@ -2429,7 +2471,7 @@
 	 * （冷视角复查抓到 2.8.0 的 `secopen`、2.9.0 的 `backupopen` 都漏在这儿 ✗ —— 顺手补上 ✓）。
 	 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
+		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -2712,11 +2754,167 @@
 		return html
 	}
 
+	/* --------- 长回答 / 代码 / 表格怎么读（2.10.0 ★7）--------- */
+	/*
+	 * 用户要的：「长输出默认折叠（只看结论 ✓）、代码高亮 ✓、表格横向滑动 ✓、长代码折叠 ✓」。
+	 *
+	 * 四条实现纪律：
+	 *   ① **零依赖手写** ✓（和二维码一个路子 ✓）：代码高亮 = 字符串/注释/数字/关键字四类，
+	 *      够读就行 ✗ 不做完整词法分析；**一有疑问就退回纯文本** ✓（宁可不高亮，也不能改坏内容 ✗）。
+	 *   ② **折叠用原生 `<details>`** ✓（和「💭 思考过程」同一招 ✓）：不写状态机、不重排、
+	 *      展开/收起不触发重绘 → 滚动位置不会跳 ✓（手机上千金难买 ✓）。
+	 *   ③ **超长就降级** ✓：单条 > 24KB 只做转义 ✓（流式输出每 80ms 重画一次，
+	 *      在 100KB 的文本上跑正则 + 折叠，等于把帧率喂给排版 ✓）。
+	 *   ④ **表格要能横滑** ✓：外面包一层 `overflow-x:auto` ✓（手机上表格最大的毛病就是被压成面条 ✓）。
+	 */
+	const RICH_MAX_BYTES = 24 * 1024
+	const CODE_FOLD_LINES = 18
+	const TEXT_FOLD_LINES = 22
+	const HL_KEYWORDS = new Set(('const let var function return if else for while do class extends new import from export default async await try catch finally throw typeof instanceof in of null undefined true false '
+		+ 'def elif lambda None True False self and or not with as pass raise yield global nonlocal assert del except print '
+		+ 'struct func package interface type enum map chan go defer select switch case break continue public private static void int bool string '
+		+ 'SELECT FROM WHERE INSERT UPDATE DELETE CREATE TABLE JOIN GROUP ORDER BY LIMIT').split(/\s+/).filter((word) => word !== ''))
+
+	/** 极简高亮：**先把原文切块、每块自己转义** ✓ —— 绝不在已转义文本上再套正则（那会啃到实体 ✗）。 */
+	function highlightCode(raw) {
+		const src = String(raw ?? '')
+		if (src.length > 8000) return escapeHtml(src)   // 太长的块不值得高亮 ✓（先保内容 ✓）
+		let out = ''
+		let i = 0
+		const word = (ch) => /[A-Za-z0-9_$]/.test(ch)
+		while (i < src.length) {
+			const ch = src[i]
+			// 字符串（含模板串；反引号里不递归 ✗ 够用 ✓）
+			if (ch === '"' || ch === "'" || ch === '`') {
+				let j = i + 1
+				while (j < src.length && src[j] !== ch) {
+					if (src[j] === '\\') j += 1
+					j += 1
+				}
+				j = Math.min(j + 1, src.length)
+				out += '<span class="hl-s">' + escapeHtml(src.slice(i, j)) + '</span>'
+				i = j
+				continue
+			}
+			// 注释：// … 或 # …（只在行首/空白后认 # ✓，免得把 url 里的 # 当注释 ✗）
+			if ((ch === '/' && src[i + 1] === '/') || (ch === '#' && (i === 0 || /[\s;,([{]/.test(src[i - 1])))) {
+				let j = src.indexOf('\n', i)
+				if (j < 0) j = src.length
+				out += '<span class="hl-c">' + escapeHtml(src.slice(i, j)) + '</span>'
+				i = j
+				continue
+			}
+			// 数字
+			if (/[0-9]/.test(ch) && (i === 0 || word(src[i - 1]) === false)) {
+				let j = i
+				while (j < src.length && /[0-9a-fA-FxX._]/.test(src[j])) j += 1
+				out += '<span class="hl-n">' + escapeHtml(src.slice(i, j)) + '</span>'
+				i = j
+				continue
+			}
+			// 单词（含关键字）
+			if (word(ch)) {
+				let j = i
+				while (j < src.length && word(src[j])) j += 1
+				const token = src.slice(i, j)
+				out += HL_KEYWORDS.has(token)
+					? '<span class="hl-k">' + escapeHtml(token) + '</span>'
+					: escapeHtml(token)
+				i = j
+				continue
+			}
+			out += escapeHtml(ch)
+			i += 1
+		}
+		return out
+	}
+
+	/** 行内：`**粗**` 与 `` `代码` `` ✓（先转义、再套这两条 —— 只认我们自己插的标签 ✓）。 */
+	function inlineFormat(text) {
+		return escapeHtml(text)
+			.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+			.replace(/`([^`]+)`/g, '<code class="inline">$1</code>')
+	}
+
+	/** 一坨代码块：长就折叠 ✓（原生 `<details>`，展开不重排 ✓）。 */
+	function codeBlockHtml(code, lang) {
+		const body = highlightCode(code)
+		const lines = String(code ?? '').split('\n').length
+		const label = lang === '' ? '代码' : lang
+		if (lines <= CODE_FOLD_LINES) {
+			return '<div class="prewrap"><div class="prehead">' + escapeHtml(label) + ' · ' + lines + ' 行</div><pre class="code"><code>' + body + '</code></pre></div>'
+		}
+		return '<details class="prewrap codefold"><summary>' + escapeHtml(label) + ' · ' + lines + ' 行（点开看全文）</summary>'
+			+ '<pre class="code"><code>' + body + '</code></pre></details>'
+	}
+
+	/** `| a | b |` 那种表：连续行成一组 → 一张能横滑的表 ✓。 */
+	function tableHtml(rows) {
+		const cells = (line) => line.replace(/^\s*\|/, '').replace(/\|\s*$/, '').split('|').map((cell) => cell.trim())
+		const head = cells(rows[0])
+		const bodyRows = rows.slice(2).map(cells)
+		const headHtml = '<tr>' + head.map((cell) => '<th>' + inlineFormat(cell) + '</th>').join('') + '</tr>'
+		const bodyHtml = bodyRows.map((row) => '<tr>' + head.map((_, index) => '<td>' + inlineFormat(row[index] ?? '') + '</td>').join('') + '</tr>').join('')
+		return '<div class="tablewrap"><table><thead>' + headHtml + '</thead><tbody>' + bodyHtml + '</tbody></table></div>'
+	}
+
+	/**
+	 * 把一段正文渲染成 HTML（★7）：代码块 / 表格 / 行内格式 ✓；**太长就折起来** ✓。
+	 * `fold === false` 时不折（用户在 ⌨ 里关掉了「长回答默认折叠」✓）。
+	 */
+	function richText(raw, fold) {
+		const text = String(raw ?? '')
+		// ③ 超长降级：只转义 + 保留换行 ✓（不跑正则、不折叠 ✓）。
+		if (text.length > RICH_MAX_BYTES) return '<div class="plainlong">' + escapeHtml(text) + '</div>'
+		const lines = text.split(/\r?\n/)
+		const out = []
+		let index = 0
+		while (index < lines.length) {
+			const line = lines[index]
+			// 围栏代码块
+			const fence = /^\s*```(.*)$/.exec(line)
+			if (fence !== null) {
+				const lang = String(fence[1] ?? '').trim()
+				const code = []
+				index += 1
+				while (index < lines.length && /^\s*```/.test(lines[index]) === false) { code.push(lines[index]); index += 1 }
+				index += 1   // 吃掉收尾围栏（没有也能收 ✓）
+				out.push(codeBlockHtml(code.join('\n'), lang))
+				continue
+			}
+			// 表格：连着两行以上、且每行都有竖线 ✓
+			if (/^\s*\|.*\|\s*$/.test(line) && index + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[index + 1])) {
+				const rows = []
+				while (index < lines.length && /^\s*\|.*\|\s*$/.test(lines[index])) { rows.push(lines[index]); index += 1 }
+				out.push(tableHtml(rows))
+				continue
+			}
+			// 普通文字：攒到下一个"特殊行"再一起渲染 ✓
+			const chunk = []
+			while (index < lines.length && /^\s*```/.test(lines[index]) === false
+				&& /^\s*\|.*\|\s*$/.test(lines[index]) === false) {
+				chunk.push(lines[index])
+				index += 1
+			}
+			const html = chunk.map((item) => inlineFormat(item)).join('<br>')
+			const many = chunk.length > TEXT_FOLD_LINES
+			if (many === true && fold !== false) {
+				// 「只看结论」：**头几行露在外面** ✓（结论通常在开头 ✓），其余折进 details ✓。
+				const head = chunk.slice(0, 8).map((item) => inlineFormat(item)).join('<br>')
+				const rest = chunk.slice(8).map((item) => inlineFormat(item)).join('<br>')
+				out.push(head + '<details class="fold"><summary>展开全文（共 ' + chunk.length + ' 行）</summary><div class="foldbody">' + rest + '</div></details>')
+			} else {
+				out.push(html)
+			}
+		}
+		return out.join('')
+	}
+
 	function blocksToHtml(blocks, sessionId) {
 		let html = ''
 		for (const block of blocks || []) {
 			if (!block || typeof block !== 'object') continue
-			if (block.type === 'text') html += escapeHtml(block.text) + mediaPathHtml(block.text)
+			if (block.type === 'text') html += richText(block.text, kbOn('dshm.foldLong', true)) + mediaPathHtml(block.text)
 			else if (block.type === 'reasoning') html += '<div class="think-body">' + escapeHtml(block.text) + '</div>'
 			else if (block.type === 'image' && block.attachment) html += imageTag(sessionId, block.attachment)
 			else if (block.type === 'file' && block.attachment) html += '<div class="note">附件：' + escapeHtml(block.attachment.name || '文件') + '</div>'
@@ -4787,6 +4985,9 @@
 		// 运行中发的这条进的是队列（queue = 追加到当前回合之后），对话里不会马上
 		// 出现。必须回一句，否则用户看到"发了没反应"，只会以为又卡住了。
 		const interjecting = state.running
+		// 2.10.0 ★6：把"发出去的话"记进 ↑ 的历史 ✓（记的是**你打的那句** ✓，
+		// 之后它成没成不影响"我刚打过这句"这个事实 ✓）。
+		historyPush(body)
 		// 认准"我发的是哪个会话"：失败回包可能在用户已经换会话之后才到。
 		const target = state.sessionId
 		// 「常用 A」（2.5.0）：发一条也算用过这个会话 —— 切过去已经记过一次，这里再 +1 是
@@ -6670,7 +6871,7 @@
 	const BACKUP_MARK = 'dsh-plugin-mobile-bridge/phone-backup'
 	const BACKUP_VERSION = 1
 	/** 白名单**同时**是导出与导入的边界 ✓（两个方向用同一份，才不会有"导得出、导不回"✗）。 */
-	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top']
+	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong']
 	const BACKUP_MAX_BYTES = 512 * 1024
 	const BACKUP_MAX_VALUE = 200 * 1024
 
@@ -7640,9 +7841,152 @@
 			body: JSON.stringify({ sessionId: state.sessionId }),
 		}).catch((error) => flash('取消失败：' + error.message))
 	})
+	/* --------- 键盘手感（2.10.0 ★6「终端式键盘手感」）--------- */
+	/*
+	 * 用户要的三样：**↑ 取上一条** ✓ / **Enter 发送或换行可切** ✓ / **长按移动光标** ✓。
+	 *
+	 * 三条纪律（都是"别抢系统的活"）：
+	 *   · ↑ 只在这个框空着、**或光标就在第一行**时才接管 ✓ —— 框里写了多行时，↑/↓ 就是
+	 *     "看上一行"，抢过来只会让人骂 ✗；
+	 *   · Enter 的默认行为**保持原样**（换行 ✓，不改老习惯 ✗），想"回车即发送"得自己勾 ✓；
+	 *   · 会跟**系统手势**打架的那一样（长按拖光标）**默认关** ✓，并在界面上写明原因 ✓
+	 *     （手机上长按输入框本来会弹"选词 / 放大镜" ✗ —— 硬抢只会两败俱伤 ✓）。
+	 * 三样都存在这台手机上（`localStorage` ✓，并进备份 ✓）。
+	 */
+	const KB_KEYS = { enter: 'dshm.enterSend', history: 'dshm.arrowHistory', caret: 'dshm.caretDrag', fold: 'dshm.foldLong' }
+	/** 开关：没写过就用默认值 ✓（'' = 从来没设置过）。 */
+	function kbOn(key, fallback) {
+		const raw = readLocal(key)
+		return raw === '' ? fallback === true : raw === '1'
+	}
+
+	/** 已发消息的历史（↑/↓ 用）：最多 20 条 ✓，连着发同一条不重复记 ✓。 */
+	const kbHistory = { items: [], at: -1, draft: '' }
+
+	function historyLoad() {
+		try {
+			const parsed = JSON.parse(readLocal('dshm.history') || '[]')
+			kbHistory.items = Array.isArray(parsed) ? parsed.filter((item) => typeof item === 'string' && item !== '').slice(-20) : []
+		} catch { kbHistory.items = [] }
+	}
+
+	function historyPush(value) {
+		const entry = String(value ?? '').trim()
+		if (entry === '') return
+		if (kbHistory.items[kbHistory.items.length - 1] === entry) return
+		kbHistory.items.push(entry)
+		if (kbHistory.items.length > 20) kbHistory.items = kbHistory.items.slice(-20)
+		kbHistory.at = -1
+		writeLocal('dshm.history', JSON.stringify(kbHistory.items))
+	}
+
+	function renderKeyboardSettings() {
+		const enter = $('kbEnter')
+		if (enter !== null) enter.checked = kbOn(KB_KEYS.enter, false)
+		const history = $('kbHistory')
+		if (history !== null) history.checked = kbOn(KB_KEYS.history, true)
+		const caret = $('kbCaret')
+		if (caret !== null) caret.checked = kbOn(KB_KEYS.caret, false)
+		const fold = $('kbFold')
+		if (fold !== null) fold.checked = kbOn(KB_KEYS.fold, true)
+		const hint = $('kbHint')
+		if (hint !== null) {
+			setDelText('kbHint', kbHistory.items.length === 0
+				? '↑ 的历史还是空的 —— 从这个手机发一条消息就会记下来 ✓'
+				: `↑ 的历史里已经记了 ${kbHistory.items.length} 条 ✓（最近一条：${kbHistory.items[kbHistory.items.length - 1].slice(0, 24)}…）`)
+		}
+	}
+
+	function openKeyboard() {
+		historyLoad()
+		renderKeyboardSettings()
+		show($('kbopen'))
+	}
+
+	const KB_TOGGLES = [[KB_KEYS.enter, 'kbEnter'], [KB_KEYS.history, 'kbHistory'], [KB_KEYS.caret, 'kbCaret'], [KB_KEYS.fold, 'kbFold']]
+	for (const [key, id] of KB_TOGGLES) {
+		const box = $(id)
+		if (box === null) continue
+		box.addEventListener('change', () => {
+			writeLocal(key, box.checked === true ? '1' : '0')
+			renderKeyboardSettings()
+			// ★7 那个开关会影响**已经画出来的**对话（要不要折）→ 改完立刻重画一遍 ✓。
+			if (key === KB_KEYS.fold) scheduleRender()
+		})
+	}
+	$('kbBtn').addEventListener('click', () => { openKeyboard() })
+	$('kbBack').addEventListener('click', () => hide($('kbopen')))
+
+	/*
+	 * 输入框上的键盘处理：先把原来那条 Ctrl/Cmd+Enter 的行为**变宽**（多一个 Enter 模式 ✓），
+	 * 再接 ↑/↓ 的历史 ✓。
+	 */
 	text.addEventListener('keydown', (event) => {
-		if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) send()
+		// ① Enter：Ctrl / ⌘ + Enter 一直是发送 ✓；勾了「Enter 直接发送」时，裸 Enter 也发送 ✓（Shift 例外 ✓）。
+		if (event.key === 'Enter') {
+			const withModifier = event.metaKey === true || event.ctrlKey === true
+			if (withModifier === true || (kbOn(KB_KEYS.enter, false) === true && event.shiftKey !== true)) {
+				event.preventDefault()
+				send()
+			}
+			return
+		}
+		// ② ↑/↓：取上一条 / 往回翻 ✓（只在不会抢"看上一行"的时候 ✓）。
+		if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+		if (kbOn(KB_KEYS.history, true) !== true || kbHistory.items.length === 0) return
+		const up = event.key === 'ArrowUp'
+		const value = String(text.value ?? '')
+		const pos = Number(text.selectionStart ?? 0)
+		if (up === true && value.slice(0, pos).includes('\n')) return
+		if (up !== true && value.slice(pos).includes('\n')) return
+		event.preventDefault()
+		if (kbHistory.at === -1) kbHistory.draft = value
+		const next = up === true
+			? Math.min(kbHistory.at + 1, kbHistory.items.length - 1)
+			: kbHistory.at - 1
+		kbHistory.at = next
+		text.value = next < 0 ? kbHistory.draft : kbHistory.items[kbHistory.items.length - 1 - next]
+		growComposer()
+		// 光标放到末尾 ✓（接着改刚才那句话是最常见的用法 ✓）。
+		try { text.setSelectionRange(text.value.length, text.value.length) } catch { /* 有的环境不支持，无所谓 */ }
 	})
+
+	/*
+	 * ③ 长按输入框再左右拖：移光标（**默认关** ✓，见上面那句"别抢系统的活"）。
+	 * 手指按住 350ms 才"上膛" ✓，之后横向拖动按 ~12px 一个字移动光标 ✓；
+	 * 没上膛就抬手 = 普通点击（正常放光标 ✓）—— 不改变"点一下"的语义 ✓。
+	 */
+	let caretDrag = null
+	text.addEventListener('touchstart', (event) => {
+		if (kbOn(KB_KEYS.caret, false) !== true) return
+		const touch = event.touches?.[0]
+		if (touch === undefined) return
+		caretDrag = {
+			x: touch.clientX,
+			start: Number(text.selectionStart ?? 0),
+			armed: false,
+			timer: 0,
+		}
+		caretDrag.timer = setTimeout(() => { if (caretDrag !== null) caretDrag.armed = true }, 350)
+	}, { passive: true })
+	text.addEventListener('touchmove', (event) => {
+		if (caretDrag === null || caretDrag.armed !== true) return
+		const touch = event.touches?.[0]
+		if (touch === undefined) return
+		const dx = touch.clientX - caretDrag.x
+		if (Math.abs(dx) < 6) return
+		event.preventDefault()   // 别让系统顺手去选词 ✓（要 `{ passive: false }` 才有效 ✓）
+		const limit = String(text.value ?? '').length
+		const next = Math.max(0, Math.min(limit, caretDrag.start + Math.round(dx / 12)))
+		try { text.setSelectionRange(next, next) } catch { /* 同上 */ }
+	}, { passive: false })
+	const endCaretDrag = () => {
+		if (caretDrag !== null && caretDrag.timer !== 0) clearTimeout(caretDrag.timer)
+		caretDrag = null
+	}
+	text.addEventListener('touchend', endCaretDrag)
+	text.addEventListener('touchcancel', endCaretDrag)
+	historyLoad()
 
 	$('createBtn').addEventListener('click', createTask)
 	$('newBack').addEventListener('click', () => {
