@@ -443,6 +443,14 @@
 
 	#banner { padding: 8px 12px; font-size: 12px; background: var(--banner-bg); color: var(--banner-ink); border-bottom: 1px solid var(--banner-line); flex: none; }
 
+	/* 2.8.0 ★12「实时耗时 / token 跳动」：跑任务时它挂在顶部条下面 ✓（跑完留一会儿就收 ✓）。
+	   等宽字体：数字每秒都在跳，比例字体下整行会左右抖 ✓。 */
+	#runstrip {
+		flex: none; padding: 4px 12px; font: 11px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+		background: var(--panel); color: var(--muted); border-bottom: 1px solid var(--line);
+		white-space: nowrap; overflow-x: auto;
+	}
+
 	#composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); padding: 8px 10px; box-shadow: var(--glass-edge); }
 	#thumbs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; }
 	#thumbs:empty { display: none; }
@@ -857,6 +865,10 @@
 		</div>
 	</header>
 
+	<!-- 2.8.0 ★12「实时耗时 / token 跳动」：已跑多久、这一轮烧了多少 ✓。
+	     内容由 JS 现算（读不到就不显示这一条 ✗ 绝不编一个数字 ✓）。 -->
+	<div id="runstrip" data-display="block" style="display:none"></div>
+
 	<!-- 断线提示条。以前断线只是把一个 9 像素的圆点变红，一个字都不说 ——
 	     用户只能自己发现"怎么不动了"。现在它站在所有页签上方，直接讲清楚
 	     发生了什么、以及能怎么办。 -->
@@ -903,6 +915,7 @@
 					<button id="schBtn" title="定时任务：到点把一句话发进这个会话（每晚 23:00 这类）">📅</button>
 					<button id="roBtn" title="只看不发：出门看进度时一键锁住发送，不怕误触（再点一下解锁）">🔓</button>
 					<button id="checkBtn" title="一键自检：哪一环不对、以及"怎么办"（只读，不会启动任何东西）">🩺</button>
+					<button id="secBtn" title="安全审计：谁登录过、从哪来、有没有陌生设备；一键踢掉其它设备（要输 PIN）">🛡</button>
 		<!-- 只看不发（2.7.0 池子里的 ★7）：**防误触**，不是安全边界 ✗ —— 真安全靠 PIN + 令牌 ✓。 -->
 		<div id="roStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482000;background:rgba(178,120,20,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px">🔒 只看不发 —— 点右上角 🔓 才发得出去（刷新也保持 ✓）</div>
 		<!-- 离线发件箱（2.7.0 池子里的 ★8）：没网也能先写 ✓，有网自动发 ✓。点一下立刻重试 ✓。 -->
@@ -916,6 +929,26 @@
 				<button class="iconbtn" id="checkRefresh">重新检查</button>
 			</div>
 			<div class="scroll pad" id="checkBody"></div>
+			<!-- 2.8.0 ★4「诊断包」：出问题时别只说"不 work" ✓ —— 一键拿一份**脱敏后**的日志包 ✓。
+			     写成普通 <a download>（和"导出 Markdown"同一套 ✓）：同源自动带 cookie ✓，不用额外代码 ✓。 -->
+			<div class="actions" style="flex:none;padding:8px 14px 4px">
+				<a class="go" id="diagGo" download href="api/diag" style="text-decoration:none;text-align:center;line-height:2.4">📦 下载诊断包</a>
+			</div>
+			<div class="hint" style="flex:none;padding:0 14px calc(12px + env(safe-area-inset-bottom))">
+				包里是<b>自检结果 + 最近的日志 + 登录账</b>（PIN 与网址里的密钥段会被替换掉 ✓）。
+				连不上、发送失败、审批没弹出来这类问题，先下这一份发出去，比描述一百句都准 ✓。
+			</div>
+		</section>
+		<!-- 2.8.0 ★2「安全审计 + 陌生设备提醒」：谁登录过、从哪来、有没有陌生设备 ✓；
+		     「踢掉其它设备」要**现输 PIN** ✓（它是收回权限 ✓ —— 和"删除会话"同级 ✓）。 -->
+		<section class="sheet" id="secopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="secBack">← 返回</button>
+				<span class="title">安全审计</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="secRefresh">刷新</button>
+			</div>
+			<div class="scroll pad" id="secBody"></div>
 		</section>
 				</div>
 				<div id="compose">
@@ -1428,6 +1461,14 @@
 		live: null,
 		reasoning: null,
 		running: false,
+		/**
+		 * 正在**重放**历史（快照 / 增量快照）时为 true。
+		 *
+		 * 2.8.0 ★12 用它：重放出来的 `turn/start`…`turn/end` 是**已经跑完**的一轮 ✓ ——
+		 * 计时状态要恢复（这样"手机重开页面"时正在跑的那一轮接着算 ✓），但**不能弹条** ✗
+		 * （一打开就显示"上一轮 3:21"只会让人以为自己刚才在跑东西 ✓）。
+		 */
+		replay: false,
 		source: null,
 		images: [],
 		imageCache: new Map(),
@@ -1457,6 +1498,8 @@
 		booted: false,
 		/** 连接状态 live / stale / down —— 决定顶部那条提示说什么。 */
 		link: 'live',
+		/** 2.8.0 ★2：这次打开有没有已经提过"近 24 小时有新设备登录过"（只提一句 ✓）。 */
+		newDeviceTold: false,
 		/** 当前会话是不是空的（用来解释"为什么一片白"）。 */
 		sessionBlank: false,
 		/** 宿主当前的正式对外地址（含密钥段），从 localStorage 恢复。 */
@@ -1743,16 +1786,166 @@
 		if (state.running) show(stopBtn); else hide(stopBtn)
 	}
 
+	/* --------- 实时耗时 / token 跳动（2.8.0 ★12）--------- */
+	/*
+	 * 用户要的：「跑任务时显示已用时间 + 消耗 ✓」（和"花费"那套配套 ✓）。
+	 *
+	 * 四个来源，每个都**如实**：
+	 *   · 时间：从 `turn/start` 那一刻起算 ✓ —— 用**事件自己的 `time`** ✓，所以"手机重开
+	 *     页面、把这一轮的 turn/start 一起重放回来"时计时接着走 ✓（不是从打开那一刻重算 ✗）；
+	 *   · 这一轮 token：`assistant/message` 里的 `data.usage` 累加 ✓（宿主报的 ✓）；
+	 *   · 本会话累计：会话行上的 `usage`（宿主的 tokenUsage 投影 ✓，桥在 summarize 里带出来 ✓）；
+	 *   · **读不到就不显示那一段** ✗：宿主没报 usage 时只显示时间 ✓，绝不编一个 token 数 ✓。
+	 */
+	const run = { sessionId: '', startedAt: 0, usage: null, finishedAt: 0, timer: 0, hideTimer: 0 }
+
+	/** 123456 → "123k" / "1.23M"（顶部那一条只有几十像素宽 ✓）。 */
+	function fmtTok(count) {
+		const value = Number(count)
+		if (Number.isFinite(value) === false || value <= 0) return '0'
+		if (value < 1000) return String(Math.round(value))
+		if (value < 1000000) return (value / 1000).toFixed(1) + 'k'
+		return (value / 1000000).toFixed(2) + 'M'
+	}
+
+	/** 毫秒 → "3:07"（小时级就写成 "1:02:09"，免得看成一个巨大的分钟数 ✓）。 */
+	function fmtElapsed(ms) {
+		const total = Math.max(0, Math.floor(Number(ms) / 1000))
+		const hours = Math.floor(total / 3600)
+		const minutes = Math.floor((total % 3600) / 60)
+		const seconds = total % 60
+		if (hours > 0) return hours + ':' + String(minutes).padStart(2, '0') + ':' + String(seconds).padStart(2, '0')
+		return minutes + ':' + String(seconds).padStart(2, '0')
+	}
+
+	function renderRun() {
+		const box = $('runstrip')
+		if (box === null) return
+		// 换了会话 → 整条作废 ✓（别把上一个会话的耗时挂在新会话上 ✗）。
+		if (run.sessionId !== '' && run.sessionId !== state.sessionId) {
+			run.sessionId = ''
+			run.startedAt = 0
+			run.usage = null
+			run.finishedAt = 0
+		}
+		// 计时器跟着"跑没跑"自动开关 ✓（只留一个 ✓）。
+		// ⚠️ 连接**断了**就不再走表 ✓（冷视角复查：SSE 断在 `turn/end` 之前时，`state.running`
+		// 会一直停在 true，于是一个早已失联的回合能"跑"到天荒地老 ✗ —— 那种情况下
+		// 我们**根本不知道**它还在不在跑，所以如实收起来 ✓）。链路恢复后 turn/end 一到就正常收尾 ✓。
+		const busy = state.running === true && state.link !== 'down'
+		if (busy === true && run.timer === 0) run.timer = setInterval(() => renderRun(), 1000)
+		if (busy !== true && run.timer !== 0) { clearInterval(run.timer); run.timer = 0 }
+		const parts = []
+		if (busy === true) parts.push(run.startedAt > 0 ? '⏱ 已跑 ' + fmtElapsed(Date.now() - run.startedAt) : '⏱ 运行中')
+		else if (run.startedAt > 0 && run.finishedAt > 0) parts.push('✓ 这一轮 ' + fmtElapsed(run.finishedAt - run.startedAt))
+		if (run.usage !== null && (run.usage.input > 0 || run.usage.cacheRead > 0 || run.usage.output > 0)) {
+			// ⚠️ 宿主的 `inputTokens` 是**未命中缓存**的那部分 ✓（token-meter 把它折成
+			// `uncachedInputTokens`）—— 所以"输入总量"要把缓存读/写一起加上 ✓，否则
+			// 一个走了缓存的长上下文会显示成很小的数 ✗。
+			parts.push('本轮 ↑' + fmtTok(run.usage.input + run.usage.cacheRead + run.usage.cacheWrite) + ' ↓' + fmtTok(run.usage.output))
+		}
+		const entry = currentSessionEntry()
+		if (entry !== null && entry !== undefined && entry.usage !== null && entry.usage !== undefined) {
+			parts.push('本会话累计 ↑' + fmtTok(entry.usage.input) + ' ↓' + fmtTok(entry.usage.output))
+		}
+		if (parts.length === 0) { box.textContent = ''; hide(box); return }
+		box.textContent = parts.join('   ·   ')
+		show(box)
+	}
+
+	/** 一轮开始（`turn/start`）：记下起点 ✓。重放时只记状态、不弹条 ✓。 */
+	function startRun(at, sessionId) {
+		/*
+		 * 起点必须是个**说得通的时间**：宿主写的是墙钟毫秒 ✓，但事件里的 `time` 一旦畸形
+		 * （0 / 未来 / 一天以前），`Date.now() - startedAt` 就会算出"已跑 500000:00" ✗。
+		 * 明显不对就退回本地时间 ✓（宁可少算几秒，也不给用户一个荒唐的数字 ✓）。
+		 */
+		const stamp = Number(at)
+		const sane = Number.isFinite(stamp) && stamp > 0 && stamp <= Date.now() + 60000 && Date.now() - stamp < 86400000
+		run.sessionId = sessionId
+		run.startedAt = sane ? stamp : Date.now()
+		run.usage = null
+		run.finishedAt = 0
+		if (run.hideTimer !== 0) { clearTimeout(run.hideTimer); run.hideTimer = 0 }
+		if (state.replay === true) return
+		renderRun()
+	}
+
+	/** 一轮结束（`turn/end`）：留 60 秒给用户回看"刚才用了多久、烧了多少" ✓，然后自己收走 ✓。 */
+	function endRun() {
+		if (run.startedAt === 0) { renderRun(); return }
+		if (state.replay === true) {
+			// 重放回来的是**已经跑完的**一轮：把状态收干净 ✓，但不弹"这一轮…" ✗。
+			run.startedAt = 0
+			run.finishedAt = 0
+			run.usage = null
+			renderRun()
+			return
+		}
+		run.finishedAt = Date.now()
+		renderRun()
+		if (run.hideTimer !== 0) clearTimeout(run.hideTimer)
+		run.hideTimer = setTimeout(() => {
+			run.hideTimer = 0
+			run.startedAt = 0
+			run.finishedAt = 0
+			run.usage = null
+			renderRun()
+		}, 60000)
+	}
+
+	/** 把宿主报的一段 usage 并进"这一轮"的账 ✓（字段名照宿主 ✓：inputTokens / outputTokens / cache*）。 */
+	function addRunUsage(usage) {
+		if (usage === null || usage === undefined || typeof usage !== 'object') return
+		const current = run.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+		current.input += Number(usage.inputTokens ?? 0) || 0
+		current.output += Number(usage.outputTokens ?? 0) || 0
+		current.cacheRead += Number(usage.cacheReadTokens ?? 0) || 0
+		current.cacheWrite += Number(usage.cacheWriteTokens ?? 0) || 0
+		run.usage = current
+		if (state.replay !== true) renderRun()
+	}
+
 	let flashTimer = 0
-	/** 顶部条说一句话。autoHideMs > 0 时到点自己收走，免得一句提示挂一整天。 */
-	function flash(message, autoHideMs = 0) {
-		banner.textContent = message
+	/** 条幅上那个键要干什么（2.8.0 ★4 的「重试」✓）；null = 这一句没带键 ✓。 */
+	let flashAction = null
+	/**
+	 * 顶部条说一句话。autoHideMs > 0 时到点自己收走，免得一句提示挂一整天。
+	 *
+	 * 2.8.0 ★4：多一个可选的 `action = {label, run}` ✓ —— 出错时给一个**能点的「重试」** ✓
+	 * （用户的痛：一句"发送失败"之后只能自己再想一遍刚才做了什么 ✓）。
+	 * 说清纪律：按钮只负责"把刚才那件事再做一次" ✓，**成功与否仍由那段代码自己说** ✗（不编成功 ✓）。
+	 */
+	function flash(message, autoHideMs = 0, action = null) {
+		flashAction = action === null || action === undefined ? null : action
+		// ⚠️ 这里是 innerHTML（要放那个「重试」键 ✓）—— 所以消息必须先转义 ✓；
+		// 而换行要自己变成 `<br>` ✗：HTML 会把 `\n` 当空白折掉，多行提示会变成一长行 ✓。
+		const text = escapeHtml(String(message)).replace(/\r?\n/g, '<br>')
+		banner.innerHTML = flashAction === null
+			? text
+			: text + ' <button id="flashGo" style="margin-left:8px;padding:3px 12px;font:inherit;border:0;border-radius:6px;background:rgba(255,255,255,.22);color:inherit">'
+				+ escapeHtml(String(flashAction.label ?? '重试')) + '</button>'
 		show(banner)
 		if (flashTimer !== 0) { clearTimeout(flashTimer); flashTimer = 0 }
 		if (autoHideMs > 0) {
-			flashTimer = setTimeout(() => { flashTimer = 0; hide(banner) }, autoHideMs)
+			flashTimer = setTimeout(() => { flashTimer = 0; flashAction = null; hide(banner) }, autoHideMs)
 		}
 	}
+
+	/*
+	 * 条幅上的键用**事件委托**（绑在 banner 这个不会重建的容器上 ✓）：`flash()` 每次都会把
+	 * innerHTML 换掉，按钮本身留不住监听器 ✓。点完先把条幅收掉再跑 —— 否则用户看着一句话
+	 * 还以为没反应 ✗。判据用 `closest` 而不是 `target.id` ✓：万一以后键里包一层（图标/加粗），
+	 * `target` 就不是按钮本身了，点下去会**毫无反应** ✓（冷视角复查提醒过这一点 ✓）。
+	 */
+	banner.addEventListener('click', (event) => {
+		const button = event.target?.closest?.('#flashGo') ?? null
+		if (button === null) return
+		const action = flashAction
+		flashAction = null
+		hide(banner)
+		if (action !== null && typeof action.run === 'function') action.run()
+	})
 
 	/* --------------------------------------------------------- 连接状态 */
 
@@ -2923,6 +3116,8 @@
 			case 'assistant/message': {
 				state.live = null
 				state.reasoning = null
+				// 2.8.0 ★12：宿主报的 token 用量就在这条消息上（`data.usage` ✓）—— 累进"这一轮" ✓。
+				if (data.usage !== undefined) addRunUsage(data.usage)
 				const message = data.message || {}
 				const { reasoning, rest } = splitAssistant(message.content)
 				const last = state.items[state.items.length - 1]
@@ -2975,6 +3170,8 @@
 			case 'turn/start':
 				state.running = true
 				setStatus('busy')
+				// 2.8.0 ★12：计时从**事件自己的时间**起算 ✓（重放时也照算 ✓，见 startRun）。
+				startRun(Number(event.time) > 0 ? Number(event.time) : Date.now(), state.sessionId)
 				break
 			/*
 			 * 2.6.0：宿主把"下一次请求用哪个模型"写在 `request/header` 里（桌面端换模型、
@@ -2996,6 +3193,7 @@
 				state.live = null
 				state.reasoning = null
 				setStatus('live')
+				endRun()
 				break
 		}
 	}
@@ -3043,9 +3241,18 @@
 		state.tools = new Map()
 		state.live = null
 		state.reasoning = null
-		for (const record of frame.records || []) {
-			if (record && record.type === 'event' && record.event) applyEvent(record.event)
+		// 2.8.0 ★12：这一整段是**重放** ✓ —— 计时状态照恢复 ✓，但顶部那条不弹 ✗（见 state.replay）。
+		state.replay = true
+		try {
+			for (const record of frame.records || []) {
+				if (record && record.type === 'event' && record.event) applyEvent(record.event)
+			}
+		} finally {
+			state.replay = false
 		}
+		// 重放里若有**还在跑**的那一轮，状态已经恢复好 ✓ → 现在补一次重画，让它照常显示"已跑 X:XX" ✓
+		// （重放的是跑完的那一轮时，endRun 已把状态清干净，这里什么都不显示 ✓）。
+		renderRun()
 		// 整段快照是权威的：cursor 直接采用它（也顺手清掉上一个会话留下的值）。
 		if (typeof frame.cursor === 'number') state.cursor = frame.cursor
 		// 快照里已经有那句话了 → 本地回声让位（重连/刷新时最容易撞上重复）。
@@ -3060,8 +3267,13 @@
 	 */
 	function applyPartialSnapshot(frame) {
 		const records = Array.isArray(frame.records) ? frame.records : []
-		for (const record of records) {
-			if (record && record.type === 'event' && record.event) applyEvent(record.event)
+		state.replay = true
+		try {
+			for (const record of records) {
+				if (record && record.type === 'event' && record.event) applyEvent(record.event)
+			}
+		} finally {
+			state.replay = false
 		}
 		if (typeof frame.cursor === 'number' && frame.cursor > state.cursor) state.cursor = frame.cursor
 		reconcilePending()
@@ -4147,6 +4359,9 @@
 			? ''
 			: (sessPinned(prefs, item.sessionId) ? '📌 ' : (sessStarred(prefs, item.sessionId) ? '⭐ ' : ''))
 		sessBtn.textContent = mark + (item === undefined ? '还没有会话' : sessTitle(item)) + ' ▾'
+		// 2.8.0 ★12：会话列表一刷新就把顶部那条也重画 ✓ —— 会话行上带着宿主的累计 token ✓，
+		// 不重画的话，切会话/刚打开时那一段要等到下一个整秒才出现 ✓。
+		renderRun()
 	}
 
 	function sessRow(item, prefs) {
@@ -4338,6 +4553,25 @@
 			// 记着"这台电脑有没有背景"：换背景那张纸要据此显示「去掉背景」。
 			hasBackdrop = body.background !== null && body.background !== undefined
 			if (body.welcomed === true) welcomedOnServer = true
+			/*
+			 * 2.8.0 ★2「陌生设备提醒」在手机这一侧的落点 ✓：bootstrap 只给**时间**（不给 IP ✗ ——
+			 * IP 属于"要现输 PIN 才看得到"的那份账 ✓）。24 小时内出现过新设备就在 🛡 上挂个记号，
+			 * 并且**每次打开页面只提一句** ✓（一直弹就会变成没人看的噪音 ✗）。
+			 */
+			{
+				const newDeviceAt = Number(body.security?.newDeviceAt ?? 0)
+				const fresh = newDeviceAt > 0 && Date.now() - newDeviceAt < 24 * 3600 * 1000
+				const button = $('secBtn')
+				if (button !== null) {
+					button.title = fresh
+						? '安全审计：近 24 小时有新设备登录过（点开看是谁、要不要踢）'
+						: '安全审计：谁登录过、从哪来、有没有陌生设备；一键踢掉其它设备（要输 PIN）'
+				}
+				if (fresh === true && state.newDeviceTold !== true) {
+					state.newDeviceTold = true
+					flash('🆕 近 24 小时有新设备登录过这台电脑 —— 点 🛡 看看是不是你自己', 6000)
+				}
+			}
 			state.sessions = body.sessions || []
 			renderSessBar()
 			if (state.sessions.length === 0) {
@@ -4542,12 +4776,14 @@
 		}).catch((error) => {
 			// 上传是分片的：断了就再来一次（分片不做断点续传，但每片很小，重来不心疼）。
 			if (error.upload === true) {
-				flash('上传失败：' + error.message + '（网络慢或断了，再点一次「发送」会重传）', 7000)
+				// 2.8.0 ★4：**给一个能点的「重试」** ✓（输入框与附件都还在原地 ✓，重发就是再点一次发送 ✓）。
+				flash('上传失败：' + error.message + '（网络慢或断了）', 9000, { label: '重试', run: () => send() })
 				return
 			}
 			// 会话本身在手机上打不开（子会话）时不要甩一句"发送失败"——换一个会话才是出路。
 			if (error.unsupported === true) { markUnsupported(target, error.message); return }
-			flash('发送失败：' + error.message)
+			// 2.8.0 ★4：服务端明确拒绝（400/403/413）也给「重试」✓ —— 但话要说清是**没发出去** ✓。
+			flash('发送失败：' + error.message, 0, { label: '重试', run: () => send() })
 		})
 			.finally(() => { sendBtn.disabled = false })
 	}
@@ -5817,9 +6053,15 @@
 				return
 			}
 			clearGateRetry()
+			// 2.8.0 ★2：登录回包里带着 `firstSeen` ✓ —— 这个地址在这台电脑上**第一次**成功登录 ✓。
+			// 话说清"换网络/新手机都会这样" ✗ 不吓人 ✓（真正的陌生设备提醒在桌面角标与 🛡 里 ✓）。
+			const gateBody = await response.json().catch(() => ({}))
 			hide(gate)
 			show(app)
 			switchTab('task')
+			if (gateBody?.firstSeen === true) {
+				toast('这台设备在这台电脑上是第一次登录 —— 🛡 里能看到全部登录记录', 4200)
+			}
 			// 等会话列表回来（bootstrap 里带着宿主的"看过说明页"标记）再决定弹不弹。
 			loadSessions().then(() => maybeWelcome())
 		}).catch(() => {
@@ -6087,6 +6329,175 @@
 	$('checkBtn').addEventListener('click', () => { show($('checkopen')); void loadSelfcheck() })
 	$('checkBack').addEventListener('click', () => hide($('checkopen')))
 	$('checkRefresh').addEventListener('click', () => { void loadSelfcheck() })
+
+	/* --------- 安全审计 / 陌生设备（2.8.0 ★2）--------- */
+	/*
+	 * 用户要的：「登录历史 ✓；陌生 IP 第一次登录就通知 ✓；一键踢掉 ✓」。
+	 * 这一页做三件事：**有没有陌生设备** ✓ / **登录历史**（时间、地址、成没成 ✓）/
+	 * **现在还有几台设备在登录态** ✓ + 一个「踢掉其它设备」 ✓。
+	 *
+	 * 纪律（这一版按冷视角复查收紧过）：
+	 *   · **看这份账要现输 PIN** ✓ —— 里面有这台电脑的**网络史**（哪个地址登录过、现在几台在线 ✓），
+	 *     和"看电脑剪贴板 / 截图"同一级 ✓（`x-dsh-pin` 头，**绝不放进 URL** ✗）；
+	 *     PIN 只留在内存里（这次页面有效、刷新要重输 ✓），后面"踢设备"复用它 ✓（不用输两次 ✓）；
+	 *   · **读不到就直说读不到** ✗（不许编一行"全部正常" ✓）；
+	 *   · 踢设备默认**保留当前这台** ✓（点一下把自己也踢下线，用户只会以为按坏了 ✗）。
+	 */
+	const secPanel = { data: null, busy: false, pin: '' }
+
+	/** "哪一道 PIN 错的"说人话（服务端记的是 what ✓）。 */
+	const LOGIN_WHAT_TEXT = {
+		login: '登录',
+		'delete-session': '删除会话（PIN 不对）',
+		'kill-process': '结束进程（PIN 不对）',
+		'shutdown': '关机（PIN 不对）',
+		'restart': '重启（PIN 不对）',
+		'clipboard-or-screen': '剪贴板 / 截屏（PIN 不对）',
+		'share-link': '生成只读链接（PIN 不对）',
+		'revoke-devices': '踢设备（PIN 不对）',
+	}
+
+	function loginWhatText(what) {
+		const key = String(what ?? '')
+		return LOGIN_WHAT_TEXT[key] ?? (key === '' ? '未知操作' : key)
+	}
+
+	/** 还没输 PIN 时的那一屏：说清为什么要输、然后给一个输入框 ✓（照 📋 纸的做法 ✓）。 */
+	function renderSecurityGate(message) {
+		const box = $('secBody')
+		if (box === null) return
+		box.innerHTML = '<div class="syscard"><div class="sessgroup">看登录记录要先输 PIN</div>'
+			+ '<div class="hint">这份账里有<b>这台电脑的网络史</b>（谁从哪个地址登录过、现在还有几台在线）——'
+			+ '和“看电脑剪贴板 / 截图”同一级 ✓，所以要现输一次 PIN。'
+			+ 'PIN 只记在这次页面里（刷新要重输 ✓），踢设备时也用它 ✓。</div>'
+			+ '<div class="field"><label>输入 PIN（就是登录手机桥那个 6 位 PIN）</label>'
+			+ '<input class="plain" id="secPin" type="password" inputmode="numeric" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="12" placeholder="PIN">'
+			+ '<div class="hint" id="secError">' + escapeHtml(String(message ?? '')) + '</div></div>'
+			+ '<button class="primary" id="secSee">看登录记录</button></div>'
+	}
+
+	function renderSecurity() {
+		const box = $('secBody')
+		if (box === null || secPanel.data === null) return
+		const data = secPanel.data
+		const html = []
+		const strangers = Number(data.firstSeenCount ?? 0)
+		html.push('<div class="syscard"><div class="sessgroup">陌生设备</div>')
+		if (strangers === 0) {
+			html.push('<div class="hint">✓ 没有陌生设备 —— 登录过的地址都在账上，没有新面孔 ✓</div>')
+		} else {
+			html.push('<div class="hint" style="color:var(--warn)">⚠️ 有 ' + strangers + ' 个地址<b>第一次</b>出现：'
+				+ (data.lastNewDevice ? escapeHtml(String(data.lastNewDevice.ip)) + '（' + escapeHtml(new Date(Number(data.lastNewDevice.at)).toLocaleString()) + '）' : '（看下面的历史）')
+				+ '<br>手机换 WiFi / 切流量时地址本来就会变；<b>走外网时这里显示的是隧道那端的地址</b>，不一定是手机自己的。'
+				+ '不是你自己的话，用下面那个键踢掉 ✓</div>')
+		}
+		// 账本被截过就说清 ✓（只留 200 行这件事不许瞒着 ✓）。
+		if (data.trimmed === true) html.push('<div class="hint">（更早的记录已经被覆盖：这份账只留最近 200 行 ✓）</div>')
+		html.push('</div>')
+
+		html.push('<div class="syscard"><div class="sessgroup">当前还在登录的设备（' + Number(data.deviceCount ?? 0) + ' 台）</div>')
+		const devices = data.devices ?? []
+		if (devices.length === 0) {
+			html.push('<div class="hint">一台都没有（令牌都过期了 —— 下次打开会让你重输 PIN ✓）</div>')
+		} else {
+			for (const item of devices) {
+				html.push('<div class="sysrow"><span class="k">' + (item.current === true ? '这台手机' : '另一台') + '</span>'
+					+ '<span class="v">' + escapeHtml(String(item.ip ?? '?')) + '</span>'
+					+ '<span class="n">登录到下 ' + escapeHtml(new Date(Number(item.expiresAt ?? 0)).toLocaleString()) + '</span></div>')
+			}
+		}
+		html.push('</div>')
+
+		html.push('<div class="syscard"><div class="sessgroup">登录历史（最近 ' + (data.records ?? []).length + ' 条 / 共 ' + Number(data.total ?? 0) + ' 条）</div>')
+		const records = data.records ?? []
+		if (records.length === 0) {
+			html.push('<div class="hint">' + escapeHtml(String(data.note ?? '还没有登录记录 ✓')) + '</div>')
+		} else {
+			for (const item of records) {
+				const when = new Date(Number(item.at ?? 0)).toLocaleString()
+				html.push('<div class="sysrow"><span class="k">' + (item.ok === true ? '✓' : '✗') + '</span>'
+					+ '<span class="v">' + escapeHtml(loginWhatText(item.what))
+					+ (item.firstSeen === true && item.ok === true ? ' · 新设备' : '') + '</span>'
+					+ '<span class="n">' + escapeHtml(when + '  ·  来自 ' + String(item.ip ?? '?')) + '</span></div>')
+			}
+		}
+		html.push('</div>')
+
+		html.push('<div class="syscard"><div class="sessgroup">踢掉其它设备</div>')
+		html.push('<div class="hint">别人拿到你的登录态时用这个键 ✓ —— 它会让<b>除这台手机之外</b>的设备全部下线（它们要重输 PIN ✓）。</div>')
+		html.push('<div class="hint">用的是你刚才输的那个 PIN ✓（**不会**把你自己这台踢掉 ✓）。</div>')
+		html.push('<button class="primary" id="secRevoke">踢掉其它设备（保留这台）</button>')
+		html.push('<div class="hint" id="secError"></div>')
+		html.push('</div>')
+		box.innerHTML = html.join('')
+	}
+
+	/** 读这份账：**必须带 PIN** ✓（GET 走 `x-dsh-pin` 头 —— 绝不放进 URL ✗）。 */
+	async function loadSecurity(pin) {
+		if (secPanel.busy) return
+		const box = $('secBody')
+		secPanel.busy = true
+		if (box !== null) box.innerHTML = '<div class="hint">正在读登录记录…</div>'
+		try {
+			secPanel.data = await api('api/logins?limit=20', { headers: { 'x-dsh-pin': pin } })
+			secPanel.pin = pin
+			renderSecurity()
+		} catch (error) {
+			secPanel.data = null
+			renderSecurityGate(error?.status === 403 ? String(error.message ?? 'PIN 不正确') : ('读不到登录记录：' + error.message))
+		} finally {
+			secPanel.busy = false
+		}
+	}
+
+	function openSecurity() {
+		show($('secopen'))
+		// 这一次页面里已经输过 PIN → 直接用 ✓（不用每次重输 ✓）；否则先要一次 ✓。
+		if (secPanel.pin !== '') void loadSecurity(secPanel.pin)
+		else renderSecurityGate('')
+	}
+
+	$('secBtn').addEventListener('click', () => { openSecurity() })
+	$('secBack').addEventListener('click', () => hide($('secopen')))
+	$('secRefresh').addEventListener('click', () => {
+		if (secPanel.pin !== '') void loadSecurity(secPanel.pin)
+		else renderSecurityGate('')
+	})
+
+	// 面板内容是每次重画的 → 用**事件委托**（绑在容器上，重画不会掉 ✓；照状态盘里 data-kill 的做法 ✓）。
+	$('secBody').addEventListener('click', (event) => {
+		const target = event.target
+		if (target === null || target === undefined) return
+		// ① 「看登录记录」：把 PIN 带上（只走请求头 ✓）。
+		if (target.id === 'secSee') {
+			const pin = String($('secPin')?.value ?? '').trim()
+			if (pin === '') { setDelText('secError', '先输入 PIN —— 这份账要确认是本人。'); return }
+			void loadSecurity(pin)
+			return
+		}
+		// ② 「踢掉其它设备」：复用刚才那个 PIN ✓（没有就先回门口 ✓）。
+		if (target.id !== 'secRevoke') return
+		void (async () => {
+			if (secPanel.pin === '') { renderSecurityGate('先输一次 PIN 才会看到记录，也才能踢设备 ✓'); return }
+			target.disabled = true
+			try {
+				const body = await api('api/logins/revoke', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ pin: secPanel.pin }),
+				})
+				toast(body.selfRevoked === true
+					? '已踢掉 ' + Number(body.revoked ?? 0) + ' 台设备（包括这台 —— 需要重输 PIN ✓）'
+					: '已踢掉 ' + Number(body.revoked ?? 0) + ' 台其它设备 ✓（它们要重输 PIN）', 3400)
+				await loadSecurity(secPanel.pin)
+			} catch (error) {
+				setDelText('secError', error?.status === 403 ? 'PIN 不正确 / 已过期 —— 没有踢掉任何设备' : '没踢成：' + error.message)
+				if (error?.status === 403) { secPanel.pin = ''; secPanel.data = null }
+			} finally {
+				target.disabled = false
+			}
+		})()
+	})
 
 	/* --------- 只看不发（2.7.0 ★7）--------- */
 	/*

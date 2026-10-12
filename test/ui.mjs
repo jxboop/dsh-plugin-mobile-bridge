@@ -104,6 +104,9 @@ const SESSIONS = [
 		// 2.6.0：宿主给每一行都带着**真值模型**（modelSelection 投影）。手机上顶端那一行
 		// 显示的就是它 —— 而不是手机自己记的 `dshm.model`。
 		model: { provider: 'deepseek-official', model: 'deepseek-chat', reasoningEffort: '' },
+		// 2.8.0 ★12：宿主 `tokenUsage` 投影的累计值（桥在 summarize 里带出来 ✓，页面据此显示
+		// "本会话累计 ↑… ↓…" ✓）。**只有这一行有** ✓ —— 另一条会话没有，正好验"读不到就不显示" ✓。
+		usage: { input: 12345, output: 678, cacheRead: 0, cacheWrite: 0, total: 13023 },
 	},
 	{ sessionId: 'session-older', title: '旧会话', cwd: 'D:\\tool', running: false, blank: false, updatedAt: 1000 },
 	// 第三个会话专门留给"从没打开过"的场景：缓存测试要验证"没缓存的会话照旧拉整段"，
@@ -132,6 +135,10 @@ const clipboardWrites = []
 const scheduleWrites = []
 /** 2.7.0 ★10：只读链接（生成 / 撤销）的请求体。 */
 const shareWrites = []
+/** 2.8.0 ★2：踢掉其它设备的请求体。 */
+const revokeWrites = []
+/** 2.8.0 ★2：读登录历史时带的 PIN（断言"**光有 cookie 读不到**" ✓）。 */
+const loginsReads = []
 
 const requests = []
 const opened = []
@@ -182,6 +189,8 @@ const progressReports = []
 const xhrRequests = []
 /** 让接下来 N 次 /api/prompt 在 fetch 层直接失败（模拟隧道抖动 → 页面该自动重试）。 */
 let promptFailTimes = 0
+/** 让**下一次** /api/prompt 回一个带状态码的错（2.8.0 ★4 的「重试」按钮要这种"服务端明确拒绝"✓）。 */
+let promptFailStatus = 0
 /** 手机上报给桥的客户端日志（`POST /api/clientlog`）。 */
 const clientLogs = []
 /** 上传接口的并发观测（峰值同时在飞的片数）。 */
@@ -268,7 +277,13 @@ async function stubFetch(input, options = {}) {
 			records: path.includes('session-older') ? olderTranscriptRecords : transcriptRecords,
 		})
 	}
-	if (path.startsWith('/api/login')) {
+	/*
+	 * ⚠️ 这里必须**精确匹配** ✗ —— 写成 `startsWith('/api/login')` 会把
+	 * `/api/logins`（2.8.0 ★2 的登录审计）也一起吃进来：于是审计纸永远只看到
+	 * 一个空回包，看起来像"功能没做" ✓（真踩过：三条断言全红、代码其实是对的 ✓）。
+	 * 服务端的路由本来就是精确匹配（`route === 'POST /api/login'`✓），这里照着来 ✓。
+	 */
+	if (path === '/api/login' || path.startsWith('/api/login?')) {
 		// 造"网络层失败"（页面认定：电脑没开/隧道没起来）与"PIN 不对"（HTTP 401）两种情况。
 		if (loginFailures > 0) { loginFailures -= 1; throw new TypeError('Failed to fetch') }
 		if (loginStatus !== 200) return jsonResponse({ error: 'PIN 不对' }, loginStatus)
@@ -338,6 +353,40 @@ async function stubFetch(input, options = {}) {
 				{ name: 'ffmpeg', ok: false, hint: '没找到：放到 ~/.dsh/bin 或在配置里写 ffmpegPath' },
 			],
 			note: '有 2 项要处理（每项后面就是"怎么办" ✓）',
+		})
+	}
+	// 2.8.0 ★2：安全审计（登录历史 + 当前设备）+ 踢掉其它设备（要现输 PIN ✓）。
+	// ⚠️ 顺序：`/api/logins/revoke` 必须在 `/api/logins` **之前**判 ✓（前缀会先命中短的 ✓）。
+	if (path.startsWith('/api/logins/revoke')) {
+		const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+		revokeWrites.push(body)
+		if (String(body.pin ?? '') !== CORRECT_PIN) return jsonResponse({ error: 'PIN 不正确 —— 没有踢掉任何设备' }, 403)
+		return jsonResponse({ ok: true, revoked: 2, keptSelf: true, selfRevoked: false, left: 1 })
+	}
+	if (path.startsWith('/api/logins')) {
+		// 这份账**要现输 PIN** ✓（服务端读的是 `x-dsh-pin` 头 ✓，绝不进 URL ✓）——
+		// 桩必须照着来 ✗：不然页面"忘了带 PIN"也照样拿到数据，那三条门禁断言就成了假的 ✓。
+		const pin = (() => {
+			const headers = options.headers
+			if (headers === undefined || headers === null) return ''
+			if (typeof headers.get === 'function') return String(headers.get('x-dsh-pin') ?? '')
+			const key = Object.keys(headers).find((item) => item.toLowerCase() === 'x-dsh-pin')
+			return key === undefined ? '' : String(headers[key])
+		})()
+		loginsReads.push({ pin, url: path })
+		if (pin !== CORRECT_PIN) return jsonResponse({ error: '这一项要 PIN —— 在手机上输一次才看得到' }, 403)
+		return jsonResponse({
+			total: 3, count: 3, deviceCount: 2, firstSeenCount: 1,
+			lastNewDevice: { ip: '203.0.113.9', at: 1791761053959 },
+			devices: [
+				{ ip: '100.122.188.30', expiresAt: Date.now() + 3600000, current: true },
+				{ ip: '203.0.113.9', expiresAt: Date.now() + 3600000, current: false },
+			],
+			records: [
+				{ at: 1791761053959, ip: '203.0.113.9', ua: 'phone', ok: true, what: 'login', firstSeen: true },
+				{ at: 1791761050000, ip: '100.122.188.30', ua: 'phone', ok: true, what: 'login', firstSeen: false },
+				{ at: 1791761045000, ip: '100.122.188.30', ua: 'phone', ok: false, what: 'delete-session', firstSeen: false },
+			],
 		})
 	}
 	if (path === '/api/system/kill') {
@@ -504,6 +553,13 @@ async function stubFetch(input, options = {}) {
 		if (promptNeedsPin) return jsonResponse({ error: '需要重新输入 PIN 才能执行操作', needPin: true }, 403)
 		const body = JSON.parse(options.body ?? '{}')
 		promptIds.push(body.requestId)
+		// 2.8.0 ★4：一次性让服务端**明确拒绝**（有状态码，不是网络层 ✓）——
+		// 「重试」这条路径要的正是这种错：网络层失败会进离线发件箱 ✓，走的是另一条路 ✓。
+		if (promptFailStatus !== 0) {
+			const status = promptFailStatus
+			promptFailStatus = 0
+			return jsonResponse({ error: '宿主这边出错了（一次性）' }, status)
+		}
 		// 模拟"隧道抖一下"：fetch 层直接失败（连状态码都没有），页面该自动重试。
 		if (promptFailTimes > 0) {
 			promptFailTimes -= 1
@@ -3908,6 +3964,189 @@ await wait(40)
 		text.includes('有 2 项要处理'), text.slice(0, 40))
 	click($('checkBack'))
 	await wait(60)
+}
+
+/* --- 2.8.0 ★2：安全审计 + 陌生设备 + 踢掉其它设备 --------------------------- */
+/*
+ * 四件要钉住的事：① **这份账要现输 PIN** ✓（点开先给门口，**一条请求都不发** ✗）；
+ * ② 错 PIN → 原地报错、仍然不给数据 ✓；③ 对 PIN 才画出历史（时间 / 来源 / 哪一道 PIN 错 ✓），
+ * 并且写清"走外网时这是隧道那端的地址" ✓（不吓人 ✗）；④ 踢设备复用一个 PIN ✓、
+ * 带 PIN 才发 `{pin}` ✓（照"删除会话"同一套纪律 ✓）。
+ */
+{
+	click($('secBtn'))
+	await wait(160)
+	const gate = String($('secBody')?.textContent ?? '').replace(/\s+/g, ' ')
+	check('🛡 打开就先要 PIN（说清为什么：这份账里有这台电脑的网络史 ✓）',
+		window.getComputedStyle($('secopen')).display !== 'none'
+		&& gate.includes('看登录记录要先输 PIN') && gate.includes('网络史')
+		&& $('secPin') !== null && $('secSee') !== null,
+		gate.slice(0, 80))
+	check('还没输 PIN 时**一条请求都不发** ✗（不是"请求被拒"，是压根没发 ✓）',
+		loginsReads.length === 0, `已发 ${loginsReads.length} 次`)
+
+	// ① 空 PIN：原地报错、不发请求 ✓。
+	click($('secSee'))
+	await wait(120)
+	check('空 PIN 点「看登录记录」：一条请求都不发 + 原地报错 ✓',
+		loginsReads.length === 0 && String($('secError')?.textContent ?? '').includes('PIN'),
+		`请求数 ${loginsReads.length}；错误 "${String($('secError')?.textContent ?? '').slice(0, 20)}"`)
+
+	// ② 错 PIN：请求带的是错 PIN（证明"PIN 真的走请求头 ✓"），页面原地报错、不画历史 ✓。
+	$('secPin').value = '000000'
+	click($('secSee'))
+	await wait(200)
+	check('错 PIN：请求确实把 PIN 放进了请求头 ✓，而页面原地报错、**没有**把历史画出来 ✓',
+		loginsReads.at(-1)?.pin === '000000' && String($('secBody')?.textContent ?? '').includes('PIN')
+		&& String($('secBody')?.textContent ?? '').includes('登录历史') === false,
+		`PIN=${loginsReads.at(-1)?.pin} url=${loginsReads.at(-1)?.url}`)
+
+	// ③ 对 PIN：拿到数据、画出四段 ✓。
+	$('secPin').value = CORRECT_PIN
+	click($('secSee'))
+	await wait(220)
+	const text = ($('secBody')?.textContent ?? '').replace(/\s+/g, ' ')
+	check('对 PIN 才画出登录历史（✓/✗ + 哪一道 PIN + 时间 + 来源 ✓）',
+		loginsReads.at(-1)?.pin === CORRECT_PIN
+		&& text.includes('登录历史') && text.includes('删除会话（PIN 不对）')
+		&& text.includes('203.0.113.9') && text.includes('100.122.188.30'),
+		text.slice(0, 110))
+	check('陌生设备提醒：写明"走外网时这里显示的是隧道那端的地址" ✓（不然会把人吓一跳 ✗）',
+		text.includes('陌生设备') && text.includes('隧道那端') && text.includes('第一次'), text.slice(0, 80))
+	check('设备表：当前这台标成"这台手机"，另一台不是 ✓（两行分得清 ✓）',
+		text.includes('这台手机') && text.includes('另一台'), text.slice(0, 60))
+
+	// ④ 踢设备：复用刚才那个 PIN（**不用再输一次** ✓），形状就是 `{pin}` ✓。
+	const beforeKick = revokeWrites.length
+	click($('secRevoke'))
+	await wait(260)
+	const kicked = revokeWrites.at(-1) ?? null
+	check('踢设备：复用刚输过的 PIN、形状就是 {pin} ✓（不用输两次 ✓）',
+		revokeWrites.length === beforeKick + 1 && kicked !== null && kicked.pin === CORRECT_PIN
+		&& Object.keys(kicked).length === 1, JSON.stringify(kicked))
+	check('踢完把结果说出来 ✓，并把面板重画一遍 ✓',
+		String(window.document.body.textContent).includes('已踢掉 2 台其它设备')
+		&& String($('secBody')?.textContent ?? '').includes('登录历史'),
+		String(window.document.body.textContent).slice(-60))
+
+	click($('secBack'))
+	await wait(60)
+}
+
+/* --- 2.8.0 ★4：错误一键重试 + 诊断包 --------------------------------------- */
+/*
+ * 两件事：① 出问题时条幅上有一个**能点的「重试」** ✓ —— 不是只甩一句"发送失败"就完事 ✗；
+ * ② 🩺 纸底部有一个**诊断包**入口 ✓（脱敏后的文本，能直接发出去 ✓）。
+ * ⚠️ 这里**不点**那个 `<a download>`：jsdom 会把它记成一次导航 ✗，而后面的"stale page
+ * 自愈"用例正在数导航次数 ✓（数错了会假红 ✓）。只验 href/属性 ✓。
+ */
+{
+	// ① 诊断包入口：在 🩺 纸里、是同一套下载写法（同源带 cookie ✓）、且写明会被脱敏 ✓。
+	click($('checkBtn'))
+	await wait(200)
+	const diag = $('diagGo')
+	check('🩺 纸里有「诊断包」入口（`<a download>` 同源下载，和导出 Markdown 同一套 ✓）',
+		diag !== null && String(diag.getAttribute('href')).includes('api/diag')
+		&& diag.hasAttribute('download'), diag === null ? '(没找到)' : String(diag.getAttribute('href')))
+	check('诊断包写清了"PIN 与密钥段会被替换掉" ✓（这是要发出去的东西 ✗）',
+		String($('checkopen')?.textContent ?? '').includes('密钥段会被替换掉'))
+	click($('checkBack'))
+	await wait(60)
+
+	// ② 发送失败 → 条幅上出现「重试」；点它**真的再发一次** ✓（不是摆设 ✓）。
+	$('text').value = '这条消息会先失败一次'
+	const promptBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	promptFailStatus = 500
+	click($('send'))
+	await wait(300)
+	const bannerText = String($('banner')?.textContent ?? '')
+	check('发送失败时条幅上给一个能点的「重试」（2.8.0 ★4 ✓）',
+		window.getComputedStyle($('banner')).display !== 'none'
+		&& bannerText.includes('发送失败') && bannerText.includes('重试') && $('flashGo') !== null,
+		bannerText.slice(0, 80))
+
+	click($('flashGo'))
+	await wait(350)
+	const promptAfter = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	check('点「重试」：真的再发一次（请求数 +1 ✓），而且这次成功了（输入框清空 ✓、条幅收起 ✓）',
+		promptAfter === promptBefore + 2 && $('text').value === ''
+		&& window.getComputedStyle($('banner')).display === 'none',
+		`prompt 请求 ${promptBefore} -> ${promptAfter}；输入框 "${$('text').value}"`)
+}
+
+/* --- 2.8.0 ★12：实时耗时 / token 跳动 --------------------------------------- */
+/*
+ * 用户要的：「跑任务时显示已用时间 + 消耗 ✓」。三条要钉住：
+ *   ① 跑的时候显示"已跑 X:XX"，起点取自 `turn/start` **事件自己的 `time`** ✓
+ *      （不是"从打开页面算" ✗ —— 否则刷新一次计时就归零 ✓）；
+ *   ② token 只显示**宿主真报过的** ✓（没报就只显示时间 ✗ 不编一个 0 ✓）；
+ *   ③ **重放历史不算"刚才跑过"** ✗ —— 刷新/换会话会把过去那一轮重放回来，
+ *      那时弹一句"✓ 这一轮 3:21"只会让人以为自己刚才在跑东西 ✓。
+ */
+{
+	await switchTo(SESSION)
+	await wait(240)
+	const cumulative = ($('runstrip')?.textContent ?? '')
+	check('顶部那条显示"本会话累计"（宿主的 tokenUsage 投影 ✓ 读得到才有这一段 ✓）',
+		window.getComputedStyle($('runstrip')).display !== 'none'
+		&& cumulative.includes('本会话累计 ↑12.3k ↓678'), cumulative.slice(0, 90))
+
+	// ① 跑一轮：起点是 65 秒前（用事件自己的 time ✓）。
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 300, time: Date.now() - 65000, data: { turn: 9 } } })
+	await wait(140)
+	const running = ($('runstrip')?.textContent ?? '')
+	check('跑起来时显示"已跑 1:0X"（从 turn/start 那一刻算 ✓，不是从打开页面算 ✗）',
+		/已跑 1:0\d/.test(running), running.slice(0, 60))
+	check('宿主还没报 token 时**只显示时间**（不编一个 ↓0 ✓）',
+		running.includes('本轮') === false, running.slice(0, 60))
+
+	// ② 宿主报了一次 usage：↑ = 输入(1200) + 缓存读(8000) = 9.2k ✓，↓ = 输出 340 ✓。
+	source.emit({ t: 'event', event: { type: 'assistant/message', seq: 301, time: Date.now(), data: {
+		turn: 9, step: 1, usage: { inputTokens: 1200, outputTokens: 340, cacheReadTokens: 8000, cacheWriteTokens: 0 },
+		message: { id: 'm9', role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+	} } })
+	await wait(160)
+	const withTokens = ($('runstrip')?.textContent ?? '')
+	check('宿主报 usage 后这一轮的数字跟上（↑ 含缓存 ✓、↓ 是输出 ✓）',
+		withTokens.includes('本轮 ↑9.2k ↓340'), withTokens.slice(0, 90))
+
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 302, time: Date.now(), data: { turn: 9, reason: { kind: 'completed' } } } })
+	await wait(160)
+	const done = ($('runstrip')?.textContent ?? '')
+	check('跑完留一句"这一轮用了多久 + 烧了多少"（60 秒后自己收走 ✓）',
+		done.includes('✓ 这一轮') && done.includes('本轮 ↑9.2k ↓340'), done.slice(0, 90))
+
+	// ③ 重放：把"一小时前跑完的那一轮"整段推回来 → **不许**弹成"刚才跑过" ✗。
+	source.emit({ t: 'snapshot', tag: PAGE_TAG, cursor: 302, hasMore: false, records: [
+		{ type: 'event', event: { type: 'turn/start', seq: 400, time: Date.now() - 3600000, data: { turn: 11 } } },
+		{ type: 'event', event: { type: 'assistant/message', seq: 401, time: Date.now() - 3600000, data: {
+			turn: 11, step: 1, usage: { inputTokens: 10, outputTokens: 20 },
+			message: { id: 'm11', role: 'assistant', content: [{ type: 'text', text: '旧的一轮' }] },
+		} } },
+		{ type: 'event', event: { type: 'turn/end', seq: 402, time: Date.now() - 3600000, data: { turn: 11, reason: { kind: 'completed' } } } },
+	] })
+	await wait(240)
+	const replayed = ($('runstrip')?.textContent ?? '')
+	check('刷新重放"已经跑完的那一轮"**不会**弹成"刚才跑过" ✗（只留累计 ✓）',
+		replayed.includes('这一轮') === false && replayed.includes('已跑') === false
+		&& replayed.includes('本会话累计'), replayed.slice(0, 90))
+
+	/*
+	 * ④ 重放一个**还在跑**的轮次（正跑着的时候刷新页面 ✓）：
+	 *    这时候**必须**照常显示"已跑 X:XX" ✓ —— 起点仍然取自重放回来的 `turn/start` 事件时间 ✓。
+	 *    （冷视角复查点过：之前只恢复状态、不重画，用户刷新后反而看不见正在跑的那一轮 ✗。）
+	 */
+	source.emit({ t: 'snapshot', tag: PAGE_TAG, cursor: 500, hasMore: false, records: [
+		{ type: 'event', event: { type: 'turn/start', seq: 500, time: Date.now() - 125000, data: { turn: 12 } } },
+		{ type: 'event', event: { type: 'assistant/message', seq: 501, time: Date.now() - 120000, data: {
+			turn: 12, step: 1, usage: { inputTokens: 2048, outputTokens: 512 },
+			message: { id: 'm12', role: 'assistant', content: [{ type: 'text', text: '还在跑' }] },
+		} } },
+	] })
+	await wait(240)
+	const replaying = ($('runstrip')?.textContent ?? '')
+	check('刷新时那一轮**还在跑**：照常显示"已跑 2:0X" ✓（起点用重放回来的事件时间，不是刷新那一刻 ✗）',
+		/已跑 2:0\d/.test(replaying) && replaying.includes('本轮 ↑2.0k ↓512'), replaying.slice(0, 90))
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

@@ -88,6 +88,12 @@ globalThis.fetch = (input, init) => {
 			balance_infos: [{ currency: 'CNY', total_balance: '12.34', granted_balance: '2.00', topped_up_balance: '10.34' }],
 		}), { status: 200, headers: { 'content-type': 'application/json' } }))
 	}
+	/*
+	 * 隧道探测探的是 `publicUrl`（harness 里配的 `https://example.ts.net` ✓）——
+	 * 在这里**离线地**让它失败 ✓：既不让测试去碰真网络（DNS 超时会拖慢一切 ✗），
+	 * 又让"自检说通不通"这条断言有确定结果 ✓。
+	 */
+	if (url.startsWith('https://example.ts.net')) return Promise.reject(new TypeError('tunnel down (harness)'))
 	return realFetch(input, init)
 }
 
@@ -1603,7 +1609,7 @@ check('预设的说明也带上（选了具体那个时显示它干什么用的�
 		running: false,
 		blank: false,
 		cwd: 'D:\\tool',
-		projections: { asOfSeq: 3, values: { title: '带模型的会话', modelSelection: { lastUsed: { provider: 'deepseek', model: 'deepseek-chat' }, next: { provider: 'zhipu', model: 'glm-4-flash' } } } },
+		projections: { asOfSeq: 3, values: { title: '带模型的会话', modelSelection: { lastUsed: { provider: 'deepseek', model: 'deepseek-chat' }, next: { provider: 'zhipu', model: 'glm-4-flash' } }, tokenUsage: { uncachedInputTokens: 1000, outputTokens: 250, cacheReadTokens: 8000, cacheWriteTokens: 500 } } },
 	})
 	listItems.push({
 		sessionId: 'session-child',
@@ -1633,6 +1639,18 @@ check('预设的说明也带上（选了具体那个时显示它干什么用的�
 		JSON.stringify(modelled?.model ?? null))
 	const child = listing.sessions?.find((item) => item.sessionId === 'session-child')
 	check('agent 子会话被标出来（手机据此默认不摆它们）', child?.subagent === true, JSON.stringify(child ?? null))
+	/*
+	 * 2.8.0 ★12：会话行上带着宿主的**累计 token**（`tokenUsage` 投影 ✓）。
+	 * 口径必须对：宿主的 `uncachedInputTokens` 是"没命中缓存"的那部分 ✓ —— 所以
+	 * 输入总量 = 未缓存 + 缓存读 + 缓存写 ✓（漏掉缓存那两块，长上下文会显示成一个很小的数 ✗）。
+	 * 同时：**没有这个投影的会话必须回 null** ✓（读不到就不显示 ✗ 绝不编一个 0 ✓）。
+	 */
+	check('会话行带着宿主的累计 token（输入含缓存两块 ✓ 输出单列 ✓）',
+		modelled?.usage?.input === 9500 && modelled?.usage?.output === 250
+		&& modelled?.usage?.cacheRead === 8000 && modelled?.usage?.total === 9750,
+		JSON.stringify(modelled?.usage ?? null))
+	check('没有 token 投影的会话：usage 是 null（读不到就如实说 ✗ 不编 0 ✓）',
+		child !== undefined && child.usage === null, JSON.stringify(child?.usage ?? 'undefined'))
 	const inPlugin = listing.sessions?.find((item) => item.sessionId === 'session-inplugin')
 	check('cwd 在桥自己目录里的会话被标出来（自检/测试留下的不占手机列表）',
 		inPlugin?.ownDir === true && modelled?.ownDir === false, JSON.stringify({ 自检: inPlugin?.ownDir, 普通: modelled?.ownDir }))
@@ -1837,6 +1855,34 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	check('角标里的地址没有出现"连着两段密钥"（徽标是用户复制地址的地方）',
 		badgeHtml.includes(`${secret}/${secret}`) === false && badgeHtml.includes(secret),
 		badgeHtml.includes(`${secret}/${secret}`) ? '出现了两段 ✗' : '只有单段 ✓')
+
+	/*
+	 * ③b **配了外网时一键自检仍然可用**（2.8.0 ★1 的真机修复 ✓）。
+	 *
+	 * 现场（2026-10-12 真机抓到）：`handleSelfcheck` 里读的 `tunnel` 其实是 `installBadge`
+	 * 的**局部变量** ✗ —— 只有"配了 publicUrl 的机器"（用户这台就是）才会走到那一行，
+	 * 一求值就 ReferenceError → 整个 `/api/selfcheck` 500 ✓。
+	 * 当时 15 条自检断言**全绿**：因为 harness 从没配过 publicUrl，那条分支根本没被求值 ✗。
+	 * 所以这条必须是"外网已配"这个**用户机器上的常态** ✓ —— 光有"没配外网"的用例不够 ✗。
+	 */
+	{
+		const res = await fetch(`${base}/api/selfcheck`, authed)
+		const body = await res.json().catch(() => ({}))
+		const row = (body.checks ?? []).find((item) => item.name === '外网隧道')
+		check('配了外网时一键自检仍然可用（曾经整条 500：读的是角标的局部变量 ✗）',
+			res.status === 200 && row !== undefined,
+			`HTTP ${res.status} ${JSON.stringify(body).slice(0, 90)}`)
+		/*
+		 * 再钉两条（都是冷视角复查点出来的假阳性/空断言 ✓）：
+		 *   ① **不许把"没测过"说成"可达"** ✓ —— 探针已经登记 ✓，点自检就会现探一次 ✓，
+		 *      而 harness 里那个域名探测**必然失败** → 这一条必须报"不通" ✓。
+		 *      如果实现退回"初值 true / 只报缓存"，这里就会显示"可达"或"还没探测过" → 红 ✓。
+		 *   ② 顺带证明"现探"真的发生了 ✓（不探的话拿到的是"还没探测过"那条 ✓）。
+		 */
+		check('自检里的隧道那一条是**现探**出来的真结果：harness 里域名不通 → 必须报"不通" ✓（不许说"可达"也不许停在"没测过" ✗）',
+			row?.ok === false && /没通|不通/.test(String(row?.hint ?? '')),
+			JSON.stringify(row ?? null).slice(0, 120))
+	}
 
 	/*
 	 * ④ 地址卡（2.7.0 ★2）：把注入的 SVG **解析回矩阵**，和编码器自己算的逐格比对 ✓。
@@ -2510,6 +2556,186 @@ async function readInteraction(reader) {
 	check('一键自检要登录（它是只读诊断，但也不该对外公开 ✓）', (await fetch(`${base}/api/selfcheck`)).status === 401)
 
 	await reader.cancel().catch(() => {})
+}
+
+/*
+ * 2.8.0 ★2「安全审计 + 陌生设备提醒」：登录历史 ✓、陌生地址第一次登录就提醒 ✓、一键踢掉 ✓。
+ *
+ * 设计要点都在这儿钉住：
+ *   ① **失败尝试不算"已知设备"** ✓ —— 否则攻击者先随手试错一次就把自己洗白了 ✗
+ *      （下面专门构造了"同一地址先错后对"，逼这条性质真的成立 ✓）；
+ *   ② 这份账**要现输 PIN** ✓（冷视角复查收紧：里面有这台电脑的网络史 ✓）；
+ *   ③ `current`（"这台手机"）必须真的分得出来 ✓ —— 另一台**不许**被标成这台 ✗
+ *      （复查抓到：按 IP 判几乎恒真 ✓，现在按令牌判 ✓）；
+ *   ④ 踢设备要**现输 PIN** ✓、且默认**保留当前这台** ✓。
+ */
+{
+	const foreignIp = '203.0.113.9'
+	const authedPin = { headers: { ...authed.headers, 'x-dsh-pin': config.pin } }
+	const foreignLogin = (pin = config.pin) => fetch(`${base}/api/login`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', 'cf-connecting-ip': foreignIp, 'user-agent': 'Harness-Phone/1.0' },
+		body: JSON.stringify({ pin }),
+	})
+	const cookieOf = (response) => (response.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ')
+
+	// ① 一开始（登录之前）那次错 PIN 也在账上，但它**没有**把 127.0.0.1 变成"已知设备"。
+	const firstLogins = await (await fetch(`${base}/api/logins?limit=50`, authedPin)).json()
+	const failedLine = (firstLogins.records ?? []).find((item) => item.ok === false && item.what === 'login')
+	check('登录历史：PIN 试错也落账（时间 + 地址 + 哪一道 PIN）',
+		failedLine !== undefined && typeof failedLine.ip === 'string' && failedLine.ip !== '' && failedLine.firstSeen === false,
+		JSON.stringify(failedLine ?? null).slice(0, 120))
+	check('登录历史：成功的那次也落账，并标出"这个地址第一次成功登录"',
+		(firstLogins.records ?? []).some((item) => item.ok === true && item.what === 'login' && item.firstSeen === true),
+		JSON.stringify((firstLogins.records ?? []).slice(0, 3)).slice(0, 160))
+	// ② 三道门：未登录 401 ✓ / 登录了但没输 PIN 403 ✓（**不能**只凭 cookie 读走网络史 ✗）/ 带 PIN 200 ✓。
+	check('登录历史：未登录 401', (await fetch(`${base}/api/logins`)).status === 401)
+	check('登录历史：**光有 cookie 读不到** ✓（要现输 PIN —— 它含这台电脑的网络史 ✗）',
+		(await fetch(`${base}/api/logins`, authed)).status === 403)
+	check('登录历史：带上正确的 PIN 才读得到（走 x-dsh-pin 头，绝不进 URL ✓）',
+		(await fetch(`${base}/api/logins?limit=50`, authedPin)).status === 200)
+	// 审计里**绝不回令牌** ✗：拿页面自己的令牌去搜整份响应 ✓（同时要求响应真的带内容 ✓，免得成为空断言 ✗）。
+	{
+		const raw = await (await fetch(`${base}/api/logins?limit=50`, authedPin)).text()
+		const token = cookie.split('=').slice(1).join('=')
+		check('登录审计里绝不回令牌（回了等于把凭据抄给看页面的人 ✗）',
+			token.length > 8 && raw.includes(token) === false && raw.includes('127.0.0.1'),
+			`token 长度 ${token.length}；响应 ${raw.length} 字节`)
+	}
+
+	// ③ 陌生地址登录 → **先故意错一次**（证明"失败不洗白"），再用对的 PIN 进 ✓。
+	const foreignBad = await foreignLogin('000000')
+	check('（前置）陌生地址先错一次 PIN（这条就是为了下面"没被洗白" ✓）',
+		foreignBad.status === 401 || foreignBad.status === 429, `HTTP ${foreignBad.status}`)
+	const foreignRes = await foreignLogin()
+	const foreignBody = await foreignRes.json().catch(() => ({}))
+	let foreignCookie = cookieOf(foreignRes)
+	check('陌生地址先错后对：仍然算"第一次成功登录" ✓（失败尝试不当已知设备 ✗ —— 否则攻击者一试错就洗白了 ✓）',
+		foreignRes.status === 200 && foreignBody.firstSeen === true, JSON.stringify(foreignBody).slice(0, 120))
+	check('陌生地址登录 → 桌面角标上出现提醒，且写明"走外网时这是隧道那端的地址"',
+		String(typeof badgeTap === 'function' ? badgeTap('<html><body>hi</body></html>') : '').includes('新设备')
+		&& String(typeof badgeTap === 'function' ? badgeTap('<html><body>hi</body></html>') : '').includes('隧道那端'),
+		'角标里应当有"新设备"与"隧道那端"')
+	{
+		const boot = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+		check('bootstrap 只给"新设备登录"的**时间**（手机据此提一句 ✓）',
+			typeof boot.security?.newDeviceAt === 'number' && boot.security.newDeviceAt > 0,
+			JSON.stringify(boot.security?.newDeviceAt ?? null))
+		// 反面：bootstrap 只要 cookie —— 所以**不许**把陌生设备的 IP 摆进去 ✗（IP 在要 PIN 的那份账里 ✓）。
+		const raw = await (await fetch(`${base}/api/bootstrap`, authed)).text()
+		check('bootstrap **不泄漏**陌生设备的 IP ✗（它只要 cookie；IP 属于要 PIN 的那份账 ✓）',
+			raw.includes(foreignIp) === false, raw.includes(foreignIp) ? '里面出现了陌生设备 IP ✗' : '没有 ✓')
+	}
+
+	// ④ 同一个地址再登录 → 不再是"陌生设备" ✓（提醒不该每次都响 ✗）。
+	const foreignAgain = await foreignLogin()
+	const againBody = await foreignAgain.json().catch(() => ({}))
+	const againCookie = cookieOf(foreignAgain)
+	if (againCookie !== '') foreignCookie = againCookie
+	check('同一个地址再登录就不算陌生设备（提醒只响第一次 ✓）',
+		foreignAgain.status === 200 && againBody.firstSeen === false, JSON.stringify(againBody).slice(0, 120))
+
+	// ⑤ `current` 得真的分得出来 ✓：另一台**不许**被标成"这台手机" ✗。
+	{
+		const listed = await (await fetch(`${base}/api/logins?limit=5`, authedPin)).json()
+		const mine = (listed.devices ?? []).find((item) => item.current === true)
+		const other = (listed.devices ?? []).find((item) => item.ip === foreignIp)
+		check('设备表：当前这台标成 current ✓，而**另一台不是** ✓（按令牌判，不按 IP —— 复查抓到按 IP 几乎恒真 ✗）',
+			mine !== undefined && other !== undefined && other.current === false,
+			JSON.stringify(listed.devices ?? null).slice(0, 160))
+	}
+
+	// ⑥ 踢掉其它设备：不带 PIN / 错 PIN 一律 403，且**那台设备还在**（没被踢掉 ✓）。
+	const revoke = (body) => fetch(`${base}/api/logins/revoke`, {
+		method: 'POST',
+		headers: { cookie: authed.headers.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+	})
+	const noPin = await revoke({})
+	const stillThere = await fetch(`${base}/api/bootstrap`, { headers: { cookie: foreignCookie } })
+	check('踢设备不带 PIN：403，而且那台设备**没被踢掉** ✗',
+		noPin.status === 403 && stillThere.status === 200, `HTTP ${noPin.status} / 那台 ${stillThere.status}`)
+	check('踢设备输错 PIN：403', (await revoke({ pin: '000000' })).status === 403)
+
+	const kicked = await revoke({ pin: config.pin })
+	const kickedBody = await kicked.json().catch(() => ({}))
+	const foreignGone = await fetch(`${base}/api/bootstrap`, { headers: { cookie: foreignCookie } })
+	const mineStill = await fetch(`${base}/api/bootstrap`, authed)
+	check('踢掉其它设备：那台立刻失效，而**当前这台**还留着（不把自己踢下线 ✓）',
+		kicked.status === 200 && Number(kickedBody.revoked ?? 0) >= 1 && kickedBody.keptSelf === true
+		&& kickedBody.selfRevoked === false
+		&& foreignGone.status === 401 && mineStill.status === 200,
+		`HTTP ${kicked.status} revoked=${kickedBody.revoked} 那台=${foreignGone.status} 这台=${mineStill.status}`)
+	{
+		const after = await (await fetch(`${base}/api/logins`, authedPin)).json()
+		check('踢完之后还在登录态的设备只剩当前这台（且它被标成 current ✓）',
+			after.deviceCount === 1 && (after.devices ?? [])[0]?.current === true,
+			JSON.stringify(after.devices ?? null).slice(0, 120))
+	}
+}
+
+/*
+ * 2.8.0 ★4「诊断包」：把证据收集齐，用户一个键就能发出来 ✓。
+ * 这条路的目的是**发出去** ✗✗ —— 所以最要紧的一条是**脱敏**：PIN 与网址里的密钥段
+ * 一个都不许出现 ✓。为了不让这条断言变成空的，这里先用一个**带两样东西的 User-Agent**
+ * 去撞一次 PIN（UA 是客户端自己写的 ✓，正是"别把不可信输入照抄进要外发的东西"这个场景 ✓）。
+ */
+{
+	check('诊断包要登录才拿得到（它是这台机器的日志 ✗ 不是公开页 ✓）', (await fetch(`${base}/api/diag`)).status === 401)
+
+	const secretForDiag = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8')).pathSecret
+	const marker = `diag-marker-${Date.now().toString(36)}`
+	await fetch(`${base}/api/clientlog`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ event: marker, detail: '诊断包用例', bytes: 1 }),
+	})
+	// 故意把密钥段与 PIN 塞进 UA：它们会进登录账 ✓ —— 诊断包必须把它们洗掉 ✓。
+	await fetch(`${base}/api/login`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', 'user-agent': `leak/${secretForDiag}/${config.pin}` },
+		body: JSON.stringify({ pin: '000000' }),
+	})
+	await new Promise((resolve) => setTimeout(resolve, 150))
+
+	const diagRes = await fetch(`${base}/api/diag`, authed)
+	const diag = await diagRes.text()
+	check('诊断包：200 + 一份可下载的文本（文件名纯 ASCII —— 中文名各家处理不一致 ✗）',
+		diagRes.status === 200
+		&& String(diagRes.headers.get('content-type')).startsWith('text/plain')
+		&& /attachment; filename="mobile-bridge-diag-\d{8}-\d{4}\.txt"/.test(String(diagRes.headers.get('content-disposition'))),
+		`HTTP ${diagRes.status} ${String(diagRes.headers.get('content-disposition'))}`)
+	check('（前置）那行带密钥段 + PIN 的 UA 确实进了包里（否则下面的脱敏断言是空的 ✗）',
+		diag.includes('leak/<密钥段>/<PIN>'), diag.includes('leak/') ? '有 leak/ 但没被替换成占位符 ✗' : '包里的登录账没有这一行')
+	check('诊断包**脱敏**：PIN 与密钥段一个都不出现 ✗✗（它是要发出去的 ✓）',
+		diag.includes(config.pin) === false && diag.includes(secretForDiag) === false
+		&& diag.includes('<PIN>') && diag.includes('<密钥段>'),
+		`含 PIN=${diag.includes(config.pin)} 含密钥段=${diag.includes(secretForDiag)}`)
+	check('诊断包真的读了日志（刚上报的那一行在里面 ✓，不是一份空壳 ✓）', diag.includes(marker))
+	check('诊断包把该有的几段都带上（自检 / 登录账 / 主日志 / 崩溃日志 ✓）',
+		diag.includes('## 自检') && diag.includes('## 登录账') && diag.includes('## mobile-bridge.log') && diag.includes('## dsh-crash.log'))
+
+	/*
+	 * 「限量」这条要**真的顶到上限**才有意义 ✓（冷视角复查点过：原来只断言 < 200KB，
+	 * 而包里才十几 KB —— 阈值永远碰不到，对"截断"零覆盖 ✗）。
+	 * 所以先往日志里灌够（`/api/clientlog` 每条 detail 上限 300 字 ✓），
+	 * 再断言：① 出现了"更早的内容省略了"那句 ✓；② 整份仍然有界 ✓。
+	 */
+	const bigMarker = `diag-big-${Date.now().toString(36)}`
+	for (let index = 0; index < 220; index += 1) {
+		await fetch(`${base}/api/clientlog`, {
+			method: 'POST',
+			headers: { ...authed.headers, 'content-type': 'application/json' },
+			body: JSON.stringify({ event: `${bigMarker}-${index}`, detail: 'x'.repeat(280), bytes: 1 }),
+		})
+	}
+	await new Promise((resolve) => setTimeout(resolve, 200))
+	const bigDiag = await (await fetch(`${base}/api/diag`, authed)).text()
+	check('诊断包**限量**：日志一大就真的截断 ✓（出现"更早的内容省略了"），整份仍然有界（< 200 KB ✓）',
+		bigDiag.includes('更早的内容省略了') && bigDiag.length < 200 * 1024,
+		`${Math.round(bigDiag.length / 1024)} KB；含截断标记=${bigDiag.includes('更早的内容省略了')}`)
+	check('诊断包里也**没有**页面的登录令牌 ✗（它要发出去 ✓）',
+		bigDiag.includes(cookie.split('=').slice(1).join('=')) === false)
 }
 
 // 手机刷新 / 重连时，还没答的提问必须【补推】。提问只在发生时推一次的话，
