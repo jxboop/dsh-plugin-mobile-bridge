@@ -2493,6 +2493,22 @@ async function readInteraction(reader) {
 		Array.isArray(audit.records) && audit.records.every((item) => item.kind === 'approval'))
 	check('审批记录要登录才读得到（谁批过也是隐私 ✓）', (await fetch(`${base}/api/approvals`)).status === 401)
 
+	/*
+	 * 2.8.0 ★1「一键自检」：只读诊断 ✓ —— 每条必须是 `{name, ok, hint}` ✓（hint 就是"怎么办" ✓），
+	 * 而且**不许**把"publish 目录"那种维护者的事塞进来 ✗（插件不该知道用户的发布目录 ✓）。
+	 */
+	const selfcheck = await (await fetch(`${base}/api/selfcheck`, authed)).json()
+	check('一键自检：每条都是 {name, ok, hint}（hint 非空 = "怎么办" ✓）',
+		Array.isArray(selfcheck.checks) && selfcheck.checks.length >= 5
+		&& selfcheck.checks.every((item) => typeof item.name === 'string' && typeof item.ok === 'boolean' && String(item.hint ?? '').length > 3)
+		&& typeof selfcheck.bad === 'number',
+		JSON.stringify(selfcheck.checks?.map((item) => (item.ok ? '✓' : '✗') + item.name)).slice(0, 110))
+	check('一键自检：**只读** ✓（不许含"启动/拉起"这种事 ✗ —— 那是 boot-up.ps1 的活 ✓）',
+		selfcheck.checks.every((item) => /启动|拉起|重启/.test(String(item.hint)) === false))
+	check('一键自检：不含"publish 目录"这类维护者检查项 ✗',
+		JSON.stringify(selfcheck).includes('publish') === false)
+	check('一键自检要登录（它是只读诊断，但也不该对外公开 ✓）', (await fetch(`${base}/api/selfcheck`)).status === 401)
+
 	await reader.cancel().catch(() => {})
 }
 

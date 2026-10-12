@@ -902,10 +902,21 @@
 					<button id="expBtn" title="把这份对话导出成 Markdown（下载 / 复制全文 / 分享 → 发微信）">📤</button>
 					<button id="schBtn" title="定时任务：到点把一句话发进这个会话（每晚 23:00 这类）">📅</button>
 					<button id="roBtn" title="只看不发：出门看进度时一键锁住发送，不怕误触（再点一下解锁）">🔓</button>
+					<button id="checkBtn" title="一键自检：哪一环不对、以及"怎么办"（只读，不会启动任何东西）">🩺</button>
 		<!-- 只看不发（2.7.0 池子里的 ★7）：**防误触**，不是安全边界 ✗ —— 真安全靠 PIN + 令牌 ✓。 -->
 		<div id="roStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482000;background:rgba(178,120,20,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px">🔒 只看不发 —— 点右上角 🔓 才发得出去（刷新也保持 ✓）</div>
 		<!-- 离线发件箱（2.7.0 池子里的 ★8）：没网也能先写 ✓，有网自动发 ✓。点一下立刻重试 ✓。 -->
 		<div id="outboxStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482001;background:rgba(30,110,190,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px;cursor:pointer"></div>
+		<!-- 2.8.0 ★1「一键自检」：连不上时不知道卡在哪一环 ✗ —— 这里每条都给出"怎么办" ✓（只读，不启动任何东西 ✗）。 -->
+		<section class="sheet" id="checkopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="checkBack">← 返回</button>
+				<span class="title">一键自检</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="checkRefresh">重新检查</button>
+			</div>
+			<div class="scroll pad" id="checkBody"></div>
+		</section>
 				</div>
 				<div id="compose">
 					<textarea id="text" rows="1" placeholder="给 agent 下达任务…"></textarea>
@@ -1246,9 +1257,17 @@
 				<div class="sessgroup">电脑屏幕（截图）</div>
 				<div class="actions"><button class="go" id="screenBtn">📸 截一张现在看看</button></div>
 				<div class="hint" id="screenHint">锁屏或没人登录的时候截不到 —— 那时会如实说，不会给你一张黑图 ✗</div>
-				<img id="screenImg" alt="" style="display:none;width:100%;border-radius:10px;margin-top:8px">
+				<img id="screenImg" alt="" style="display:none;width:100%;border-radius:10px;margin-top:8px;cursor:zoom-in">
+				<div class="hint">点图片看大图 ✓（全屏、点一下关掉；手机上长按可以直接存相册 ✓）</div>
 			</div>
 		</section>
+
+		<!-- 截图看大图（2026-10-12 用户提的：手机上看整屏小图不够 ✓）。
+		     全屏、点一下关掉；图是 blob，长按原生就能存相册 ✓（不用我们再实现下载 ✗）。 -->
+		<div id="shotBox" style="display:none;position:fixed;inset:0;z-index:2147482999;background:rgba(0,0,0,.94);overflow:auto;-webkit-overflow-scrolling:touch">
+			<div style="position:sticky;top:0;text-align:right;padding:8px 12px;color:#fff;font:12px/1.6 ui-monospace,Menlo,monospace;background:rgba(0,0,0,.6)">点一下关掉 ✕</div>
+			<img id="shotBig" alt="电脑屏幕" style="display:block;width:100%;max-width:none;margin:0 auto">
+		</div>
 
 		<!-- 删除会话（2.6.0）：**必须现输一次 PIN** 才删得掉。
 		     为什么单开一张纸：用户要求「要输入 pin 才能删除对话」，而删会话是手机上唯一
@@ -2077,7 +2096,7 @@
 
 	/** 现在开着的是哪个"工具抽屉"（会话 / 删除 / 状态 / 结束进程 / 关机 / 录音 / 生图 / 背景 / 权限）；没有就 null。 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
+		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -3195,6 +3214,10 @@
 				 */
 				const drawer = openToolPanel()
 				if (drawer !== null) hide(drawer)
+				// 「看大图」那层是全屏浮层（不是 sheet ✓）—— 卡片来了也得让位 ✓，
+				// 不然审批卡片会被它盖住、用户以为"没弹出来" ✗（2.5.1 那次的同类病 ✓）。
+				const shot = $('shotBox')
+				if (shot !== null && nodeShown(shot)) shot.style.display = 'none'
 				try { navigator.vibrate?.(120) } catch { /* 不支持振动就算了 */ }
 				toast(payload.kind === 'approval' ? 'agent 要你点头（卡片在下面）' : 'agent 在问你（卡片在下面）', 2600)
 				// 已经存在的卡片必须【保住草稿】。重连、或又开了一条流，宿主都会把
@@ -6038,6 +6061,33 @@
 	outboxLoad()
 	outboxRender()
 
+	/* --------- 一键自检（2.8.0 ★1）--------- */
+	/*
+	 * 用户的痛：**连不上时不知道卡在哪一环** ✗（今天手工查了好几次 ✓）。
+	 * 这一页只做一件事：把 `/api/selfcheck` 那几条摊开 —— 每行 `✓/⚠ + 名字 + 怎么办` ✓。
+	 * 纪律：**只读** ✓（不启动任何东西 ✗，那是 tools/boot-up.ps1 的活 ✓）；读不到就写"读不到" ✗。
+	 */
+	async function loadSelfcheck() {
+		const box = $('checkBody')
+		if (box === null) return
+		box.innerHTML = '<div class="hint">正在检查…</div>'
+		try {
+			const body = await api('api/selfcheck')
+			const rows = (body.checks ?? []).map((item) =>
+				'<div class="sysrow"><span class="k">' + (item.ok === true ? '✓' : '⚠️') + '</span>'
+				+ '<span class="v">' + escapeHtml(String(item.name)) + '</span>'
+				+ '<span class="n">' + escapeHtml(String(item.hint ?? '')) + '</span></div>').join('')
+			box.innerHTML = '<div class="syscard"><div style="font-weight:700">' + (body.ok === true ? '全部正常 ✓' : '有 ' + body.bad + ' 项要处理')
+				+ '</div>' + rows + '</div><div class="hint">这些都是**只读**检查 ✓ —— 报告里写着"怎么办"，照着做就行 ✓</div>'
+		} catch (error) {
+			box.innerHTML = '<div class="err-box">检查不了：' + escapeHtml(error.message) + '（多半是登录态过期，重进一次 ✓）</div>'
+		}
+	}
+
+	$('checkBtn').addEventListener('click', () => { show($('checkopen')); void loadSelfcheck() })
+	$('checkBack').addEventListener('click', () => hide($('checkopen')))
+	$('checkRefresh').addEventListener('click', () => { void loadSelfcheck() })
+
 	/* --------- 只看不发（2.7.0 ★7）--------- */
 	/*
 	 * 状态放在 localStorage（`dshm.readonly` ✓）—— 刷新/切回 App 都还在 ✓
@@ -6372,7 +6422,10 @@
 				image.dataset.blob = url
 				image.style.display = 'block'
 				image.src = url
-				setDelText('screenHint', '刚截的（只缩小到 1280 宽，用完即删 ✓）')
+				// 大图那份跟着同一张图走 ✓（点开了才有用 ✓）
+				const big = $('shotBig')
+				if (big !== null) big.src = url
+				setDelText('screenHint', '刚截的（只缩小到 1280 宽，用完即删 ✓）—— 点图看大图 ✓')
 			} catch (error) {
 				image.style.display = 'none'
 				setDelText('screenHint', '截不到：' + error.message)
@@ -6385,6 +6438,13 @@
 	$('clipRefresh').addEventListener('click', () => { void loadClipboard() })
 	$('clipSend').addEventListener('click', () => { void sendClipboard() })
 	$('screenBtn').addEventListener('click', () => { loadScreen() })
+	// 点小图 → 看大图（全屏）；点全屏 → 关掉 ✓（长按存相册交给系统 ✓）
+	$('screenImg').addEventListener('click', () => {
+		const big = $('shotBig')
+		if (big === null || String(big.getAttribute('src') ?? '') === '') { toast('先点「截一张」✓', 2000); return }
+		$('shotBox').style.display = 'block'
+	})
+	$('shotBox').addEventListener('click', () => { $('shotBox').style.display = 'none' })
 
 	/* ------------------------------------- 电脑状态盘 / 结束进程（2.7.0 ★3） */
 	/*

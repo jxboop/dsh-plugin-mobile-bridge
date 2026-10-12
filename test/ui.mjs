@@ -327,6 +327,19 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse({ selected: { provider: 'deepseek-official', model: 'deepseek-chat' } })
 	}
 	/* 2.7.0 ★3/★4：电脑状态盘 + 一键动作。桩只给形状；**真参数**在 harness 里验 ✓。 */
+	// 2.8.0 ★1：一键自检（每条 name/ok/hint ✓，"hint" 就是怎么办 ✓）
+	if (path.startsWith('/api/selfcheck')) {
+		return jsonResponse({
+			ok: false, bad: 2, count: 4, at: Date.now(),
+			checks: [
+				{ name: '手机桥在监听', ok: true, hint: '端口 3081' },
+				{ name: '开机自启已装', ok: false, hint: '没装：跑一次 tools\\autostart.ps1 装上' },
+				{ name: '写权限', ok: true, hint: '上传目录可写 ✓' },
+				{ name: 'ffmpeg', ok: false, hint: '没找到：放到 ~/.dsh/bin 或在配置里写 ffmpegPath' },
+			],
+			note: '有 2 项要处理（每项后面就是"怎么办" ✓）',
+		})
+	}
 	if (path === '/api/system/kill') {
 		killRequests.push(JSON.parse(String(options.body ?? '{}')))
 		return jsonResponse({ killed: true, pid: 7777, name: 'node.exe', alive: false })
@@ -3655,6 +3668,18 @@ await wait(40)
 	check('截图带上 PIN 之后不再被"先输 PIN"挡回（真机上还是那张图 ✓）',
 		String($('screenHint').textContent).includes('先在上面输 PIN') === false,
 		String($('screenHint').textContent).slice(0, 40))
+	/*
+	 * 「点图看大图」（用户 2026-10-12 提的）：**还没截到图时点小图，不许弹一张空的全屏** ✗ ——
+	 * 那种"点开一片黑"最让人以为坏了 ✓。
+	 * ⚠️ "有图时点开真的大图"这条要 `URL.createObjectURL` 的桩 ✗（jsdom 没有 ✓）—— 记着，下轮补 ✓。
+	 */
+	$('shotBig').setAttribute('src', '')
+	click($('screenImg'))
+	await wait(60)
+	check('还没截到图时点小图：**不弹空全屏** ✓（只提示先截一张 ✓）',
+		window.getComputedStyle($('shotBox')).display === 'none',
+		window.getComputedStyle($('shotBox')).display)
+	check('大图层是存在的（真机上点开就是这一层 ✓）', $('shotBig') !== null && $('shotBox') !== null)
 	click($('clipBack'))
 	await wait(60)
 }
@@ -3867,6 +3892,22 @@ await wait(40)
 		click($('permBack'))
 		await wait(60)
 	}
+}
+
+/* --- 2.8.0 ★1：一键自检纸 -------------------------------------------------- */
+{
+	click($('checkBtn'))
+	await wait(200)
+	const text = ($('checkBody')?.textContent ?? '').replace(/\s+/g, ' ')
+	check('🩺 一键自检：把每条都摊出来了（✓/⚠️ + 名字 + **怎么办** ✓）',
+		window.getComputedStyle($('checkopen')).display !== 'none'
+		&& text.includes('手机桥在监听') && text.includes('ffmpeg')
+		&& text.includes('autostart.ps1') && text.includes('ffmpegPath'),
+		text.slice(0, 90))
+	check('顶上先说清"有几项要处理"（4 条里 2 条不行 ✓ —— 不美化 ✗）',
+		text.includes('有 2 项要处理'), text.slice(0, 40))
+	click($('checkBack'))
+	await wait(60)
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */
