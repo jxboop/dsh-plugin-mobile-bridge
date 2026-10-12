@@ -417,9 +417,109 @@ node test/package.mjs && node test/harness.mjs && node test/qr.mjs && node test/
 node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs && node test/offline.mjs
 ```
 
-八个套件共 **1209 项**（package 16 · harness 441 · qr 12 · ui 639 · security 51 · crashprobe 17 ·
+八个套件共 **1231 项**（package 16 · harness 463 · qr 12 · ui 639 · security 51 · crashprobe 17 ·
 addresses 16 · offline 17）。**改完必跑全八个** ✓ —— 只跑某一个会漏掉内容规矩与界面回归
 （2.7.2 就是这么漏了两版的 ✓）。
+
+## 开放接口：把事件投给你自己的程序（3.4.0 起）
+
+想让别的程序"知道电脑上发生了什么"（跑完了一轮、出错了、会话有新活动），
+用 **webhook** 把事件 POST 到你自己写的地址上就行。
+
+### 怎么开（**默认关** ✓）
+
+在电脑上的 `~/.dsh/mobile-bridge.json` 里加三行（配置是**现读**的 ✓ —— 改完不用重启 ✓；
+**重启 / 开机之后也会自动按配置订上** ✓ —— 复查第 83 轮修掉了"重启后订阅会掉、还得手工再调一次"那个洞 ✗）：
+
+```json
+{
+  "webhookUrl": "https://你的服务器/hook",
+  "webhookSecret": "一串你自己的随机字（用来签名）",
+  "webhookEvents": ["api-session/status", "api-session/error", "api-session/activity"]
+}
+```
+- `webhookEvents` 不写就默认订上面这三个 ✓；
+- 改完想**立刻**生效：调一次 `POST /api/webhook/subscribe` ✓（**登录即可** ✓ —— 这个动作不改任何配置，
+  只是按现配置重新订阅 ✓；重启 / 开机本来就会自动订 ✓，它是"不想重启"时的入口 ✓）；
+- 想先确认"发不发得出去"：`POST /api/webhook/test`（**要现输 PIN** ✓）会真发一条测试投递 ✓。
+
+### 你会收到什么
+
+每条事件一个 POST，头里带三样东西 ✓：
+
+| 头 | 意思 |
+|---|---|
+| `x-dsh-event` | 事件名（如 `api-session/status`）|
+| `x-dsh-timestamp` | 毫秒时间戳 |
+| `x-dsh-signature` | `sha256=<hex>` —— 用 `webhookSecret` 对**正文**做 HMAC-SHA256（与 GitHub 的 `X-Hub-Signature-256` 同形）|
+
+正文**只有元信息** ✓（这是有意的 ✓ —— 会话内容太敏感 ✗）：
+
+```json
+{"event":"api-session/status","at":1791800198081,"sessionId":"…","running":true}
+```
+
+### 三个事件分别是什么
+
+| 事件名 | 什么时候发 | 正文里的字段 |
+|---|---|---|
+| `api-session/status` | 某个会话**开始跑 / 跑完了**（宿主级状态，比手机上的"这一轮"更准）| `sessionId`、`running` |
+| `api-session/error` | 某个 agent **出错了**（且不在某轮的可记录位置上）| `sessionId`、`message`（**宿主的错误原文**，截断到 300 字 —— 可能夹带路径等上下文 ✓）|
+| `api-session/activity` | 有一条**用户消息**推进了会话的活动时间 | `sessionId`、`updatedAt`（**活动发生的时间** ✓）|
+
+> `at` 一律是**投递时刻** ✓（复查第 83 轮 R13：以前 `activity` 的发生时间被映射成 `at` ✗，
+> 于是对方拿到的是"我们发出去的时间"、还看不出来 ✗ —— 现在发生时间单独叫 `updatedAt` ✓）。
+
+### 一个最小接收端（Node，验签名）
+
+```js
+import { createServer } from 'node:http'
+import { createHmac } from 'node:crypto'
+
+const SECRET = '你在配置里写的那串'
+createServer((req, res) => {
+  let body = ''
+  req.on('data', (c) => { body += c })
+  req.on('end', () => {
+    const expected = 'sha256=' + createHmac('sha256', SECRET).update(body, 'utf8').digest('hex')
+    if (req.headers['x-dsh-signature'] !== expected) { res.statusCode = 401; return res.end('bad signature') }
+    console.log(req.headers['x-dsh-event'], JSON.parse(body))
+    // 回 200 + 一句正文最省事 ✓；回 **204**（成功且没有正文）也完全可以 ✓ ——
+    // 桥对 204 **不会**告警 ✓（复查第 83 轮 R9：以前会把规范意义上的成功记成"正文为空、说不准"✗）。
+    res.statusCode = 200
+    res.end('ok')
+  })
+}).listen(8787, () => console.log('listening'))
+```
+
+### 安全边界（都按项目的铁律 ✓）
+
+- **默认关** ✓：没配 `webhookUrl` 就**一条都不订**（审计日志里会明确写
+  「没配 webhookUrl —— 默认关 ✓，一个都没订 ✗」✓；订阅接口也会**回同一句真话** ✓，
+  不会回"已订阅 ✓"那种假成功 ✗ —— 复查第 83 轮 R3）；
+- 出站地址**白名单** ✓：只允许 `https://` 或本机 `http://127.0.0.1|localhost`；
+  **拒** `file:`/`ftp:`/`data:`、拒内网段（`10./172.16-31./192.168.`）、拒云元数据地址（`169.254.169.254`）、
+  **拒带用户名/密码的 URL**（`https://user:pass@…` ✓ —— `fetch` 本来也不会用它 ✓，复查 R7）；
+- ⚠️ **白名单是"字面串"判断** ✓ —— 挡不住「**解析后才内指**」的域名（`*.nip.io`、`localtest.me` ✓）。
+  要挡必须在**投递时**用 `dns.lookup` 校验**全部**结果 ✓，**这一条还没做** ✗（套件里有一条**哨兵断言**
+  把"它现在仍被放行"钉着 ✓ —— 将来做了校验，那条会变红提醒改成"必须拒" ✓）。
+  同理：`POST /api/webhook/test` 拿 PIN 可以往任意 https 主机发一次固定正文的 POST 并拿到状态码 ✓，
+  在缺口没补之前，它相当于一个**受 PIN 保护的 SSRF 探针** ✓（"能拿到 PIN = 已完全信任"是当前威胁模型 ✓，
+  但这不等于零风险 ✓ —— 如实写在这儿 ✓）；
+- **签名** ✓：对方能验真，伪造不了；
+- **投递失败会写审计日志** ✓（`~/.dsh/mobile-bridge.log`），不静默丢；
+  「2xx 但正文为空」这种"说不准收没收到"也会记一行 ✓（`204` 例外 ✓ 那是规范意义上的成功 ✓）；
+- `POST /api/webhook/test` 与"读剪贴板/截屏"同级：**要现输 PIN** ✓。
+
+### 还没做的（如实 ✗）
+
+- **手机侧还没有配置入口** ✗（现在只能改电脑上的文件 + 调一次订阅接口）；
+- **只订了 `emit` 类事件** ✗ —— `user-questions/request`（"agent 要你点头"）与 `approval/request` 是
+  **waterfall** 类 ✓，订阅者必须调 `next()` 并给出决定 ✓；乱订会**干扰宿主自己的流程** ✗，所以这两个
+  要按 waterfall 的规矩单独写并单独测；
+- **投递不重试** ✗（一次不成功只记一行 ✓）—— 要重试得有退避与上限，那是后面的事；
+- 正文**不带会话内容** ✗（有意 ✓）；想带内容需要另开一个开关并写明后果 ✓（还没做）。
+
 
 ## 个人知识库（3.3.0 起）
 

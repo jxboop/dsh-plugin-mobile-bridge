@@ -49,10 +49,49 @@ const ASR_BASE = `http://127.0.0.1:${ASR_PORT}`
 const scratch = await mkdtemp(join(tmpdir(), 'dsh-mobile-bridge-'))
 process.env.DSH_HOME = scratch
 
-// Pin the port before the plugin loads. The real bridge already owns 3081;
-// without this the harness would die on EADDRINUSE — or, worse, run its
-// assertions against the live server and look green for the wrong reason.
-const PORT = 31417
+/*
+ * Pin the port before the plugin loads. The real bridge already owns 3081;
+ * without this the harness would die on EADDRINUSE — or, worse, run its
+ * assertions against the live server and look green for the wrong reason.
+ *
+ * ⚠️ 3.4.0 复查（第 75 轮）🟠：原来**写死 31417** ✗ —— 复查自己就撞过 `EADDRINUSE`
+ * （上一轮跑完留下的 TIME_WAIT 也能占住它 ✓），我这轮"连着跑两套"更是一定撞 ✗。
+ * 现在：**先预检** ✓ —— 31417 绑得上就用它（保住"钉住端口"的本意 ✓）；
+ * 绑不上（TIME_WAIT / 别的进程占着 ✓）就换一个**系统给的空闲端口** ✓，并**大声说出来** ✓
+ * （悄悄换端口更糟 ✗：日志里的端口和"上一轮那个"对不上，排查时只会更晕 ✓）。
+ */
+/*
+ * ⚠️ 复审（第 83 轮 N1，2/2 复现）：**不要"优先钉 31417"** ✗ —— 两套 harness 并发跑时会**同时**看到
+ * 它空闲 ✓（预检 → 绑定之间的 TOCTOU ✓）→ 一套 `EADDRINUSE`（那份插件静默起不来 ✓）、
+ * 另一套的断言**打到别人家的服务器上** ✓（实测 6 处 404 + 一条**没有 FAIL 行**的 exit 1 ✗，
+ * 正是 R10 要治的那类"红在哪看不见" ✗）。
+ * 现在：**直接用系统给的空闲端口** ✓ —— 并发不再撞 ✓，而且它永远不可能是线上 3081 ✓（另留一道硬闸 ✓）。
+ */
+const pickPort = async () => {
+	const probe = createServer()
+	await new Promise((resolve) => probe.listen(0, resolve))
+	const port = probe.address().port
+	await new Promise((resolve) => probe.close(resolve))
+	if (port === 3081) { console.error('harness: 拿到线上端口 3081 —— 这不可能是巧合，拒绝继续 ✗'); process.exit(3) }
+	return port
+}
+const PORT = await pickPort()
+console.log(`harness: 用端口 ${PORT}（系统给的空闲端口 ✓ —— 并发跑两套也不会撞 ✓）`)
+/*
+ * 🔴 复查（第 83 轮）R1 的**冷启动回归用例** ✓：**启动之前**就把 `webhookUrl` 写进配置 ✓ ——
+ * 这样"配了 URL 的冷启动/重启"就是这条 harness 自己的启动路径 ✓。
+ * 为什么以前抓不到 ✗：harness 的"正路径"是**先 POST 订阅路由**再验的 ✓（`test/harness.mjs` 里自己写着
+ * "订阅必须走请求路径"✓）→ 于是"启动时到底订没订"从来没人问 ✓，R1 就这么漏到复查 ✓。
+ */
+const coldHits = []
+const coldReceiver = createServer((req, res) => {
+	let body = ''
+	req.on('data', (chunk) => { body += chunk })
+	req.on('end', () => { coldHits.push({ headers: req.headers, body }); res.statusCode = 200; res.end('ok') })
+})
+await new Promise((resolve) => coldReceiver.listen(0, '127.0.0.1', resolve))
+const coldTarget = `http://127.0.0.1:${coldReceiver.address().port}/cold`
+const coldSecret = '冷启动-hmac-秘密'
 // 背景：真文件放在上传目录里，配置指过去 —— 和用户自己挑一段 .mov 的路径一样。
 const BACKDROP_BYTES = Buffer.from('FAKEMOV-0123456789')
 await mkdir(join(scratch, 'mobile-uploads'), { recursive: true })
@@ -62,6 +101,8 @@ await writeFile(
 	JSON.stringify({
 		version: 1, port: PORT, pin: '123456', answerOnPhone: true, backgroundFile: 'bg.mov',
 		asrKey: 'harness-asr-key', asrBaseUrl: ASR_BASE,
+		// R1：**启动前**就配好（下面 3.4.0 那组会断言"不用调订阅接口也挂着"✓）。
+		webhookUrl: coldTarget, webhookSecret: coldSecret,
 		// 2.7.0：用户自己加的键**不许被配置重写抹掉** ✗ —— loadConfig 是白名单重写，
 		// 这条特意放进来看它能不能活过启动时那次规范化 ✓（下面有对应断言 ✓）。
 		myCustomFlag: 'keep-me',
@@ -391,17 +432,52 @@ const services = {
 	},
 }
 
-const disposers = []
+/** 撤一棵 effect 子树（子 effect 先撤 ✓ —— 真 Cordis 就是按作用域收集的 ✓）。 */
+const disposeScope = (scope) => {
+	for (const child of scope?.children ?? []) disposeScope(child)
+	try { if (typeof scope?.dispose === 'function') scope.dispose() } catch { /* 无所谓 */ }
+}
+/**
+ * **一代 = 一次 `apply()`** ✓（复查第 83 轮抓的那一类假绿就出在这里）：
+ * 真 Cordis 里"插件 fiber 被 dispose"会把**它的全部** effect 一起撤掉 ✓ —— 包括 `start()` 里
+ * 异步注册的那个 webhook 订阅 ✓（那时 `apply` 早返回了 ✓，所以按"调用栈"分组是错的 ✗）。
+ * 假 ctx 原来把所有 effect 平铺 ✗ → harness 的"重启"只撤外层 ✓，**webhook 订阅留在原地** ✗ →
+ * 后面每一组"监听器数"断言都多算一套 ✓（实测：冷启动三个事件各 2 个监听器 ✗）。
+ */
+let currentGeneration = 0
+const scopesByGeneration = new Map()
+const disposeGeneration = (generation) => {
+	for (const scope of scopesByGeneration.get(generation) ?? []) disposeScope(scope)
+	scopesByGeneration.delete(generation)
+}
 /**
  * 记录插件注册的 waterfall 应答者，测试自己触发它们 —— 模拟 Cordis 的 dispatch。
  * 插件用 prepend 抢在官方 api-remotes 之前，所以这里只关心"登记了谁"。
  */
 const waterfallListeners = new Map()
+/** 当前正在执行的 effect 的栈（用来模拟"子 effect 属于外层"✓）。 */
+const effectScopeStack = []
 const ctx = {
 	effect(callback) {
-		const dispose = callback()
-		disposers.push(dispose)
-		return () => {}
+		/*
+		 * ⚠️ 三件事，复查（第 75 / 83 轮）各抓过 ✓：
+		 * ① 必须返回**真的** disposer（第 82 轮修 ✓）：插件用 `webhookEffectDisposer?.()` 撤上一次订阅 ✓，
+		 *    原来返回 `() => {}` ✗ → 连订两次多挂一套监听器 ✗（真宿主上 = 同一事件投递两次 ✗）。
+		 * ② 必须模拟**作用域**（第 83 轮 ✓）：在 effect 执行期间注册的 effect 是它的**子** ✓，一起撤 ✓。
+		 * ③ 还要按**代**归组（第 83 轮 ✓）：`start()` 里异步注册的 effect 也必须算进这一代 ✓ ——
+		 *    否则"重启"撤不掉它 ✗（就是上面那段注释里的实测 ✓）。
+		 */
+		const parent = effectScopeStack.length > 0 ? effectScopeStack[effectScopeStack.length - 1] : null
+		const scope = { children: [], dispose: null }
+		if (parent === null) {
+			if (!scopesByGeneration.has(currentGeneration)) scopesByGeneration.set(currentGeneration, new Set())
+			scopesByGeneration.get(currentGeneration).add(scope)
+		} else {
+			parent.children.push(scope)
+		}
+		effectScopeStack.push(scope)
+		try { scope.dispose = callback() } finally { effectScopeStack.pop() }
+		return () => disposeScope(scope)
 	},
 	get(name) { return services[name] },
 	sessionController: stubController,
@@ -418,7 +494,9 @@ const ctx = {
 
 // apply() starts the listener asynchronously; wait for the socket to accept
 // rather than for a file to exist, or the first fetch races the listener.
-apply(ctx)
+/** 每次 `apply` = **新的一代** ✓（这样"重启"才能把上一代的订阅一起撤掉 ✓，见 ctx.effect 注释 ✓）。 */
+const applyBridge = () => { currentGeneration += 1; apply(ctx) }
+applyBridge()
 
 async function waitForPort(port) {
 	for (let attempt = 0; attempt < 100; attempt += 1) {
@@ -444,10 +522,40 @@ const config = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'u
 // （37 条断言全废，只因为 base 里没有这个前缀）。
 const secret = `/${config.pathSecret}`
 const base = `http://127.0.0.1:${config.port}${secret}`
+/*
+ * 复审（第 83 轮 N1）的第二道闸 ✓：端口上**必须是"我们这份桥"** ✓ —— 判据是"密钥段认不认" ✓
+ * （我们自己的桥没 cookie 会回 401 ✓；**404 说明端口上是别人** ✓）。撞上就直接退出并说清原因 ✓，
+ * 而不是让后面几十条断言挨个假红、最后崩在一个看不出原因的 TypeError 上 ✗。
+ */
+{
+	const probe = await fetch(`${base}/api/bootstrap`).catch(() => null)
+	if (probe === null || probe.status === 404) {
+		console.error(`harness: ${base}/api/bootstrap → ${probe === null ? '连不上' : probe.status} —— `
+			+ '端口上**不是我们这份桥**（密钥段不认 ✓；并发跑了两套 harness？）。'
+			+ '断言打过去只会得到一堆假红 ✗ → 直接退出 ✓')
+		process.exit(3)
+	}
+}
 const results = []
 const check = (name, ok, detail = '') => {
 	results.push({ name, ok, detail })
 	console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail === '' ? '' : `  — ${detail}`}`)
+}
+
+/**
+ * 读一份 JSON：**读不到就红一条，绝不把整个套件炸掉** ✓（复查第 83 轮 R10）。
+ * 为什么要有它 ✗：`persistTokens()` 是 fire-and-forget（落盘慢半拍 ✓），harness 里那些
+ * "直接读 tokens 文件"的地方撞上 ENOENT 会**整个进程 exit 1** ✗ —— 而且**不是 FAIL 行** ✓，
+ * 排查时根本看不出是哪条断言 ✓（复查实测：另一套在跑时 `check-counts` 内层 harness 就这么崩过 ✓）。
+ * ⚠️ 正常路径下它**不 push 任何 check** ✓（所以项数不变 ✓、check-counts 的数字也不会抖 ✓）；
+ * 只有真读不到时才红一条 ✓。
+ */
+const readJsonOrFail = async (path) => {
+	try { return JSON.parse(await readFile(path, 'utf8')) } catch (error) {
+		check(`🔴 读得到 ${String(path).split(/[\\/]/).pop()} ✓（复查 R10：读不到要红一条，不许把整个套件炸掉 ✗）`,
+			false, String(error?.code ?? error?.message ?? error))
+		return {}
+	}
 }
 
 let cookie = ''
@@ -613,7 +721,7 @@ const bootstrap = await (await fetch(`${base}/api/bootstrap`, authed)).json()
 	check('换一台设备（没有这个 cookie）仍然 welcomed=false —— 新手机不会被别人的"已看过"吃掉',
 		otherDevice.welcomed === false, String(otherDevice.welcomed))
 
-	const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.tokens.json'), 'utf8'))
+	const stored = await readJsonOrFail(join(scratch, 'mobile-bridge.tokens.json'))
 	check('这份标记跟着令牌文件落盘（重载/重启也不丢）',
 		Object.keys(stored.welcomed ?? {}).length > 0, JSON.stringify(stored.welcomed))
 }
@@ -776,8 +884,16 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	}
 	check('分片收完才回路径（前面几片只报进度）',
 		last?.done === true && String(last.path).includes('mobile-uploads'), JSON.stringify(last))
-	check('拼回来的内容和原文件一字不差', (await readFile(last.path, 'utf8')) === 'AAAABBBBCCCC',
-		await readFile(last.path, 'utf8').catch(() => '(读不到)'))
+	/*
+	 * ⚠️ 复审（第 83 轮 N1）：`last.path` 要是没给（或不是字符串 ✓），`readFile()` 会**同步抛
+	 * ERR_INVALID_ARG_TYPE** ✓ → 整份 harness `exit 1` 而**没有一行 FAIL** ✗（复查/复审都实测到 ✓）。
+	 * 现在：先判类型 ✓，读不到就**红一条**并把它打印出来 ✓（R10 同一个精神 ✓）。
+	 */
+	const uploadedText = typeof last?.path === 'string' && last.path !== ''
+		? await readFile(last.path, 'utf8').catch(() => '')
+		: ''
+	check('拼回来的内容和原文件一字不差', uploadedText === 'AAAABBBBCCCC',
+		uploadedText === '' ? `(读不到：last.path = ${JSON.stringify(last?.path ?? null)})` : uploadedText.slice(0, 40))
 
 	const escapeRef = await fetch(`${base}/api/prompt`, {
 		method: 'POST',
@@ -2136,6 +2252,8 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 /* --- 剪贴板 & 截屏（2.7.0 池子里的 ★4）-------------------------------------
  * 文档原话：「电脑截图 → 手机立刻看到 ✓；手机复制的文字 → 进电脑剪贴板 ✓」。
  * ⚠️ 这组用例会**动用户真实的剪贴板** —— 所以先备份、测完**还原** ✓（这是礼貌，也是纪律 ✓）。
+ * ⚠️ 复审（第 83 轮 N1）：**剪贴板是全局资源** ✗ —— **别并发跑两套 harness** ✓（两套会互相覆盖 ✓，
+ * 实测并发时"写进去再读回来一字不差"那条会红 ✓；端口那一类已经不会互相干扰了 ✓）。
  * 文字里特意带中文 / emoji / 引号 / `$` / 换行 —— 凡是"走命令行就会翻车"的东西都放进去 ✓
  * （2026-10-12 真机验证时就是这里抓到编码 bug 的 ✓）。
  */
@@ -3061,7 +3179,7 @@ process.on('uncaughtException', onCrash)
  */
 const welcomeDevice = 'dshm_device=harness-welcome-version'
 await fetch(`${base}/api/welcomed`, { method: 'POST', headers: { cookie: `${cookie}; ${welcomeDevice}` } })
-const welcomeBeforeRestart = JSON.parse(await readFile(tokensFile, 'utf8'))
+const welcomeBeforeRestart = await readJsonOrFail(tokensFile)
 const welcomeVersion = welcomeBeforeRestart.welcomed?.['harness-welcome-version']
 check('说明页的"看过"落盘的是版本号（不是时间戳）',
 	Number.isInteger(welcomeVersion) && welcomeVersion >= 1 && welcomeVersion < 1000,
@@ -3072,7 +3190,7 @@ const openReader = openStream.body.getReader()
 await openReader.read()
 await new Promise((resolve) => setTimeout(resolve, 200))
 
-disposers[0]?.()
+disposeGeneration(currentGeneration)
 await new Promise((resolve) => setTimeout(resolve, 600))
 check('stopping with a stream open does not crash the process',
 	crashes.length === 0, crashes.map((error) => error.code ?? error.message).join(' | '))
@@ -3082,11 +3200,11 @@ await openReader.cancel().catch(() => {})
 // 装成 v1 时代的老数据（那时存的是毫秒时间戳）—— 迁移必须在"还没起来"的空档做，
 // 否则 dispose/加载过程会把内存里那份版本号又写回去，测不到迁移。
 await writeFile(tokensFile, JSON.stringify({
-	...JSON.parse(await readFile(tokensFile, 'utf8')),
+	...await readJsonOrFail(tokensFile),
 	welcomed: { 'harness-welcome-version': 1792078785000 },
 }, null, '\t'))
 
-apply(ctx)
+applyBridge()
 
 if (!await waitForPort(PORT)) {
 	check('the bridge comes back up after a restart', false, 'nothing listening')
@@ -3186,7 +3304,7 @@ check('logout revokes the cookie', logout.status === 200 && afterLogout.status =
 
 // persistTokens() writes without awaiting, so give the disk write a moment.
 await new Promise((resolve) => setTimeout(resolve, 150))
-const afterLogoutTokens = JSON.parse(await readFile(tokensFile, 'utf8')).tokens ?? {}
+const afterLogoutTokens = (await readJsonOrFail(tokensFile)).tokens ?? {}
 check('logout also clears the token on disk', Object.keys(afterLogoutTokens).length === 0,
 	`${Object.keys(afterLogoutTokens).length} token(s) left`)
 
@@ -3450,7 +3568,7 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	 * 等放行的设备**白等一场** ✓（谁会想到去等一次重启呢 ✓）。
 	 * 这里直接读**落盘的那份**验 ✓（进程里的 Map 看不出这个洞 ✗）。
 	 */
-	const tokensFile = JSON.parse(await readFile(join(scratch, 'mobile-bridge.tokens.json'), 'utf8'))
+	const tokensFile = await readJsonOrFail(join(scratch, 'mobile-bridge.tokens.json'))
 	const pendingEntry = Object.values(tokensFile.tokens ?? {}).find((entry) => entry?.approved === false)
 	check('🔴 "等放行"这个状态**写进了令牌文件** ✓（重启之后仍然是等放行 ✗ —— 白等一场就是漏洞 ✓）',
 		pendingEntry !== undefined && typeof pendingEntry.ip === 'string' && pendingEntry.ip === '203.0.113.13',
@@ -3698,6 +3816,305 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 }
 
 /*
+ * 🔴 复查（第 83 轮）R1：**冷启动就该订上** ✓ —— 启动前配置里已经写好 `webhookUrl` ✓（见文件头 ✓），
+ * 到这里**一次订阅路由都没调过** ✓ → 所以此刻挂着的监听器只可能来自启动路径 ✓。
+ * 修之前这里是 0 个监听器、0 次投递、日志零行 ✗ —— 核心承诺只在"手工调过订阅接口"的进程里成立 ✗。
+ */
+{
+	const { createHmac } = await import('node:crypto')
+	const names = ['api-session/status', 'api-session/error', 'api-session/activity']
+	check('🔴 冷启动（配置里已写好 webhookUrl、**没调过订阅接口**）：三个事件各挂 **1** 个监听器 ✓（复查 R1）',
+		names.every((name) => (waterfallListeners.get(name) ?? []).length === 1),
+		names.map((name) => `${name.split('/')[1]}=${(waterfallListeners.get(name) ?? []).length}`).join(' '))
+	for (const listener of waterfallListeners.get('api-session/status') ?? []) { try { listener('session-cold-start', true) } catch { /* 无所谓 */ } }
+	await new Promise((resolve) => setTimeout(resolve, 400))
+	check('🔴 冷启动的订阅**真的会投递** ✓（接收器收到 1 次；修之前 0 次 ✗ —— 复查 R1 的实测就是这个 0）',
+		coldHits.length === 1, `hits=${coldHits.length}`)
+	if (coldHits.length === 1) {
+		const expected = 'sha256=' + createHmac('sha256', coldSecret).update(coldHits[0].body, 'utf8').digest('hex')
+		check('冷启动投递也**带对签名** ✓（冷启动那条路不是"野路子"✓）',
+			coldHits[0].headers['x-dsh-signature'] === expected && coldHits[0].headers['x-dsh-event'] === 'api-session/status',
+			String(coldHits[0].headers['x-dsh-signature'] ?? '(没有)').slice(0, 24))
+	}
+	const wholeLog = await readFile(join(scratch, 'mobile-bridge.log'), 'utf8').catch(() => '')
+	check('🔴 冷启动的订阅**在审计日志里留了一行** ✓（复查 R1：修之前连"没配"那行都被静默丢掉 ✗）',
+		wholeLog.includes('webhook：已订阅') && wholeLog.includes('api-session/status'),
+		wholeLog.split('\n').filter((line) => line.includes('webhook')).slice(0, 2).join(' | ').slice(0, 160) || '(日志里没有任何 webhook 行 ✗)')
+}
+
+/*
+ * 3.4.0 开放接口：**正路径**（配了 URL 之后，事件来了会真的投递）——
+ * 这是第 69 轮之后唯一还没验的那条 ✓（"默认关"和"订阅会跑"都已真机验过 ✓）。
+ *
+ * 做法（确定性 ✓，不靠真宿主事件）：
+ *  ① 写一份带 `webhookUrl`（指向本文件里起的接收器 ✓）与 `webhookSecret` 的配置 ✓；
+ *  ② 调那条**按需订阅**路由 ✓（`POST /api/webhook/subscribe` ✓）—— 只为验"改完配置立刻生效"这条入口 ✓
+ *     （自动订阅点在 `start()` 里 ✓，冷启动那条另有断言 ✓；复审第 83 轮 N2 校正：以前这里写"热重载不重跑
+ *     createBridge"✗，**与事实相反** ✓，别信 ✓）；
+ *  ③ 从假 ctx 收集到的监听器里**取出** `api-session/status` 那个 ✓，自己调一次（就当"真事件来了" ✓）；
+ *  ④ 断言：接收器**真收到了** ✓、`x-dsh-event` 对 ✓、**签名与本地算的一致** ✓、
+ *     且正文里**没有会话内容** ✓（只有 sessionId/running/时间 ✓）。
+ */
+{
+	const { createServer } = await import('node:http')
+	const { createHmac } = await import('node:crypto')
+	let got = null
+	let deliveries = 0
+	const hits = []
+	const receiver = createServer((req, res) => {
+		let body = ''
+		req.on('data', (chunk) => { body += chunk })
+		req.on('end', () => {
+			deliveries += 1
+			hits.push({ headers: req.headers, body })
+			if (deliveries === 1) got = { headers: req.headers, body }
+			// 第 1 次：200 + 正文 ✓；第 2 次：**200 空正文** ✓（第 75 轮点名的那半 ✓）；
+			// 第 3 次起：**204**（规范意义上的成功、本来就**没有**正文 ✓ —— 复查第 83 轮 R9：对它告警是把正常当异常 ✗）。
+			res.statusCode = deliveries >= 3 ? 204 : 200
+			res.end(deliveries === 1 ? 'ok' : '')
+		})
+	})
+	await new Promise((resolve) => receiver.listen(0, '127.0.0.1', resolve))
+	const target = 'http://127.0.0.1:' + receiver.address().port + '/hook'
+	const secret = '测试用-hmac-秘密'
+
+	const readConfig = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeConfig = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'),
+		JSON.stringify({ ...await readConfig(), ...patch }, null, 2), 'utf8')
+
+	// ⚠️ 先重新登录 ✓：跑到文件末尾时 `authed` 那枚 cookie 早被前面的登出/踢设备用例作废了 ✗
+	//（语音那组踩过同一个坑 ✓ —— 那时也是靠开头重新登录解决的 ✓）。
+	const freshLogin = await fetch(`${base}/api/login`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
+	})
+	const freshCookie = (freshLogin.headers.get('set-cookie') ?? '').split(';')[0]
+	authed.cookie = freshCookie
+	if (authed.headers !== undefined) authed.headers.cookie = freshCookie
+
+	await writeConfig({ webhookUrl: target, webhookSecret: secret })
+	const subscribed = await fetch(`${base}/api/webhook/subscribe`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body: '{}' })
+	const subBody = await subscribed.json().catch(() => null)
+	check('按需订阅：配了 URL → 200 且说"已按当前配置订阅" ✓',
+		subscribed.status === 200 && String(subBody?.note ?? '').includes('已按当前配置订阅'), JSON.stringify(subBody))
+
+	const listeners = waterfallListeners.get('api-session/status') ?? []
+	check('订阅真的挂到了宿主事件上 ✓（假 ctx 里收到了 `api-session/status` 的监听器 ✓）',
+		listeners.length === 1, '监听器数=' + listeners.length)
+	/*
+	 * 🔴 复查（第 75 轮）点名的那条**假象断言** ✓（第 82 轮修）：原来只写 `length >= 1` ✗ ——
+	 * 它既咬不住"路由啥也没干"（启动无配置时曾挂 3 个 ✓ → 恒真 ✗），更咬不住**订阅泄漏** ✗。
+	 * 泄漏的现场：`subscribeWebhooks()` 每次都先 `webhookEffectDisposer?.()` 撤旧的 ✓，
+	 * 而假 ctx 的 `effect` 原来返回**空函数** ✗ → 撤不掉 ✗ → 连订两次多一套监听器 ✗
+	 * （真宿主上 = **同一条事件被投递两次** ✗，"投递风暴"就是这么来的 ✓）。
+	 */
+	const beforeResubscribe = (waterfallListeners.get('api-session/status') ?? []).length
+	const resubscribeResponse = await fetch(`${base}/api/webhook/subscribe`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body: '{}' })
+	const resubscribeBody = await resubscribeResponse.json().catch(() => null)
+	const afterResubscribe = (waterfallListeners.get('api-session/status') ?? []).length
+	/* ⚠️ 复查（第 83 轮）R11：**先证明这次请求真的跑到了** ✓ —— 否则它要是 401 / 路由早退，
+	 * 下面"数量没变"就会**空过**（本文件自己就两次踩过"cookie 已失效"✗）。 */
+	check('（前置）第二次订阅请求**真的成功了** ✓（200 + 回话说订了什么 ✓ —— 不然下面那条计数是空过 ✗）',
+		resubscribeResponse.status === 200 && String(resubscribeBody?.note ?? '').includes('已按当前配置订阅'),
+		`${resubscribeResponse.status} ${String(resubscribeBody?.note ?? '').slice(0, 70)}`)
+	check('🔴 连调两次订阅：监听器**不增加** ✓（`effect` 必须返回真 disposer ✓ —— 否则同一事件被投递两次 ✗）',
+		beforeResubscribe === 1 && afterResubscribe === beforeResubscribe,
+		`第一次订阅后 ${beforeResubscribe} → 再订一次 ${afterResubscribe}`)
+	for (const listener of listeners) { try { listener('session-webhook-test', true) } catch { /* 无所谓 */ } }
+	await new Promise((resolve) => setTimeout(resolve, 400))
+
+	check('🔴 事件来了**真的投递** ✓（接收器收到了 POST ✓）', got !== null,
+		got === null ? '接收器什么也没收到 ✗' : '收到了 ✓')
+	if (got !== null) {
+		check('投递头对 ✓（`x-dsh-event` = 事件名 ✓）', got.headers['x-dsh-event'] === 'api-session/status',
+			String(got.headers['x-dsh-event']))
+		const expected = 'sha256=' + createHmac('sha256', secret).update(got.body, 'utf8').digest('hex')
+		check('🔴 **HMAC 签名与本地算的一致** ✓（对方据此能验真 ✓、伪造不了 ✗）',
+			got.headers['x-dsh-signature'] === expected,
+			String(got.headers['x-dsh-signature'] ?? '(没有)').slice(0, 24))
+		const payload = JSON.parse(got.body)
+		check('🔴 正文里**没有会话内容** ✓（只有事件名/sessionId/running/时间 ✓）',
+			payload.event === 'api-session/status' && payload.sessionId === 'session-webhook-test'
+			&& payload.running === true && Object.keys(payload).length <= 5,
+			JSON.stringify(payload).slice(0, 110))
+	}
+	/*
+	 * 🔴 复查（第 75 轮）🟡 的另一半 ✓：**"2xx 但正文为空"原来什么也不记** ✗ —— `302` 降级那半
+	 * 已被 `redirect:'manual'` 挡住 ✓，但"200 + 空正文"这半没人管 ✓：可能对方收了 ✓、
+	 * 也可能被中间层吞了 ✗，我们**不知道** ✓ → 所以至少要有一行 ✓。这里让接收器第二次回空正文 ✓。
+	 * ⚠️ 增量取法：`record()` 是**纯追加** ✓（`appendFile` + `[时间] 行\n` ✓，见 `lib/index.js:1433` ✓），
+	 * 所以"读两次、取后一次的尾巴"成立 ✓；万一被截断过（>512KB ✓ 这里不可能 ✓）就整份兜底 ✓。
+	 */
+	{
+		const logPath = join(scratch, 'mobile-bridge.log')
+		const before = await readFile(logPath, 'utf8').catch(() => '')
+		for (const listener of waterfallListeners.get('api-session/status') ?? []) { try { listener('session-webhook-empty', true) } catch { /* 无所谓 */ } }
+		await new Promise((resolve) => setTimeout(resolve, 500))
+		const after = await readFile(logPath, 'utf8').catch(() => '')
+		const fresh = after.startsWith(before) ? after.slice(before.length) : after
+		check('🔴 2xx 但**正文为空**：审计日志要记一行 ✓（复查点名的那半 ✓ —— 原来当成功、什么都不写 ✗）',
+			fresh.includes('正文为空'), fresh.trim().split('\n').slice(-2).join(' | ').slice(0, 150) || '(日志里没有新行 ✗)')
+	}
+
+	/*
+	 * 🔴 复查（第 83 轮）R9：**204 不许告警** ✗ —— README 自己的示例接收端就回 `204` ✓，
+	 * 对它写"正文为空、说不准"是把**规范意义上的成功**当异常 ✓ → 每投一次警告一行 ✗，真信号会被淹掉 ✓。
+	 * （接收器第 3 次起回 204 ✓；上面那半是 200 + 空正文 ✓ —— 那一半**必须**仍然告警 ✓。）
+	 */
+	{
+		const logPath = join(scratch, 'mobile-bridge.log')
+		const before = await readFile(logPath, 'utf8').catch(() => '')
+		for (const listener of waterfallListeners.get('api-session/status') ?? []) { try { listener('session-webhook-204', true) } catch { /* 无所谓 */ } }
+		await new Promise((resolve) => setTimeout(resolve, 500))
+		const after = await readFile(logPath, 'utf8').catch(() => '')
+		const fresh = after.startsWith(before) ? after.slice(before.length) : after
+		check('🔴 对方回 **204**（成功、规范上就没有正文）时**不告警** ✓（把正常当异常会淹掉真信号 ✗ —— 复查 R9）',
+			fresh.includes('正文为空') !== true, fresh.trim().split('\n').slice(-2).join(' | ').slice(0, 140) || '(没有新行 ✓)')
+	}
+
+	/*
+	 * 🔴 复查（第 83 轮）R6：配置里写**重复事件** → 只许挂**一个**监听器 ✓。
+	 * 修之前实测：`["api-session/status","api-session/status"]` → 2 个监听器 → **一次事件投两次** ✗
+	 * （最短的那条"投递风暴"路径 ✓）。
+	 */
+	{
+		await writeConfig({ webhookEvents: ['api-session/status', 'api-session/status'] })
+		await fetch(`${base}/api/webhook/subscribe`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body: '{}' })
+		const dupCount = (waterfallListeners.get('api-session/status') ?? []).length
+		check('🔴 配置里写重复事件 → 只挂 **1** 个监听器 ✓（复查 R6：不去重的话一次事件投两次 ✗）',
+			dupCount === 1, `监听器数=${dupCount}`)
+		await writeConfig({ webhookEvents: [] })
+		await fetch(`${base}/api/webhook/subscribe`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body: '{}' })
+	}
+
+	/*
+	 * 🔴 复查（第 83 轮）R13：`api-session/activity` 的**发生时间**必须单独带出来 ✓ ——
+	 * 以前它被映射成 `at` ✗，而载荷里的 `at` 一律是"投递时刻" ✓ → 对方拿到的是**错的时间**、还看不出来 ✗。
+	 */
+	{
+		const activityAt = 1700000000000
+		for (const listener of waterfallListeners.get('api-session/activity') ?? []) { try { listener('session-activity-test', activityAt) } catch { /* 无所谓 */ } }
+		await new Promise((resolve) => setTimeout(resolve, 400))
+		const hit = hits.find((entry) => entry.headers['x-dsh-event'] === 'api-session/activity')
+		let payload = null
+		try { payload = hit === undefined ? null : JSON.parse(hit.body) } catch { payload = null }
+		check('🔴 `api-session/activity` 带出宿主的 **`updatedAt`** ✓（且 `at` 仍是投递时刻 ✓ —— 复查 R13）',
+			payload !== null && payload.updatedAt === activityAt && payload.at !== activityAt,
+			JSON.stringify(payload ?? null).slice(0, 120))
+	}
+
+	/*
+	 * 🔴 复查（第 83 轮）R2：投递侧**不许把响应体全量读进内存** ✗ ——
+	 * 修之前实测：对方回 200 + 32MB，进程 RSS 65MB → 187MB ✓（`text()` 没有上限 ✓，8s 超时只管时间 ✓）。
+	 * 这里用**同进程 RSS 增量**兜住它 ✓（阈值给得很宽 64MB ✓ —— 只要别再把 32MB 读进来就够 ✓；
+	 * 修之前那条会红 ✓）。32MB 缓冲在**测量之前**就分配好 ✓，否则它自己会把基线顶高 ✗。
+	 */
+	{
+		const BIG = Buffer.alloc(32 * 1024 * 1024, 0x41)
+		const bigReceiver = createServer((req, res) => {
+			req.on('data', () => {})
+			req.on('end', () => { res.statusCode = 200; res.end(BIG) })
+		})
+		await new Promise((resolve) => bigReceiver.listen(0, '127.0.0.1', resolve))
+		await writeConfig({ webhookUrl: `http://127.0.0.1:${bigReceiver.address().port}/big`, webhookSecret: secret })
+		await fetch(`${base}/api/webhook/subscribe`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body: '{}' })
+		const rssBefore = process.memoryUsage().rss
+		for (const listener of waterfallListeners.get('api-session/status') ?? []) { try { listener('session-webhook-big', true) } catch { /* 无所谓 */ } }
+		await new Promise((resolve) => setTimeout(resolve, 1200))
+		const grew = Math.round((process.memoryUsage().rss - rssBefore) / (1024 * 1024))
+		check('🔴 对方回 **32MB** 正文时不许全量读进内存 ✓（复查 R2：修之前 RSS +122MB ✗；现在只读第一块 + cancel ✓）',
+			grew < 64, `RSS 增量 ${grew}MB（阈值 64MB ✓）`)
+		bigReceiver.close()
+	}
+
+	receiver.close()
+	/*
+	 * 收尾：把 webhook 配置清掉 ✓（别给后面的用例留一个会往外发东西的开关 ✗）。
+	 * 🔴 复查（第 83 轮）R3 + "默认关"：顺手把"没配"那条分支钉住 ✓ ——
+	 * 修之前它 `return undefined` ✗ → 路由兜底成"**已按当前配置订阅 ✓**" ✗（0 个监听器也报成功 ☠）。
+	 */
+	await writeConfig({ webhookUrl: '', webhookSecret: '', webhookEvents: [] })
+	const offResponse = await fetch(`${base}/api/webhook/subscribe`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body: '{}' })
+	const offBody = await offResponse.json().catch(() => null)
+	const offNote = String(offBody?.note ?? '')
+	check('🔴 默认关（没配 webhookUrl）时订阅接口**说实话** ✓（复查 R3：必须说"没配、一个都没订"✗ 不许说"已订阅 ✓"）',
+		offResponse.status === 200 && offNote.includes('没配') && offNote.includes('已按当前配置订阅') === false,
+		`${offResponse.status} ${offNote.slice(0, 90)}`)
+	const offCount = (waterfallListeners.get('api-session/status') ?? []).length
+	check('🔴 关掉之后监听器**归零** ✓（撤掉上一次的订阅 ✓ —— 不订也不留钩子 ✓）',
+		offCount === 0, `监听器数=${offCount}`)
+}
+
+/*
+ * 3.4.0 复查（第 75 轮）点名：`allowWebhookUrl` **零测试覆盖** ✗ ——
+ * 而 CHANGELOG 却声称"出站白名单四类坏地址全拒 ✓ 是这一版钉住的" ✓。
+ * 这里把它钉住：**用复查实测过的那些"曾被放行"的写法当反例** ✓（它们必须变成拒绝 ✗）。
+ */
+{
+	const { allowWebhookUrl } = await import('../lib/webhook.js')
+	const mustReject = [
+		// 复查实测：这些原来**全被放行** ✗ —— 现在必须拒 ✓
+		'https://[::ffff:169.254.169.254]/latest/meta-data/',
+		'https://[::ffff:10.0.0.1]/x',
+		'https://[::ffff:192.168.1.1]/x',
+		'https://[fd00::1]/x',
+		'https://[fe80::1]/x',
+		'https://[2002::1]/x',
+		'https://[::]:8443/admin',
+		'https://[::1]:9200/_search',
+		'https://0.0.0.0:8443/admin',
+		'https://foo.internal./x',
+		'https://my-router.lan/x',
+		'https://printer.local/x',
+		// 复查（第 83 轮）R7：带用户名/密码的 URL —— `fetch` 永远不会用它（TypeError ✓），
+		// 而且那等于**把密码写在配置里** ✓ → 必须在白名单这一关就拒掉 ✓。
+		'https://user:P%40ssw0rd-LEAKME@example.invalid/hook',
+		'http://user@127.0.0.1:8787/hook',
+		// ⚠️ `https://localtest.me/x`（公网域名、解析到 127.0.0.1）**故意不列在这里** ✗ ——
+		// 白名单是字面串判断 ✓ → 挡不住「解析后才内指」的域名 ✓；这条缺口在下面单独记着 ✓（哨兵断言 ✓）。
+		// 原本就挡得住的老反例 ✓
+		'file:///C:/Windows/win.ini',
+		'ftp://192.168.1.5/x',
+		'data:text/plain,hi',
+		'http://10.0.0.5/x',
+		'http://172.16.0.5/x',
+		'http://192.168.1.5/x',
+		'http://169.254.169.254/latest',
+		'http://metadata.google.internal/x',
+		'http://0.0.0.0:8787/x',
+		'',
+		'这不是网址',
+	]
+	const mustAllow = [
+		'https://example.com/hook',
+		'https://example.com:8443/hook?x=1',
+		'http://127.0.0.1:8787/hook',
+		'http://localhost:8787/hook',
+	]
+	let rejected = 0
+	for (const url of mustReject) {
+		const verdict = allowWebhookUrl(url)
+		if (verdict.ok !== true) rejected += 1
+		else check('🔴 出站白名单**必须拒**：' + url.slice(0, 44), false, verdict.url)
+	}
+	check('🔴 出站白名单：复查列出的**全部坏地址都被拒** ✓（' + rejected + '/' + mustReject.length + ' ✓）',
+		rejected === mustReject.length, '被放行的：' + mustReject.filter((url) => allowWebhookUrl(url).ok === true).join(' , ').slice(0, 120))
+	let allowed = 0
+	for (const url of mustAllow) {
+		const verdict = allowWebhookUrl(url)
+		if (verdict.ok === true) allowed += 1
+		else check('白名单**不该拒**：' + url, false, String(verdict.reason))
+	}
+	check('白名单：正常地址（https / 本机 http）**照常放行** ✓（别把功能一起卡死 ✗）',
+		allowed === mustAllow.length, allowed + '/' + mustAllow.length)
+	// 🔔 **哨兵** ✓：这条记着「**还没做**的那一半」 ✓ —— 公网域名解析到内网（`localtest.me`、`*.nip.io` ✓）。
+	// 现在它**会**被放行 ✓（字面串判断挡不住 ✓）；将来在投递时加了 `dns.lookup` 校验全部结果 ✓，
+	// 这条就会**变红** ✓ → 那时请把它改成「必须拒」 ✓（缺口变成会咬的哨兵 ✓，而不是永远绿的空话 ✗）。
+	check('☐ 已知缺口（哨兵）：域名「解析后才内指」的写法目前仍放行 ✗ —— 做了 DNS 校验后这条会变红 ✓',
+		allowWebhookUrl('https://localtest.me/x').ok === true,
+		'已经能拒了？✓ 请把这里改成「必须拒」 ✓')
+}
+
+/*
  * 3.3.2：放行页的地址与链接必须「带前缀也点得通」 ✓ —— 用户实测踩过这个坑 ✗：
  * 403 页给的地址漏了 pathSecret ✓（照着点 404 ✗）、页面上「放行 / 拒绝」是绝对路径 ✗（同样 404 ✗）。
  * ⚠️ 断言要**真咬** ✓：3.3.1 的 bug 只在「403 页印的地址」与「页面里的链接」上 ✓ ——
@@ -3736,8 +4153,10 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 
 	await writeConfig332({ deviceApproval: false })
 }
-
-for (const dispose of disposers) { try { dispose?.() } catch { /* ignore */ } }
+// 冷启动那个接收器收工 ✓（它在文件头就起着 ✓ —— 进程本来也会退出，这里收干净一点 ✓）。
+coldReceiver.close()
+// 收尾：把所有代（每个 apply 一代）的 effect 都撤掉 ✓ —— 不只是"最后那一代" ✓。
+for (const generation of [...scopesByGeneration.keys()]) { try { disposeGeneration(generation) } catch { /* ignore */ } }
 await new Promise((resolve) => setTimeout(resolve, 200))
 
 const failed = results.filter((entry) => !entry.ok)
