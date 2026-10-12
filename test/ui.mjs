@@ -3841,6 +3841,34 @@ await wait(40)
 	}
 }
 
+/* --- 2.7.0 ④：审批卡片渲染 + 「以后少问这类」捷径 --------------------------
+ * 一直缺的就是这条**渲染通路** ✓：推一帧 `t:'interaction'` 给页面，卡片要真画出来 ✓，
+ * 而 ④ 的捷径**只管以后**（文案不许暗示"这次也批了" ✗）。
+ */
+{
+	source.emit({ t: 'interaction', id: 'ask-approval-1', kind: 'approval', payload: { toolName: 'bash', reason: '要跑一条命令' } })
+	await wait(150)
+	const body = window.document.body.textContent.replace(/\s+/g, ' ')
+	check('审批卡片真的画出来了（推一帧 interaction 就来 ✓）',
+		body.includes('允许它执行 bash 吗') && body.includes('要跑一条命令'),
+		body.slice(Math.max(0, body.indexOf('允许它执行')), 60))
+	check('卡片上多了「以后少问这类」捷径 ✓（④ 的落点）', body.includes('以后少问这类'))
+	const shortcut = [...window.document.querySelectorAll('button')].find((item) => String(item.textContent).includes('以后少问这类')) ?? null
+	check('捷径的说明**明说只管以后** ✓（不许让人以为这一次也批了 ✗）',
+		shortcut !== null && String(shortcut.getAttribute('title') ?? '').includes('不等于批准这一次'),
+		shortcut === null ? '(没找到按钮)' : String(shortcut.getAttribute('title')).slice(0, 40))
+	if (shortcut !== null) {
+		click(shortcut)
+		await wait(150)
+		const after = window.document.body.textContent.replace(/\s+/g, ' ')
+		check('点捷径：先把话说清（"这一次仍要点允许一次" ✓），再把人带到权限页 ✓',
+			after.includes('这一次仍要点上面的') && window.getComputedStyle($('permopen')).display !== 'none',
+			after.slice(Math.max(0, after.indexOf('改的是')), 50))
+		click($('permBack'))
+		await wait(60)
+	}
+}
+
 /* --- stale-page self-heal ------------------------------------------------ */
 /* A phone that stays open across a server restart must notice that the build
    changed. Asserted last, because a real reload would reset the DOM. */

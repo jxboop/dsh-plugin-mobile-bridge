@@ -5950,7 +5950,11 @@
 	 *   · **只收网络层失败**（`error.status` 不是数字 / 0 ✓）；服务端明确拒绝（403 PIN 错、400 参数错 ✓）
 	 *     **绝不进箱** ✗ —— 那是"发不出去"，进箱只会一直在那儿、还挡着后面的人 ✓；
 	 *   · 箱子存在 localStorage（`dshm.outbox` ✓）—— 刷新/切回 App 都在 ✓；
-	 *   · **靠 requestId 幂等** ✓：宿主对同一个 requestId 是幂等的（发送那段注释写着 ✓），
+	 *   · **靠 requestId 幂等** ✓：**已复核宿主实现**（2026-10-12）——
+	 *     `dsh-api-session-controller/lib/index.js:855`：`if (hasPromptRequest(agent, request.requestId)) return { accepted: true }`；
+	 *     `hasPromptRequest`（同文件 1063）查的是"**待处理队列**（nextTurn/nextStep）里、
+	 *     或**已落盘的 `user/message` 事件**里有没有同一个 `rpcId`" ✓ ——
+	 *     所以隧道重试、离线补发**都不会变成两条** ✓（这就是本功能立得住的前提 ✓）。
 	 *     所以"重试 + 自动补发"最多还是**一条**消息 ✓（不然补发一次就多一条 ✗）。
 	 */
 	const outbox = { items: [], busy: false }
