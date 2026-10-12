@@ -508,6 +508,31 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 		check('修 bug 的版本说的是"修好了：……”（人话），不是"🔴 根因"',
 			plain.length >= 3, String(plain.length))
 	}
+	/*
+	 * ⚠️ 上面那两条查的是**旧版本**（2.4.2）✓ —— 而"最新那一版"恰恰没人查 ✗，于是出了这个假绿：
+	 * USERNEWS.md 里 2.8.0 的**标题被吃掉了**（文件头的"格式示例"写成 ``> 格式：`## 2.8.0 …``
+	 * 且没有闭合反引号，把真正的那行标题顶掉了 ✗），`userNews()['2.8.0']` 自然取不到 →
+	 * 说明页**静默退回 CHANGELOG 的工程措辞**（"修（真机走一遍 + 冷视角复查抓到的）"这种 ✓），
+	 * 而**所有断言依旧全绿** ✓（黑名单只拦"测试/实现/…"开头，拦不住这个 ✗）。
+	 * 所以：最新那一版的"人话"必须真的在 USERNEWS 里，而且**注入给手机的必须来自它** ✓。
+	 */
+	{
+		const userNewsText = await readFile(join(import.meta.dirname, '..', 'USERNEWS.md'), 'utf8')
+		const headRe = new RegExp(`^##\\s+${pkgVersion.replace(/\./g, '\\.')}\\b`, 'm')
+		const at = userNewsText.search(headRe)
+		check(`USERNEWS.md 里最新那一版（${pkgVersion}）有真的 \`## ${pkgVersion}\` 标题（标题被吃掉 → 说明页会静默退回工程措辞 ✗）`,
+			at >= 0, at >= 0 ? '有 ✓' : '没有 —— 检查文件头那段"格式示例"是不是把真标题顶掉了')
+		const rest = at >= 0 ? userNewsText.slice(at) : ''
+		const nextHead = rest.indexOf('\n## ', 5)
+		const bullets = rest.slice(0, nextHead < 0 ? undefined : nextHead)
+			.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.startsWith('- '))
+		check(`USERNEWS.md 里最新那一版有人话条目（至少 2 条 ✓）`, bullets.length >= 2, `${bullets.length} 条`)
+		const newest = sections.find((section) => section.version === pkgVersion)
+		const firstBullet = (bullets[0] ?? '').replace(/^-\s+/, '').replace(/\*\*/g, '')
+		check('注入给手机的"最新版本"真的来自 USERNEWS（不是 CHANGELOG 的工程措辞 ✗）',
+			firstBullet !== '' && (newest?.lines ?? []).some((line) => String(line).includes(firstBullet.slice(0, 10))),
+			`USERNEWS 首条="${firstBullet.slice(0, 24)}"；注入=${JSON.stringify(newest?.lines ?? null).slice(0, 90)}`)
+	}
 	check('每一节都有可读内容（没有小标题的用正文兜底）',
 		Array.isArray(sections) && sections.every((section) => Array.isArray(section.lines) && section.lines.length > 0),
 		JSON.stringify(sections.filter((s) => (s.lines ?? []).length === 0).map((s) => s.version)))

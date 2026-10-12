@@ -141,10 +141,33 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	walk('lib', 0)
 	walk('test', 0)
 	walk('tools', 0)
+	/*
+	 * 根目录这几份**也是文本源**（说明页读 `USERNEWS.md`、更新历史读 `CHANGELOG.md` ✓）——
+	 * 以前没扫它们，所以一次"用 PS 改 README"留下的伤**谁也看不见** ✗（见下面那条 BOM 断言 ✓）。
+	 */
+	for (const name of ['README.md', 'CHANGELOG.md', 'USERNEWS.md', 'package.json', 'cordis.patch.yml']) {
+		if (existsSync(join(ROOT, name))) targets.push(name)
+	}
 	check('（自检）扫到了该扫的文本源', targets.length > 10, `${targets.length} 个`)
 	const mojibake = targets.filter((rel) => readFileSync(join(ROOT, rel), 'utf8').includes('\uFFFD'))
 	check('没有文件被写成乱码（U+FFFD 一个都不许有 —— PS 文本管道改文件会留下它 ✗）',
 		mojibake.length === 0, mojibake.join(', ') || `${targets.length} 个文件都干净 ✓`)
+	/*
+	 * **BOM 只该出现在 `.ps1` 上**（2026-10-12 加 ✓）。
+	 *
+	 * 现场：为了改两个数字，用 PowerShell 的 `Get-Content -Raw` + `Set-Content` 写了 `README.md` ——
+	 * PS 5.1 的 `Set-Content -Encoding UTF8` 会**顺手加一个 BOM** ✗。内容没坏、U+FFFD 也没有，
+	 * 所以当时**没有任何断言会红** ✓（假绿）；但它在 diff 里是一处噪声，Node 读文本时首行还会多一个 \uFEFF ✗。
+	 * 需要 BOM 的只有 `.ps1`（PS 5.1 靠它认 UTF-8 ✓），其它文件一律不该有 ✓。
+	 */
+	const hasBom = (rel) => {
+		const bytes = readFileSync(join(ROOT, rel))
+		return bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF
+	}
+	const ps1 = targets.filter((rel) => rel.toLowerCase().endsWith('.ps1'))
+	const bomNotPs1 = targets.filter((rel) => rel.toLowerCase().endsWith('.ps1') === false && hasBom(rel))
+	check('BOM 只出现在 .ps1 上（别处带 BOM = 用 PS 文本管道写过的白噪声 ✗）',
+		bomNotPs1.length === 0, bomNotPs1.join(', ') || `非 .ps1 的 ${targets.length - ps1.length} 个文件都没有 BOM ✓`)
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
