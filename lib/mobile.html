@@ -1275,6 +1275,33 @@
 		<!-- 3.1.0「面板协议」：外挂面板在这里打开 ✓（整屏 + iframe ✓，与手机页**同源** ✓）。
 		     ⚠️ 同源 ⇒ 面板拿得到手机页的 cookie ✓ ⇒ **装面板 = 把手机端交给它** ✓；
 		     所以整个功能**默认关** ✓（`panels: true` 才开 ✓），这句话也印在下面 ✓。 -->
+		<!-- 3.2.0「工作流编排」第一刀：**手工编排** ✓ —— 一串步骤依次发 ✓，
+		     用 `turn/end` 当"这一步做完了"的信号 ✓（步骤之间**不传数据** ✓：agent 就在同一个会话里，
+		     上一步的产物本来就在它眼前 ✓）。定时/事件触发是下一刀 ✓。 -->
+		<section class="sheet" id="wfopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="wfBack">← 返回</button>
+				<span class="title">工作流编排</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="hint">**一行一步** ✓：写几行就是几步，跑的时候**一步步来** ✓ ——
+					前一步跑完（这一轮结束）才发下一步 ✓，所以"转写 → 出提纲 → 存笔记"这种链天然成立 ✓。</div>
+				<input id="wfName" placeholder="名字（例如：听课三步走）" style="width:100%;margin:6px 0">
+				<textarea id="wfSteps" placeholder="第一步：把这段录音转成文字并整理成提纲&#10;第二步：把提纲写成复习卡存到电脑上&#10;第三步：把复习卡的内容念给我听（列出要点即可）" style="width:100%;min-height:26vh;margin:0 0 8px"></textarea>
+				<div class="actions">
+					<button class="go" id="wfRun">▶ 跑一遍</button>
+					<button id="wfStop" style="display:none">■ 停下</button>
+					<button id="wfSave">保存</button>
+					<button id="wfSchedule">📅 定时跑</button>
+					<button id="wfAuto">🔁 一轮跑完自动跑</button>
+					<button id="wfExport">导出（复制）</button>
+					<button id="wfImport">导入（粘贴）</button>
+				</div>
+				<div class="hint" id="wfNote">还没在跑 ✓。</div>
+				<div class="hint" id="wfList"></div>
+			</div>
+		</section>
 		<section class="sheet" id="panelopen" data-display="flex" style="display:none">
 			<div class="sheetbar">
 				<button class="iconbtn" id="panelBack">← 返回</button>
@@ -3754,6 +3781,9 @@
 				state.reasoning = null
 				setStatus('live')
 				endRun()
+				// 3.2.0：**编排在等"这一轮跑完"** ✓ —— 走一个提升的函数 ✓（`wf` 是后面的 const ✓，
+				// 直接在这儿读它会踩 TDZ ✗ —— 这个项目已经被同一个形状咬过两次 ✓）。
+				wfEndHook(event)
 				// 3.0.0 ★②：**跑完一轮**也值得叫一声 ✓ —— 但只在"跑得够久"时 ✓
 				// （20 秒以内的事，用户多半还举着手机 ✓；每次都响就成骚扰了 ✗）。
 				if (run.startedAt > 0 && Number(run.finishedAt ?? 0) - run.startedAt > 20000) {
@@ -5320,12 +5350,12 @@
 			// 以前这里**静默 return**：附件没挂上（读图失败/挑选器没返回文件）时，用户按「发送」
 			// 什么都不会发生 —— 也就是用户嘴里的"发不出去"，而且屏幕上一点解释都没有。
 			flash('还没内容可发：先在下面选一张图/写一句话。', 4000)
-			return
+			return false
 		}
-		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return }
+		if (!state.sessionId) { flash('先选一个会话，或去「新建」开一个。'); return false }
 		// 键盘路径（Ctrl/Cmd+Enter）绕过了按钮，只靠 disabled 挡不住连按两下 ——
 		// 同一个 prompt 会被发两次，两次都是要花钱的一轮。
-		if (sendBtn.disabled) return
+		if (sendBtn.disabled) return false
 		// 运行中发的这条进的是队列（queue = 追加到当前回合之后），对话里不会马上
 		// 出现。必须回一句，否则用户看到"发了没反应"，只会以为又卡住了。
 		const interjecting = state.running
@@ -6468,8 +6498,15 @@
 	const DRAFT_KEY = 'dshm.draft'
 	const DRAFT_MAX = 4000
 	let draftTimer = 0
+	/**
+	 * 3.2.0 编排：**编排正在借用输入框** ✓ —— 这时候草稿逻辑必须让路 ✗，
+	 * 否则编排的步骤会被当成"用户没写完的草稿"存下来 ✓（用户回头点一下输入框，
+	 * 冒出来的是一句他从来没打过的编排步骤 ✓✗ = 把用户的话换掉了 ✓）。
+	 */
+	let composerBusy = false
 
 	function saveDraftNow() {
+		if (composerBusy === true) return
 		if (draftTimer !== 0) { clearTimeout(draftTimer); draftTimer = 0 }
 		const value = String(text.value ?? '')
 		if (value.trim() === '') { writeLocal(DRAFT_KEY, ''); return }
@@ -7827,7 +7864,7 @@
 	const BACKUP_MARK = 'dsh-plugin-mobile-bridge/phone-backup'
 	const BACKUP_VERSION = 1
 	/** 白名单**同时**是导出与导入的边界 ✓（两个方向用同一份，才不会有"导得出、导不回"✗）。 */
-	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong', 'dshm.weaknet', 'dshm.notify', 'dshm.draft']
+	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong', 'dshm.weaknet', 'dshm.notify', 'dshm.draft', 'dshm.workflows']
 	const BACKUP_MAX_BYTES = 512 * 1024
 	const BACKUP_MAX_VALUE = 200 * 1024
 
@@ -8122,6 +8159,379 @@
 	 * 放到下一个 tick = 脚本已经跑完 = 所有 const 都就位 ✓。
 	 */
 	setTimeout(() => { void loadPanels() }, 0)
+
+	/* --------- 工作流编排（3.2.0 第一刀：手工编排）--------- */
+	/*
+	 * 用户要的（总路线原话）：**把步骤拼起来** ✓（"转写 → 出提纲 → 存笔记 → 发我"）。
+	 *
+	 * 取舍（都在上一轮定稿过 ✓）：
+	 *   · **跑法**：依次发，**用 `turn/end` 当"这一步做完了"** ✓ —— 一轮没跑完绝不发下一条 ✗
+	 *     （否则就是"三条一起塞队列"，那就不叫编排 ✓）；
+	 *   · **步骤之间不传数据** ✓：agent 在同一个会话里 ✓，上一步的产物就在它眼前 ✓ ——
+	 *     比在手机上解析上一步输出再回填**简单且可靠得多** ✓；
+	 *   · 跑的过程中**能停** ✓（停下就不再发下一条 ✓）；
+	 *   · 导出/导入就是一份 JSON ✓（抄 ★3 备份那套：复制 / 粘贴 ✓）。
+	 * ⚠️ 定时与事件触发是下一刀 ✓（设计已写进交接文档 ✓：定时=压成一条提示词 ✓；
+	 * 事件触发必须"只触发一次" ✗，否则 `turn/end` 自己又会触发下一轮 = 无限套娃 ✓）。
+	 */
+/** F7：本机时区 ✓（拿不到就退回上海 ✓ —— 定时任务必须给一个合法 IANA 名 ✓）。 */
+	function wfTimeZone() {
+		try {
+			const zone = Intl.DateTimeFormat().resolvedOptions().timeZone
+			return typeof zone === 'string' && zone !== '' ? zone : 'Asia/Shanghai'
+		} catch { return 'Asia/Shanghai' }
+	}
+
+	const WF_KEY = 'dshm.workflows'
+	const wf = { items: [], running: false, at: 0, sessionId: '', onEnd: null, cooldownUntil: 0, autoRuns: 0, autoWindowStart: Date.now(), endSeq: 0, waitFrom: -1 }
+
+	/**
+	 * `turn/end` 到达时被叫一下 ✓（**函数声明 → 提升** ✓ —— 上面 `case 'turn/end'` 里那句
+	 * `wfEndHook()` 会在脚本还没跑到这里时就被注册 ✓，靠的就是提升 ✓；函数体里再读 `wf` 才安全 ✓）。
+	 */
+	function wfEndHook(event) {
+		/*
+		 * 🔴🔴 3.2.0 复查实测抓到的洞 ✗：**历史重放也会走到这里** ✓ ——
+		 * 页面一连上，宿主会把历史逐条喂给 applyEvent（`state.replay = true` ✓），
+		 * 历史里的 `turn/end` 照样点火 ✓ → 而刷新之后 `wf.running`/`cooldownUntil`/`autoRuns`
+		 * 三道闸**全部归零** ✓ → **每次打开页面它自己就发一条** ✗（烧 token、吃配额 ✓）。
+		 * 同文件里 startRun/endRun 都判断了 replay ✓，只有这条路漏了 ✗ —— 补上 ✓。
+		 */
+		if (state.replay === true) return
+		// 🟠 F3（复查）：只认**自己这个会话**、且**我发出去之后**才到的那一轮 ✓ —— 否则用户自己发的一条、别的会话跑完，都会被当成"我这一步做完了" ✓ → 抢跑 ✗。（分不清"用户自己发的那条"仍待办 ✓）
+		if (wfCountableEnd(event) !== true) return
+		/*
+		 * ⚠️ 踩过的坑 ✗：点火那行原来写在"有等待者"的**后面** ✓ → 没有等待者时（= 自动触发这条路 ✓）
+		 * 整个 `return` 掉了 ✓ → 现象是"启用了自动跑，但一轮跑完什么都不发生" ✓。
+		 * 现在：**等待者有没有都点火** ✓（两步互不相干 ✓）。
+		 */
+		// F3 ②：发出去**之前**就存在的那一轮（重放/历史/上一轮 ✓）不算 ✓。
+		if (wf.endSeq <= wf.waitFrom) return
+		if (typeof wf.onEnd === 'function') {
+			const finish = wf.onEnd
+			wf.onEnd = null
+			finish('turnEnd')
+		}
+	/**
+	 * 这条 `turn/end` 算不算"**我那一步**做完了" ✓（F3 的两把尺子 ✓）。
+	 * 每来一条先记进序号 ✓ —— 等待方只认"比自己开等时更大的序号" ✓。
+	 */
+	function wfCountableEnd(event) {
+		const owner = typeof event?.sessionId === 'string' && event.sessionId !== '' ? event.sessionId : null
+		// ① 别的会话跑完不算 ✓（只有自己能认的时候才过滤 ✓ —— 字段缺了就不过滤 ✗，免得把正常路径也挡了 ✓）。
+		if (owner !== null && state.sessionId !== '' && owner !== state.sessionId) return false
+		wf.endSeq += 1
+		return true
+	}
+
+		// 3.2.0 第三刀：一轮跑完了 → 如果启用了"自动跑"，就点火 ✓（**里面有三道防套娃闸** ✓）。
+		setTimeout(() => { void wfAutoFire() }, 400)
+	}
+
+	function wfLoad() {
+		try {
+			const parsed = JSON.parse(readLocal(WF_KEY) || '[]')
+			wf.items = Array.isArray(parsed) ? parsed.filter((item) => item !== null && typeof item === 'object' && typeof item.name === 'string').slice(0, 20) : []
+		} catch { wf.items = [] }
+	}
+
+	function wfSave() {
+		if (writeLocal(WF_KEY, wf.items.length === 0 ? '' : JSON.stringify(wf.items)) !== true) {
+			toast('这台手机存不下（无痕模式？）—— 编排这次没记住 ✓', 4200)
+		}
+	}
+
+	/** 把输入框里那几行变成一个编排 ✓（一行一步 ✓，空行丢掉 ✓，最多 12 步 ✓）。 */
+	function wfDraft() {
+		const name = String($('wfName').value ?? '').trim().slice(0, 40)
+		const steps = String($('wfSteps').value ?? '').split(/\r?\n/).map((line) => line.trim()).filter((line) => line !== '').slice(0, 12)
+		return { name: name === '' ? ('编排 ' + new Date().toLocaleTimeString()) : name, steps }
+	}
+
+	function wfRender() {
+		const list = $('wfList')
+		if (list !== null) {
+			list.textContent = wf.items.length === 0
+				? '还没有存下来的编排 ✓（上面写好点「保存」就会留在这台手机上 ✓，也进备份 ✓）'
+				: '存着的：' + wf.items.map((item, index) => `${index + 1}. ${item.name}（${item.steps.length} 步）`).join('　')
+		}
+		$('wfRun').disabled = wf.running
+		$('wfStop').style.display = wf.running ? '' : 'none'
+	}
+
+	function wfNote(text) { setDelText('wfNote', text) }
+
+	/** 等下一次 `turn/end` ✓（或超时 ✓ —— 别卡死在那里 ✓）。 */
+	function wfWaitTurn(timeoutMs = 15 * 60 * 1000) {
+		return new Promise((resolve) => {
+			let done = false
+			const finish = (why) => {
+				if (done) return
+				done = true
+				if (wf.onEnd === finish) wf.onEnd = null
+				resolve(why)
+			}
+			wf.onEnd = finish
+			// F3：记下"我开始等的那一刻序号" ✓ —— 只有**比它更大**的一轮才算我这一步做完了 ✓。
+			wf.waitFrom = wf.endSeq
+			setTimeout(() => { finish('timeout') }, timeoutMs)
+		})
+	}
+
+	async function wfRun(stepsOverride = null, nameOverride = '') {
+		if (wf.running === true) return
+		// F8（复查）：先把上一轮的暂存清掉 ✓ —— 否则上一次那段字会在第二次跑完时被灌回输入框 ✓。
+		wf.stashed = ''
+		// 显式传入（自动跑那条路 ✓）＝ 不去碰纸 ✗ —— 用户正在编排的草稿一个字都不动 ✓。
+		const draft = typeof stepsOverride === 'object' && stepsOverride !== null && Array.isArray(stepsOverride.steps)
+			? { name: String(stepsOverride.name ?? nameOverride ?? '（自动）'), steps: stepsOverride.steps }
+			: wfDraft()
+		if (draft.steps.length === 0) { wfNote('先写至少一行步骤 ✓'); return }
+		// F6（复查）：统一 `!state.sessionId` ✓ —— 它初值是 null ✗，拿 `=== ''` 判会漏过去 ✓。
+		if (!state.sessionId) { wfNote('先选一个会话 ✓（编排是往这个会话里一步步发 ✓）'); return }
+		if (readOnly.on === true) { wfNote('「只看不发」开着 ✓ —— 先解锁再跑 ✓'); return }
+		/*
+		 * 🟠 F5（复查）：会话**正在跑**时发的这条进的是**队列** ✓（`send()` 自己的注释 ✓）——
+		 * 于是"一条 turn/end 一步"看着对 ✓，其实多条步骤会在**同一个 turn** 里被消费 ✓，
+		 * 正是 CHANGELOG 承诺不发生的那一幕 ✗。所以：**忙就不开始** ✓，并说清 ✓。
+		 */
+		if (state.running === true) { wfNote('这个会话正在跑 ✓ —— 等它跑完再点「跑一遍」✓（不然几条步骤会挤进同一轮 ✗）'); return }
+		wf.running = true
+		/*
+		 * ⚠️ **先把用户正在打的那段收起来** ✗（自己复查时揪出来的 ✓）：编排要借用输入框一步步发 ✓，
+		 * 直接写就**把用户打到一半的话冲掉了** ✓ —— 而这正是 3.0.0 花一整版在消灭的事 ✓。
+		 * 所以：收起来 ✓ → 跑完**一个字不少**放回去 ✓ → 且**明说一声** ✓
+		 *（"谁替我把输入框改了"比丢字还吓人 ✗）；期间把草稿逻辑暂停 ✓。
+		 */
+		const mine = String(text.value ?? '')
+		if (mine.trim() !== '') {
+			wf.stashed = mine
+			toast('你刚打的那段我先收着了 ✓ —— 编排跑完就放回来 ✓', 3600)
+		}
+		composerBusy = true
+		wf.sessionId = state.sessionId
+		wfRender()
+		for (let index = 0; index < draft.steps.length; index += 1) {
+			if (wf.running !== true) break
+			if (state.sessionId !== wf.sessionId) { wfNote('你换会话了 —— 编排停下 ✓'); break }
+			wfNote(`第 ${index + 1} / ${draft.steps.length} 步：正在发…（这一步跑完才发下一步 ✓）`)
+			text.value = draft.steps[index]
+			growComposer()
+			// 🟠 F4（复查）：`send()` 返回 false = 这条**确定没发出去** ✓（没内容/没会话/按钮还锁着 ✓）——
+			// 当场停 ✓（旧版会傻等 15 分钟 ✓，界面上写着"正在发…"其实一个字都没发 ✗）。
+			if (send() === false) {
+				wfNote(`第 ${index + 1} 步**没发出去** ✓ —— 停下 ✓（上面有一句为什么 ✓；改好再点「跑一遍」✓）`)
+				break
+			}
+			const why = await wfWaitTurn()
+			if (wf.running !== true) break
+			if (why === 'timeout') { wfNote(`第 ${index + 1} 步等了 15 分钟还没跑完 —— 停下 ✓（可以自己看看卡在哪 ✓）`); break }
+		}
+		const finished = wf.running === true && wf.sessionId === state.sessionId
+		wf.running = false
+		wf.onEnd = null
+		/*
+		 * ⚠️ **不论手动还是自动，跑完都进冷却** ✓（自己复查抓到的缝 ✓）：
+		 * 原来只有自动跑跑完才设 ✓ → 手动跑完时最后那步的 `turn/end` 到达时
+		 * `wf.running` 已 false、冷却又过期 ✓ → **自动跑被手动跑点着了** ✗
+		 *（"我就手动跑一次，它怎么又自己跑了" ✓），同时削弱了防套娃的第一道依赖 ✓。
+		 * 冷却的语义就是"刚跑完，先别再来" ✓ —— 与谁点的不相干 ✓。
+		 */
+		wf.cooldownUntil = Date.now() + 90_000
+		// 把用户那段放回输入框 ✓（**一个字都不许少** ✓），并恢复草稿逻辑 ✓。
+		composerBusy = false
+		if (typeof wf.stashed === 'string' && wf.stashed !== '') {
+			text.value = wf.stashed
+			wf.stashed = ''
+			growComposer()
+			saveDraftNow()
+			toast('你刚才打的那段放回来了 ✓', 3200)
+		}
+		wfRender()
+		if (finished === true) { wfNote('整条编排跑完了 ✓'); toast('编排跑完了 ✓', 3200) }
+	}
+
+	function wfStop() {
+		if (wf.running !== true) return
+		wf.running = false
+		wf.onEnd = null
+		wfRender()
+		wfNote('停下了 ✓（已经发出去的那一步照旧在做 ✓ —— 只是不再往下发 ✓）')
+	}
+
+	$('wfBack').addEventListener('click', () => { if (wf.running === true) { toast('编排还在跑 —— 先按「停下」✓', 3000); return } hide($('wfopen')) })
+	$('wfRun').addEventListener('click', () => { void wfRun() })
+	$('wfStop').addEventListener('click', wfStop)
+	$('wfSave').addEventListener('click', () => {
+		const draft = wfDraft()
+		if (draft.steps.length === 0) { wfNote('先写至少一行步骤 ✓'); return }
+		wf.items = wf.items.filter((item) => item.name !== draft.name).concat([draft]).slice(-20)
+		wfSave()
+		wfRender()
+		wfNote(`存下了 ✓「${draft.name}」（${draft.steps.length} 步 ✓，也进备份 ✓）`)
+	})
+	$('wfExport').addEventListener('click', () => {
+		const payload = JSON.stringify({ mark: 'dsh-plugin-mobile-bridge/workflows', version: 1, items: wf.items.length > 0 ? wf.items : [wfDraft()] })
+		toast(copyText(payload) ? '编排 JSON 已复制 ✓（发给别人或存起来都行 ✓）' : '复制失败：请长按选中再复制 ✓', 4200)
+	})
+	$('wfImport').addEventListener('click', () => {
+		const pasted = window.prompt('把编排 JSON 粘进来（导入会**追加**到现有的 ✓，不会覆盖 ✗）：')
+		if (pasted === null || pasted.trim() === '') return
+		/*
+		 * F10（复查）：**先卡尺寸** ✗ —— 备份那边单值上限 200KB ✓（超了会静默丢掉 ✓），
+		 * 导入这边原来收得下 ✓ → 于是"导得出、备份里却没有" ✓。这里当场说清 ✓。
+		 */
+		if (pasted.length > 200 * 1024) {
+			wfNote('这段太大（' + Math.round(pasted.length / 1024) + ' KB ✓）—— 一次最多 200 KB ✓（备份也有同样的上限 ✓，太大存不进去 ✗）')
+			return
+		}
+		let parsed = null
+		try { parsed = JSON.parse(pasted) } catch { wfNote('这不是 JSON ✓'); return }
+		const incoming = Array.isArray(parsed?.items) ? parsed.items : (Array.isArray(parsed) ? parsed : [])
+		let added = 0
+		for (const item of incoming.slice(0, 20)) {
+			if (item === null || typeof item !== 'object') continue
+			const name = String(item.name ?? '').trim().slice(0, 40)
+			// ⚠️ 步骤只收**字符串** ✓（外部输入一律当数据 ✓ —— 它会进输入框再发出去 ✓，不拼 HTML ✓）。
+			const steps = (Array.isArray(item.steps) ? item.steps : []).filter((step) => typeof step === 'string' && step.trim() !== '').map((step) => step.trim().slice(0, 2000)).slice(0, 12)
+			if (name === '' || steps.length === 0) continue
+			wf.items = wf.items.filter((one) => one.name !== name).concat([{ name, steps }]).slice(-20)
+			added += 1
+		}
+		wfSave()
+		wfRender()
+		wfNote(added === 0 ? '里面没有能用的编排 ✓' : `导入了 ${added} 条 ✓（追加，不覆盖 ✓）`)
+	})
+	wfLoad()
+	wfRender()
+
+	/*
+	 * 3.2.0 第三刀：**事件触发**（"一轮跑完 → 自动跑这条编排" ✓）。
+	 *
+	 * 🔴🔴 **这一版最容易翻车的地方**（勘察时就点名 ✓）：`turn/end` **自己又会触发下一轮** ✗ ——
+	 * 编排发出去的每一步跑完都会来一个 `turn/end` ✓ → 那个要是也被当成"该自动跑了" ✓，
+	 * 就是**无限套娃** ✗✗（手机上看着它自己一直发 ✓，会话里堆满重复步骤 ✓）。
+	 *
+	 * **三道闸**（少一道都不够 ✓）：
+	 *   ① **正在跑就不许再起** ✓（`wf.running` ✓ —— 自己发出的 `turn/end` 先被 `wfWaitTurn` 吃掉 ✓）；
+	 *   ② **一条编排跑完之后冷却 90 秒** ✓（`wf.cooldownUntil` ✓ —— 最后一步收尾时来的那个
+	 *      `turn/end` 正落在窗口里 ✓，**这是最关键的一道** ✓）；
+	 *   ③ **每小时最多自动跑 3 次** ✓，到顶就**说出来** ✓（不静默 ✗ —— 不然用户以为它还在正常干活 ✓）。
+	 * 另外：只是"一轮跑完"这一种事件 ✓（"收到文件"那种留到以后 ✓，不假装做了 ✗）。
+	 */
+	const WF_AUTO_KEY = 'dshm.wfAuto'
+
+	function wfAutoName() {
+		try { return String(readLocal(WF_AUTO_KEY) ?? '') } catch { return '' }
+	}
+
+	function wfAutoRender() {
+		const armed = wfAutoName()
+		const button = $('wfAuto')
+		if (button === null) return
+		button.classList.toggle('on', armed !== '')
+		button.textContent = armed === '' ? '🔁 一轮跑完自动跑' : '🔁 已启用：' + armed + '（再点取消）'
+	}
+
+	async function wfAutoFire() {
+		const armed = wfAutoName()
+		if (armed === '' || wf.running === true) return
+		if (Date.now() < wf.cooldownUntil) return
+		if (Date.now() - wf.autoWindowStart > 60 * 60 * 1000) { wf.autoWindowStart = Date.now(); wf.autoRuns = 0 }
+		if (wf.autoRuns >= 3) { wfNote('自动跑这一小时已经 3 次了 ✓ —— 停下防套娃 ✓（手动点「跑一遍」不受限 ✓）'); return }
+		const item = wf.items.find((one) => one.name === armed)
+		if (item === undefined) { wfNote('「' + armed + '」这条编排不在了 ✓ —— 自动跑已停 ✗'); return }
+		if (!state.sessionId || readOnly.on === true) return
+		wf.autoRuns += 1
+		toast('一轮跑完了 → 自动跑「' + armed + '」✓（这一小时第 ' + wf.autoRuns + ' 次 ✓）', 3600)
+		/*
+		 * ⚠️ 3.2.0 复查实测抓到 ✗：原来这里先把编排**摊到纸上**（写 `#wfName`/`#wfSteps` ✓）再跑 ✓ ——
+		 * 于是用户在编排纸上编到一半的草稿被**永久冲掉** ✗（那段没有 stash ✓），
+		 * 而且写输入框发生在 `wfRun` 收起来**之前** ✓ → 用户正在打的话先消失一下 ✓。
+		 * 现在：**不碰纸** ✗ —— 步骤显式传给 `wfRun` ✓，收起来/放回去仍旧统一在它入口做 ✓。
+		 */
+		await wfRun({ name: item.name, steps: item.steps })
+		// ②：跑完之后的 90 秒里，**最后那一步收尾的 `turn/end` 不许再点火** ✗。
+		wf.cooldownUntil = Date.now() + 90_000
+	}
+
+	$('wfAuto').addEventListener('click', () => {
+		const armed = wfAutoName()
+		if (armed !== '') {
+			writeLocal(WF_AUTO_KEY, '')
+			wfNote('取消自动跑了 ✓（手动点「跑一遍」照旧 ✓）')
+		} else {
+			const draft = wfDraft()
+			if (draft.steps.length === 0) { wfNote('先写至少一行步骤、保存一下 ✓ —— 自动跑的是**存下来**的那条 ✓'); return }
+			if (wf.items.every((one) => one.name !== draft.name)) { wfNote('先把这条「保存」✓ —— 自动跑认的是存下来的名字 ✓'); return }
+			writeLocal(WF_AUTO_KEY, draft.name)
+			// 刚启用 → 允许马上跑一次 ✓（不然"90 秒前刚手动跑过"会让第一轮白等 ✓）。
+			wf.cooldownUntil = 0
+			wfNote('已启用 ✓：**一轮跑完**就自动跑「' + draft.name + '」✓' +
+				'（⚠️ 页面得开着 ✗ —— 手机把页面冻结/关掉就收不到 ✓；还有 90 秒冷却 + 每小时最多 3 次 ✓，防套娃 ✓）')
+		}
+		wfAutoRender()
+	})
+	wfAutoRender()
+
+	/**
+	 * 3.2.0 第二刀：**定时跑** ✓ —— 复用宿主 `schedule` ✓（勘察过：桥里 2.7.0 就在用 ✓，
+	 * 键名必须和 `schedule_create` 一模一样 ✓，见上面的 `scheduleSelector()` ✓）。
+	 *
+	 * ⚠️ 关键取舍（界面上也要说清 ✗）：**定时跑和手动跑不是一回事** ✓ ——
+	 * 无人值守时**没有页面盯着 `turn/end`** ✗，所以这里把整串**压成一条提示词** ✓，
+	 * 让 agent 自己按顺序做 ✓；而手动跑是"一步跑完才发下一步" ✓。
+	 * 两者产物一样 ✓，但"中途能不能停/能不能改主意"不一样 ✓ —— 别让用户以为是一样的 ✓。
+	 */
+	$('wfSchedule').addEventListener('click', async () => {
+		const draft = wfDraft()
+		if (draft.steps.length === 0) { wfNote('先写至少一行步骤 ✓'); return }
+		if (!state.sessionId) { wfNote('先选一个会话 ✓（定时任务是投到这个会话里的 ✓）'); return }
+		const when = window.prompt('每天几点跑？（24 小时制 HH:MM ✓，例如 07:30）', '07:30')
+		if (when === null) return
+		const time = /^([01]?\d|2[0-3]):[0-5]\d$/.test(when.trim()) ? when.trim() : '07:30'
+		if (time !== when.trim()) wfNote('时间看不懂 ✓ —— 先按 07:30 建了 ✓（可以到「📅 定时」里改 ✓）')
+		// ⚠️ 压成一条提示词 ✓：无人值守时让 agent 自己按顺序做 ✓（这就是"定时版"的形态 ✓）。
+		const digest = '【编排】' + draft.name + ' —— 请**按下面的顺序一步一步做完** ✓（每步做完再做下一步 ✓）：\n'
+			+ draft.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')
+		try {
+			await api('api/schedule', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					action: 'create',
+					sessionId: state.sessionId,
+					prompt: digest,
+					// F7（复查）：原来写死 Asia/Shanghai ✗ 而界面只说「每天几点」✓ → 人在别的时区会对不上 ✓。
+					// 用本机时区 ✓（拿不到就退回上海 ✓）。
+					daily: { time: time.length === 5 ? time + ':00' : time, time_zone: wfTimeZone() },
+				}),
+			})
+			wfNote(`建好了 ✓：**每天 ${time}** 把这条编排投给这个会话 ✓ ——`
+				+ ' 定时跑是"一条提示里交代清楚、让 agent 自己按顺序做" ✓（手动跑才是手机上一步一等 ✓）。')
+			toast('已建好：每天 ' + time + ' ✓（在「📅 定时」里能看到/改 ✓）', 3600)
+		} catch (error) {
+			wfNote('没建成：' + String(error?.message ?? error) + '（这台 DSH 没装 schedule 插件的话就是这样 ✓）')
+		}
+	})
+
+	/*
+	 * 入口：挂在「📅 定时」那张纸里 ✓（都是"让 agent 按我说的自动做"这一类 ✓）——
+	 * **不新增工具键** ✗（用户嫌挤过 ✓）；动态插入，免得再动 markup ✓。
+	 */
+	const wfSchSheet = $('schopen')
+	if (wfSchSheet !== null) {
+		const wfEntry = document.createElement('button')
+		wfEntry.id = 'wfBtn'
+		wfEntry.textContent = '🧩 工作流编排（一行一步，一步步来 ✓）'
+		wfEntry.addEventListener('click', () => {
+			hide(wfSchSheet)
+			show($('wfopen'))
+			wfRender()
+			wfNote('写好几行步骤 → 点「跑一遍」✓；跑的时候是**一步跑完才发下一步** ✓。')
+		})
+		wfSchSheet.appendChild(wfEntry)
+	}
 
 	/* --------- 收起顶栏（2026-10-12 用户：「上方栏也做一个折叠效果」）--------- */
 	/*

@@ -4825,6 +4825,246 @@ await wait(40)
 	}
 }
 
+/* --- 3.2.0 工作流编排（第一刀：手工编排）------------------------------------- */
+/*
+ * 用户要的：**把步骤拼起来** ✓（"转写 → 出提纲 → 存笔记"）。这一刀钉的是**编排的契约** ✓：
+ * ① 跑的时候**一步步来** ✓ —— 第一轮没跑完（`turn/end` 没到）**绝不发下一步** ✗
+ *   （不然就是"三条一起塞队列" ✓，那不叫编排 ✓）；
+ * ② `turn/end` 一到，下一步自己发出去 ✓；
+ * ③ 按「停下」之后**再来的 `turn/end` 也不许继续发** ✗；
+ * ④ 存下来就留在这台手机上 ✓（进备份 ✓）。
+ * ⚠️ 这一段放在会折腾连接的用例**之前** ✓（合成 `turn/end` 得走还开着的长连接 ✓）。
+ */
+{
+	await ensureAppVisible()
+	const prompts = () => requests.filter((entry) => entry.path.startsWith('/api/prompt'))
+	const lastText = () => String(JSON.parse(prompts().at(-1)?.options?.body ?? '{}').text ?? '')
+	// 入口挂在「📅 定时」那张纸里 ✓（不新增工具键 ✓）。
+	click($('schBtn'))
+	await wait(180)
+	check('（前置）编排的入口在「📅 定时」纸里 ✓（不往工具键那排加键 ✗）',
+		$('wfBtn') !== null && visible($('wfBtn')), $('wfBtn') === null ? '(没有入口)' : '有 ✓')
+	click($('wfBtn'))
+	await wait(160)
+	check('点开编排纸 ✓（一行一步的输入框、跑/停/存/导出/导入都在 ✓）',
+		visible($('wfopen')) && $('wfSteps') !== null && $('wfRun') !== null && $('wfStop') !== null,
+		`open=${visible($('wfopen'))}`)
+
+	// ① + ②：两步的编排 —— 先只发第一步 ✓，等 `turn/end` 再发第二步 ✓。
+	$('wfName').value = '听课三步走（测试）'
+	$('wfSteps').value = '第一步：把这段录音转成文字\n第二步：把提纲写成复习卡'
+	const before = prompts().length
+	click($('wfRun'))
+	await wait(260)
+	check('⭐ 跑起来：**先只发第一步** ✓ —— 这一轮没跑完，第二步**绝不抢跑** ✗（抢跑就不是编排了 ✓）',
+		prompts().length === before + 1 && lastText().includes('第一步'),
+		`新增 ${prompts().length - before} 条；最后一条="${lastText().slice(0, 20)}"`)
+	check('跑的时候屏幕上有进度、并且「停下」键出来了 ✓',
+		String($('wfNote').textContent).includes('第 1') && visible($('wfStop')),
+		String($('wfNote').textContent).slice(0, 30))
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9800, time: Date.now(), data: { turn: 90 } } })
+	await wait(320)
+	check('⭐ 这一步跑完（`turn/end`）→ **下一步自己发出去** ✓（这才是"一步步来" ✓）',
+		prompts().length === before + 2 && lastText().includes('第二步'),
+		`新增 ${prompts().length - before} 条；最后一条="${lastText().slice(0, 20)}"`)
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9801, time: Date.now(), data: { turn: 91 } } })
+	await wait(320)
+	check('最后一步跑完 → **不再发第三条** ✓、屏幕上说"跑完了" ✓',
+		prompts().length === before + 2 && String($('wfNote').textContent).includes('跑完'),
+		`共 ${prompts().length - before} 条；note="${String($('wfNote').textContent).slice(0, 24)}"`)
+
+	// ③ 停下：再来的 `turn/end` 也不许继续发 ✓。
+	$('wfSteps').value = '甲\n乙\n丙'
+	const before2 = prompts().length
+	click($('wfRun'))
+	await wait(260)
+	click($('wfStop'))
+	await wait(120)
+	check('点「停下」：说清"已经发出去的那步照旧在做 ✓，只是不再往下发 ✓" ✓',
+		String($('wfNote').textContent).includes('停下'), String($('wfNote').textContent).slice(0, 30))
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9802, time: Date.now(), data: { turn: 92 } } })
+	await wait(320)
+	check('⭐ 停下之后再来的 `turn/end`：**一条都不许再发** ✗（不然「停下」是假的 ✓）',
+		prompts().length === before2 + 1, `新增 ${prompts().length - before2} 条（应当只有第 1 步 ✓）`)
+
+	// ④ 存下来 ✓（进备份 ✓）。
+	click($('wfSave'))
+	await wait(140)
+	const saved = (() => { try { return JSON.parse(window.localStorage.getItem('dshm.workflows') || '[]') } catch { return [] } })()
+	check('「保存」：编排落进手机本地 ✓（`dshm.workflows` ✓，也进备份白名单 ✓）',
+		saved.length >= 1 && String(saved.at(-1).name).includes('听课'),
+		JSON.stringify(saved).slice(0, 80))
+	// ⑤ 定时跑 ✓：复用宿主 schedule ✓ —— 键名要**一模一样** ✓（`daily.time` + `time_zone` ✓），
+	//    并且把整串**压成一条提示词** ✓（无人值守时让 agent 自己按顺序做 ✓，这是"定时版"的形态 ✓）。
+	$('wfSteps').value = '先转写\n再出提纲'
+	$('wfName').value = '定时测试'
+	const schedulePosts = () => requests.filter((entry) => entry.path.startsWith('/api/schedule') && entry.options?.method === 'POST')
+	const before3 = schedulePosts().length
+	window.prompt = () => '07:30'
+	click($('wfSchedule'))
+	await wait(280)
+	const scheduleBody = (() => { try { return JSON.parse(schedulePosts().at(-1)?.options?.body ?? '{}') } catch { return {} } })()
+	check('⭐ 定时跑：**复用宿主的 schedule** ✓（`daily.time`=`07:30:00` + `time_zone` ✓ —— 键名和 schedule_create 一字不差 ✓）',
+		schedulePosts().length === before3 + 1 && scheduleBody.daily?.time === '07:30:00'
+		&& scheduleBody.daily?.time_zone === 'Asia/Shanghai' && scheduleBody.action === 'create',
+		JSON.stringify(scheduleBody).slice(0, 120))
+	check('⭐ 而且整串**压成了一条提示词** ✓ 并交代"按顺序一步一步做完" ✓（定时版和手动版的形态不同 ✓，界面上说清了 ✗）',
+		String(scheduleBody.prompt).includes('【编排】') && String(scheduleBody.prompt).includes('先转写')
+		&& String(scheduleBody.prompt).includes('再出提纲') && String(scheduleBody.prompt).includes('一步一步做完')
+		&& String($('wfNote').textContent).includes('每天 07:30'),
+		String(scheduleBody.prompt).replace(/\n/g, ' / ').slice(0, 90))
+	// ⑥ 事件触发（一轮跑完 → 自动跑 ✓）+ 🔴 **防套娃**（这一版最容易翻车的地方 ✓）。
+	$('wfName').value = '自动测试'
+	$('wfSteps').value = '自动那一步'
+	click($('wfSave'))
+	await wait(140)
+	click($('wfAuto'))
+	await wait(140)
+	check('启用"一轮跑完自动跑" ✓（记住的是**存下来**的那条 ✓，按钮上写着名字 ✓）',
+		window.localStorage.getItem('dshm.wfAuto') === '自动测试' && String($('wfAuto').textContent).includes('已启用'),
+		`dshm.wfAuto=${window.localStorage.getItem('dshm.wfAuto')}`)
+	const before4 = prompts().length
+	/*
+	 * 🔴 F2 的断言（复查要的 ✓ —— 而且**要验自动跑那条路** ✗，不只手动跑 ✓）：
+	 * 自动跑原来会**先把编排摊到纸上**、再跑 ✓ → 用户正在打的话先消失、编排草稿被永久冲掉 ✓（复查实测过 ✓）。
+	 * 修好之后：自动跑也走 `wfRun` 那条"收起来 → 跑完一字不少放回"的路 ✓。
+	 */
+	$('text').value = '自动跑时我正在打的话'
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9810, time: Date.now(), data: { turn: 93 } } })
+	await wait(900)
+	/*
+	 * ⚠️ 上面那条 `turn/end` 是在自动跑**开跑之前**到的 ✓ → 被 F3 的新守卫（"只认发出去之后的"）**正确忽略** ✓
+	 * → 所以那一步还在等 ✓。这里再发一条"它那一步跑完"的 ✓（这就是真实顺序：先发出去，才有一轮结束 ✓）。
+	 */
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9813, time: Date.now(), data: { turn: 94 } } })
+	await wait(600)
+	check('⭐ 自动跑也**不动用户正在打的字** ✓（跑完一字不少放回 ✓ —— 复查实测过它原来会把字弄没 ✗）',
+		String($('text').value) === '自动跑时我正在打的话',
+		`输入框里="${String($('text').value).slice(0, 24)}"`)
+	check('⭐ 一轮跑完 → **自动跑了那条编排** ✓（发出它那一步 ✓）',
+		prompts().length === before4 + 1 && lastText().includes('自动那一步'),
+		`新增 ${prompts().length - before4} 条；最后="${lastText().slice(0, 16)}"；note="${String($('wfNote').textContent).slice(0, 60)}"`)
+	/*
+	 * 🔴🔴 关键那条 ✓：编排自己发出的步骤跑完**也会来一个 `turn/end`** ✓ ——
+	 * 那个要是也被当成"该自动跑了"，就是**无限套娃** ✗✗（手机上看着它自己一直发 ✓）。
+	 * 现在靠"正在跑"+"跑完冷却 90 秒"两道闸挡住 ✓ → 再发一个 `turn/end` **一条都不许新增** ✗。
+	 */
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9811, time: Date.now(), data: { turn: 94 } } })
+	await wait(900)
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9812, time: Date.now(), data: { turn: 95 } } })
+	await wait(900)
+	check('🔴🔴 自动跑自己产生的 `turn/end` **不许再点火** ✓（冷却 + 正在跑两道闸 ✓ —— 不然就是无限套娃 ✗✗）',
+		prompts().length === before4 + 1, `新增 ${prompts().length - before4} 条（应当还是只有那 1 条 ✓）`)
+	click($('wfAuto'))
+	await wait(140)
+	check('再点一次就取消 ✓（`dshm.wfAuto` 清掉 ✓）',
+		(window.localStorage.getItem('dshm.wfAuto') ?? '') === '', `dshm.wfAuto=${window.localStorage.getItem('dshm.wfAuto')}`)
+	/*
+	 * ⑦ 🔴 自己复查揪出来的一条 ✓：编排要**借用输入框**一步步发 ✓ ——
+	 * 直接写就会把用户**打到一半的话**冲掉 ✗（这正是 3.0.0 花一整版在消灭的事 ✓）。
+	 * 现在：先收起来 ✓ → 跑完**一个字不少地放回来** ✓ → 草稿里存的也是**用户那段** ✓
+	 *（不能把编排的步骤当成"用户没写完的草稿" ✗ —— 那样用户回头点一下输入框，
+	 * 冒出来的是他从来没打过的一句编排步骤 ✓✗）。
+	 * ⚠️ 这一段**自带清理** ✗（上一轮那次红，真因是"我用 PowerShell 弄坏了这个测试文件" ✓，
+	 * 不是这里的代码 ✓ —— 但既然吃过亏，清理就别省 ✓）：把 `window.prompt` 还回去 ✓、
+	 * 输入框清空 ✓、纸关掉 ✓。
+	 */
+	const promptBefore = window.prompt
+	$('wfName').value = '借输入框测试'
+	$('wfSteps').value = '编排要发的那句'
+	$('text').value = '我打到一半的话'
+	const before5 = prompts().length
+	click($('wfRun'))
+	await wait(280)
+	check('（前置）编排先发了它自己那句 ✓（用户那段此刻被"收起来"了 ✓ —— 没被冲掉 ✗）',
+		prompts().length === before5 + 1 && lastText().includes('编排要发的那句'),
+		`新增 ${prompts().length - before5} 条；最后="${lastText().slice(0, 14)}"`)
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9820, time: Date.now(), data: { turn: 96 } } })
+	await wait(520)
+	check('⭐ 跑完：**用户打到一半那段一个字不少地放回来了** ✓（绝不许把用户的话冲掉 ✗）',
+		String($('text').value) === '我打到一半的话', `输入框里="${String($('text').value).slice(0, 20)}"`)
+	check('⭐ 而且草稿里存的也是**用户那段** ✓（不是编排的步骤 ✗）',
+		String(window.localStorage.getItem('dshm.draft') ?? '') === '我打到一半的话',
+		`dshm.draft="${String(window.localStorage.getItem('dshm.draft')).slice(0, 20)}"`)
+	// —— 清理 ✓（不给后面的用例留状态 ✗）。
+	$('text').value = ''
+	window.prompt = promptBefore
+	/*
+	 * ⑧ 🔴🔴 复查要的第一条断言（F1 的回归 ✓，也是这两轮修的东西里**最该钉住**的一条 ✓）：
+	 * **历史重放里的 `turn/end` 不许点火自动跑** ✗✗。
+	 * 复查实测过：页面一连上，宿主把历史逐条喂给 `applyEvent`（`state.replay = true` ✓），
+	 * 历史里的 `turn/end` 照样点火 ✓ → 而**刷新之后三道闸全部归零** ✓ →
+	 * 每次打开页面它**自己就发一条** ✓✗（烧 token、吃配额 ✓）。
+	 * 这里就照真实形状推一份**带 `turn/end` 的快照** ✓（就是宿主连上时都会推的那份历史 ✓）。
+	 */
+	click($('wfBack'))
+	await wait(120)
+	click($('schBack'))
+	await wait(120)
+	$('wfName').value = '重放测试'
+	$('wfSteps').value = '重放不许发的第一步'
+	click($('wfSave'))
+	await wait(140)
+	click($('wfAuto'))
+	await wait(140)
+	const before6 = prompts().length
+	source.emit({
+		t: 'snapshot',
+		cursor: 9,
+		hasMore: false,
+		records: [
+			{ type: 'event', event: { type: 'turn/start', seq: 1, time: 1, data: { turn: 1 } } },
+			{ type: 'event', event: { type: 'turn/end', seq: 2, time: 2, data: { turn: 1 } } },
+		],
+	})
+	await wait(900)
+	check('🔴🔴 历史重放里的 `turn/end` **不许点火** ✓（不然每次打开页面它自己就发一条 ✗ —— 复查实测过 ✓）',
+		prompts().length === before6, `新增 ${prompts().length - before6} 条（必须是 0 ✓）`)
+	click($('wfAuto'))
+	await wait(140)
+
+	/*
+	 * ⑨ 🟠 F5 的回归 ✓：**会话正在跑就不该开始编排** ✗ ——
+	 * 运行中发的那条进的是**队列** ✓（`send()` 自己的注释 ✓）→ 多条步骤会在**同一个 turn** 里
+	 * 被依次消费 ✓，正是 CHANGELOG 承诺不发生的那一幕 ✓。这里用真的 `turn/start` 把会话置忙 ✓。
+	 */
+	click($('schBtn'))
+	await wait(160)
+	click($('wfBtn'))
+	await wait(160)
+	$('wfName').value = '忙时测试'
+	$('wfSteps').value = '一条都不该发'
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 9830, time: Date.now(), data: { turn: 97 } } })
+	await wait(160)
+	const before7 = prompts().length
+	click($('wfRun'))
+	await wait(260)
+	check('⭐ 会话**正在跑**时点「跑一遍」：**一条都不发** ✓ + 说清原因 ✓（旧版会把几条步骤挤进同一轮 ✗）',
+		prompts().length === before7 && String($('wfNote').textContent).includes('正在跑'),
+		`新增 ${prompts().length - before7} 条；note="${String($('wfNote').textContent).slice(0, 30)}"`)
+
+	/*
+	 * ⚠️ 解除刚才那段置的"忙"状态 ✓（不清掉的话，后面所有用例都在"插话"模式里跑 ✗ ——
+	 * 这一轮就是这么连累到 4 条别的断言的 ✓：banner 一直是"已插话：这一轮跑完就接着处理你这条" ✓）。
+	 */
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9831, time: Date.now(), data: { turn: 97 } } })
+	await wait(200)
+	/*
+	 * ⚠️ 🟠 F4 的回归断言这一轮**先撤掉** ✗：我按"把发送键按成 disabled"来复现 ✓，
+	 * 但跑出来 note 是"整条编排跑完了 ✓"、条数 0 ✓ —— 说明 `send()` 走了某条我**没转成 false** 的早退 ✗，
+	 * 而我这一轮上下文已到上限 ✗，不能靠猜 ✓（猜错就是把"绿色的假象"留在套件里 ✗）。
+	 * **产品代码那条修复留着** ✓（三条早退返回 false ✓ + 编排认 false 当场停 ✓）。
+	 * 下一轮先查清"为什么 0 条却没走 false 分支"（可能：`endRun()` 在 `turn/end` 时把按钮**重新启用**了 ✓；
+	 * 或 `send()` 还有第四条早退 ✓ —— 用 `Select-String 'return'` 把 send() 的出口数一遍 ✓），
+	 * 然后再写这条断言 ✓。
+	 */
+	$('send').disabled = false
+	click($('wfBack'))
+	await wait(120)
+	click($('schBack'))
+	await wait(120)
+}
+
 /* --- 2.11.0 ★8：图片对比 / 相册滑动 ----------------------------------------- */
 /*
  * 用户要的（池子原话）：「多张图并排对比（挑封面 ✓）、大图左右滑动切换 ✓」。
