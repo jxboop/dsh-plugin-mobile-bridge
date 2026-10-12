@@ -417,7 +417,7 @@ node test/package.mjs && node test/harness.mjs && node test/qr.mjs && node test/
 node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs && node test/offline.mjs
 ```
 
-八个套件共 **1004 项**（package 16 · harness 381 · qr 12 · ui 494 · security 51 · crashprobe 17 ·
+八个套件共 **1013 项**（package 16 · harness 381 · qr 12 · ui 503 · security 51 · crashprobe 17 ·
 addresses 16 · offline 17）。**改完必跑全八个** ✓ —— 只跑某一个会漏掉内容规矩与界面回归
 （2.7.2 就是这么漏了两版的 ✓）。
 
@@ -702,6 +702,20 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 两条都只是**手机这一侧的显示规则**：宿主的会话数据一个字不改，桌面上照旧全都能看到。
 列表底下会写明"已藏起 N 个"，并有一个 **「显示全部会话」** 开关（记在手机本地）能看回来 ——
 不静默过滤、也不会让人以为会话丢了。
+
+## 收起看（2.9.0 / 2.9.1 起）
+
+手机上竖着的地方最贵，所以上下两条栏都能收 ✓：
+
+- **底部工具键**：输入框左边的 **`⋯`** —— 收起的**只有那 13 个工具键**；输入框、发送、页签栏、
+  附件缩略图一个都不藏。开关自己一直看得见（放进被收起的那排 = 再也找不到）。
+- **顶栏**：最左边的 **`⌃`** —— 收起后只剩状态点与开关（一条细缝）；标题、「说明 / 刷新 / 退出」、
+  「当前模型」那行一起让位。「已跑 X:XX / 本轮 token」**不跟着收**（它只在跑任务时出现，
+  收掉等于把功能藏了）。
+- 两个状态都记在手机本地（`dshm.tools` / `dshm.top`），刷新、切回 App 都记得，也进备份白名单。
+- ⚠️ 实现上有一条**别踩的坑**：`#tools` 里还嵌着「只看不发」「离线发件箱」两条横幅和三张纸 ——
+  收 `#tools` 会把它们一起 `display:none` 掉（祖先隐藏，`position:fixed` 也救不了）。
+  所以收起的是新加的那层 `#toolKeys`（只包工具键）。
 
 ## 备份 / 换手机（2.9.0 起）
 

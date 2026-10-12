@@ -751,6 +751,50 @@ const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms))
 const $ = (id) => window.document.getElementById(id)
 const textOf = (id) => $(id).textContent.trim()
 const click = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+/**
+ * "真的看得见"——**沿祖先链**查 `display:none` ✓。
+ *
+ * 冷视角复查点名的结构性盲区：`getComputedStyle(自己).display` 在**祖先被隐藏**时
+ * 照样返回自己的值（`display` 不继承 ✓，jsdom 与真浏览器都一样 ✓）——
+ * 于是"某控件看得见"这一族断言，全都验不到"它被祖先藏了" ✗。
+ * 2.9.0 那个真 bug（收起工具键把嵌在 `#tools` 里的两条横幅和三张纸一起藏掉 ✗）正是从这个盲区溜过去的 ✓。
+ */
+const visible = (node) => {
+	if (node === null || node === undefined) return false
+	let el = node
+	while (el !== null && el !== undefined && el.nodeType === 1) {
+		if (window.getComputedStyle(el).display === 'none') return false
+		el = el.parentElement
+	}
+	return true
+}
+/** 诊断用：把祖先链上每一层的 display 串起来（断言失败时一眼看出是哪一层把它藏了 ✓）。 */
+const ancestry = (node) => {
+	const out = []
+	let el = node
+	while (el !== null && el !== undefined && el.nodeType === 1) {
+		out.push(`${el.id !== '' && el.id !== undefined ? el.id : el.tagName}=${window.getComputedStyle(el).display}`)
+		el = el.parentElement
+	}
+	return out.join(' > ')
+}
+/**
+ * 保证 `#app` 现在是"真的看得见"的 ✓。
+ *
+ * 为什么需要：前面若干用例**故意**触发登录门（连输错 PIN、提权过期 → 403+needPin ✓），
+ * 而 `showGate()` 会 `hide(app)` ✓ —— 一旦有哪次没收尾，`#app` 就一直是 `display:none` ✗。
+ * 后果很隐蔽：`getComputedStyle(自己的).display` **不继承**祖先的 `display:none` ✓，
+ * 于是后面所有"某控件看得见"的断言照样绿 ✓（冷视角复查点名的盲区 ✓，
+ * 2.9.0 那个"收起工具键把两条横幅一起藏掉"的真 bug 就是这么溜过去的 ✓）。
+ * 所以：凡是要断言"看得见"的地方，先走一遍门把 `#app` 拿回来 ✓。
+ */
+const ensureAppVisible = async () => {
+	if (window.getComputedStyle($('app')).display !== 'none') return true
+	$('pin').value = CORRECT_PIN
+	click($('gateBtn'))
+	await wait(220)
+	return window.getComputedStyle($('app')).display !== 'none'
+}
 
 /*
  * 切会话：**走真界面**（点会话栏 → 点列表里那一行）。
@@ -4182,6 +4226,20 @@ await wait(40)
  */
 {
 	// ① 切到「余额」：模型那一行 + 耗时条都收起来 ✓（#12 那条此刻正在跑 ✓，正好当反例 ✓）。
+	const appBack = await ensureAppVisible()
+	check('（前置）走完登录门后 `#app` 真的看得见 ✓（前面有用例故意把登录门弹出来过 ✗ —— 不补这一步，后面所有"看得见"的断言都是空的 ✓）',
+		appBack === true, `ancestry: ${ancestry($('app'))}`)
+	/*
+	 * 走完登录门会**重新拉一次会话列表** ✓（宿主说"这个会话没在跑" ✓ → `state.running` 归 false ✓）。
+	 * 所以这里补一条 `turn/start`，把"正在跑"这一幕摆回来 ✓ —— 下面要靠它验
+	 * "切到余额页时「已跑 X:XX」会不会跟着走"✓。
+	 */
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 600, time: Date.now() - 65000, data: { turn: 20 } } })
+	source.emit({ t: 'event', event: { type: 'assistant/message', seq: 601, time: Date.now() - 60000, data: {
+		turn: 20, step: 1, usage: { inputTokens: 1000, outputTokens: 100 },
+		message: { id: 'm20', role: 'assistant', content: [{ type: 'text', text: '跑着' }] },
+	} } })
+	await wait(200)
 	const before = ($('runstrip')?.textContent ?? '')
 	check('（前置）任务页上「已跑…」那条是显示着的（后面切页才有对照 ✓）',
 		window.getComputedStyle($('runstrip')).display !== 'none' && before.includes('已跑'),
@@ -4205,30 +4263,75 @@ await wait(40)
 
 	// ② 工具键折叠：默认展开 → 点 ⋯ 收起 → 输入框/发送/附件缩略图都还在 → 再点展开 ✓。
 	check('（前置）工具键默认是展开的（不改老用户的习惯 ✓）',
-		window.getComputedStyle($('tools')).display !== 'none'
+		visible($('toolKeys'))
 		&& window.localStorage.getItem('dshm.tools') !== '1',
-		`tools=${window.getComputedStyle($('tools')).display} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+		`toolKeys=${window.getComputedStyle($('toolKeys')).display} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+	// 先把「只看不发」打开 —— 下面要验"收起工具键**不许**把它一起藏掉" ✓（真 bug 的回归断言 ✓）。
+	click($('roBtn'))
+	await wait(120)
+	check('（前置）「只看不发」横幅此刻是看得见的 ✓（用**沿祖先链**的判据 ✓ —— 自己的 display 看不见祖先被藏 ✗）',
+		visible($('roStrip')), `ancestry: ${ancestry($('roStrip'))}`)
 	click($('toolsToggle'))
 	await wait(140)
 	check('点 ⋯：13 个工具键那一排收起来了 ✓，而**输入框 / 发送一个都没藏** ✓',
-		window.getComputedStyle($('tools')).display === 'none'
-		&& window.getComputedStyle($('compose')).display !== 'none'
-		&& window.getComputedStyle($('text')).display !== 'none'
-		&& window.getComputedStyle($('send')).display !== 'none',
-		`tools=${window.getComputedStyle($('tools')).display} compose=${window.getComputedStyle($('compose')).display} text=${window.getComputedStyle($('text')).display} send=${window.getComputedStyle($('send')).display}`)
+		visible($('toolKeys')) === false
+		&& visible($('compose')) && visible($('text')) && visible($('send')),
+		`toolKeys=${window.getComputedStyle($('toolKeys')).display} compose=${window.getComputedStyle($('compose')).display} text=${window.getComputedStyle($('text')).display} send=${window.getComputedStyle($('send')).display}`)
+	check('⚠️ 收起工具键**不许**把「只看不发 / 离线发件箱」两条横幅与三张纸一起藏掉 ✗✗（它们嵌在 `#tools` 里 —— 冷视角复查抓到的真 bug：收的是 `#tools` 而不是只包按钮的那层 ✓）',
+		visible($('tools')) && visible($('roStrip')),
+		`tools=${window.getComputedStyle($('tools')).display} roStrip=${window.getComputedStyle($('roStrip')).display}（沿祖先链 ${visible($('roStrip'))}）`)
+	check('收起时有话说（"工具键已收起（点 ⋯ 展开）" ✓ —— 那排键突然消失得有个交代 ✓）',
+		String($('toast')?.textContent ?? '').includes('工具键已收起'), String($('toast')?.textContent ?? '').slice(0, 40))
+	click($('roBtn'))
+	await wait(120)
 	check('收起后**开关自己还在原地看得见** ✓（藏进被收起的那排 = 用户再也找不到 ✗）',
-		window.getComputedStyle($('toolsToggle')).display !== 'none')
+		visible($('toolsToggle')))
 	check('收起状态记在手机本地（`dshm.tools=1` ✓ —— 刷新/切回 App 都记得 ✓）',
 		window.localStorage.getItem('dshm.tools') === '1',
 		String(window.localStorage.getItem('dshm.tools')))
-	check('收起时有话说（"工具键已收起（点 ⋯ 展开）" ✓ —— 那排键突然消失得有个交代 ✓）',
-		String($('toast')?.textContent ?? '').includes('工具键已收起'), String($('toast')?.textContent ?? '').slice(0, 40))
 	click($('toolsToggle'))
 	await wait(140)
 	check('再点 ⋯：工具键回来了 ✓、标记也清掉了 ✓',
-		window.getComputedStyle($('tools')).display !== 'none'
+		visible($('toolKeys'))
 		&& window.localStorage.getItem('dshm.tools') !== '1',
-		`tools=${window.getComputedStyle($('tools')).display} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+		`toolKeys=${window.getComputedStyle($('toolKeys')).display} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+
+	// ③ 顶栏折叠（用户 2026-10-12：「上方栏也做一个折叠效果」✓）：细缝里只留状态点 + 开关 ✓。
+	const header = window.document.querySelector('header')
+	check('（前置）顶栏默认展开：标题 + 三个键 + 当前模型那一行都在 ✓',
+		header.classList.contains('folded') === false
+		&& window.getComputedStyle($('heading')).display !== 'none'
+		&& window.getComputedStyle($('help')).display !== 'none'
+		&& window.getComputedStyle($('modelRow')).display !== 'none',
+		`folded=${header.classList.contains('folded')} heading=${window.getComputedStyle($('heading')).display} modelRow=${window.getComputedStyle($('modelRow')).display}`)
+	click($('topToggle'))
+	await wait(140)
+	check('点 ⌃：标题、说明/刷新/退出、当前模型那一行全收起来 ✓（顶栏只剩一条细缝 ✓）',
+		header.classList.contains('folded') === true
+		&& window.getComputedStyle($('heading')).display === 'none'
+		&& window.getComputedStyle($('help')).display === 'none'
+		&& window.getComputedStyle($('reload')).display === 'none'
+		&& window.getComputedStyle($('logout')).display === 'none'
+		&& window.getComputedStyle($('modelRow')).display === 'none',
+		`heading=${window.getComputedStyle($('heading')).display} help=${window.getComputedStyle($('help')).display} modelRow=${window.getComputedStyle($('modelRow')).display}`)
+	check('收起后**开关与状态点还在** ✓（否则用户展不开、也看不出连没连上 ✗）',
+		window.getComputedStyle($('topToggle')).display !== 'none'
+		&& window.getComputedStyle($('dot')).display !== 'none')
+	check('「已跑 X:XX / 本轮 token」（★12）**不跟着顶栏收** ✓（它只在跑任务时出现，收掉等于把功能藏了 ✗）',
+		window.getComputedStyle($('runstrip')).display !== 'none'
+		&& String($('runstrip')?.textContent ?? '').includes('已跑'),
+		`runstrip=${window.getComputedStyle($('runstrip')).display} text=${String($('runstrip')?.textContent ?? '').slice(0, 30)}`)
+	check('顶栏收起状态记在手机本地（`dshm.top=1` ✓）+ 有话说 ✓',
+		window.localStorage.getItem('dshm.top') === '1'
+		&& String($('toast')?.textContent ?? '').includes('顶栏已收起'),
+		`dshm.top=${window.localStorage.getItem('dshm.top')} toast="${String($('toast')?.textContent ?? '').slice(0, 24)}"`)
+	click($('topToggle'))
+	await wait(140)
+	check('再点 ⌄：顶栏整行都回来了 ✓、标记清掉 ✓',
+		header.classList.contains('folded') === false
+		&& window.getComputedStyle($('modelRow')).display !== 'none'
+		&& window.localStorage.getItem('dshm.top') !== '1',
+		`folded=${header.classList.contains('folded')} dshm.top=${window.localStorage.getItem('dshm.top')}`)
 }
 
 /* --- 2.9.0 ★3：备份 / 换手机（导出与导入）----------------------------------- */
@@ -4241,6 +4344,7 @@ await wait(40)
  */
 {
 	// 先往 localStorage 里放两样"**必须不被带走**"的东西（真机上它们分别带着密钥段与待发消息 ✓）。
+	await ensureAppVisible()
 	window.localStorage.setItem('dshm.canonical', 'https://example.ts.net/0123456789abcdef/')
 	window.localStorage.setItem('dshm.addresses', JSON.stringify([{ url: 'https://example.ts.net/0123456789abcdef/' }]))
 	window.localStorage.setItem('dshm.outbox', JSON.stringify([{ clientId: 'c1', text: '过时的待发消息' }]))
@@ -4301,9 +4405,9 @@ await wait(40)
 		`pins=${window.localStorage.getItem('dshm.pins')} evil=${window.localStorage.getItem('dshm.evil')} note="${String($('backupNote')?.textContent ?? '').slice(0, 60)}"`)
 	check('恢复"只看不发"是**单向安全**的：备份里锁着就恢复成锁着 ✓（并当场生效 ✓）',
 		window.localStorage.getItem('dshm.readonly') === '1'
-		&& window.getComputedStyle($('roStrip')).display !== 'none'
+		&& visible($('roStrip'))
 		&& $('send').disabled === true,
-		`readonly=${window.localStorage.getItem('dshm.readonly')} strip=${window.getComputedStyle($('roStrip')).display} send.disabled=${$('send').disabled}`)
+		`readonly=${window.localStorage.getItem('dshm.readonly')} roStrip 沿祖先链可见=${visible($('roStrip'))} send.disabled=${$('send').disabled}`)
 	// 收尾：把这台"手机"恢复成能发消息的状态（后面的用例还要用 ✓）。
 	click($('roBtn'))
 	await wait(120)
