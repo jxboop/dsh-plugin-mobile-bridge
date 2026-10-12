@@ -3372,8 +3372,17 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 		&& await statusOf('/api/pending', second.cookie) === 200,
 		`bootstrap=${await statusOf('/api/bootstrap', second.cookie)} pending=${await statusOf('/api/pending', second.cookie)}`)
 	const pendingBody = await (await fetch(`${base}/api/pending`, { headers: { cookie: second.cookie } })).json()
-	check('"等放行"那一屏拿到的话是**人话** ✓（说清"去电脑上点一下"✓，不含糊 ✗）',
-		pendingBody.pending === true && String(pendingBody.message).includes('电脑'), JSON.stringify(pendingBody).slice(0, 90))
+	/*
+	 * 3.3.2：这一屏上印的本机地址**必须真的能打开** ✓ —— 3.3.1 印的是
+	 * `http://127.0.0.1:<端口>/approve`（**漏了 pathSecret** ✗）→ 用户照着打就是 404 ✗。
+	 * ⚠️ 所以断言不能只看"有没有说'电脑'" ✗（那句话在 3.3.1 上也是通的 ✓）——
+	 * 得把地址**抠出来真打一次** ✓。
+	 */
+	const pendingUrl = (/http:\/\/127\.0\.0\.1:\d+\/[^\s）)]*approve/.exec(String(pendingBody.message)) ?? [])[0] ?? ''
+	check('"等放行"那一屏拿到的话是**人话** ✓、而且里面印的本机地址**照着真能打开** ✓（3.3.1 印的裸地址 → 404 ✗）',
+		pendingBody.pending === true && String(pendingBody.message).includes('电脑')
+		&& pendingUrl !== '' && (await fetch(pendingUrl)).status === 200,
+		`${pendingUrl === '' ? '话里没有可点的本机地址' : pendingUrl} —— ${JSON.stringify(pendingBody).slice(0, 80)}`)
 
 	// ④ 放行页只在本机给 ✓（这里从本机连 ✓）—— 要能列出**那一台**、并给两个键 ✓。
 	//    ⚠️ 认设备要**按来源地址认** ✓：页面上可能同时列着好几台在等放行的（前面用例留下的 ✓），
@@ -3686,6 +3695,46 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 			&& String(item.idShort).includes('session-') === false) === true
 		|| (await week('?days=7')).body?.items?.length === 0,
 		'（列表为空时不算失败 ✓ —— 桩里的行可能没有 updatedAt ✓）')
+}
+
+/*
+ * 3.3.2：放行页的地址与链接必须「带前缀也点得通」 ✓ —— 用户实测踩过这个坑 ✗：
+ * 403 页给的地址漏了 pathSecret ✓（照着点 404 ✗）、页面上「放行 / 拒绝」是绝对路径 ✗（同样 404 ✗）。
+ * ⚠️ 断言要**真咬** ✓：3.3.1 的 bug 只在「403 页印的地址」与「页面里的链接」上 ✓ ——
+ *   "放行页能开 200" 在 3.3.1 上**本来就是绿的** ✗（上面已有一条同样的断言 ✓）；
+ *   而没有待放行设备时页面**一个链接都不渲染** ✓ → "不得出现绝对路径"会**空过** ✗。
+ *   所以这里 ① 把 403 页印的地址**抠出来再打一次** ✓、② 先造一台等放行的设备让链接**真的画出来** ✓。
+ */
+{
+	const readConfig332 = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeConfig332 = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...await readConfig332(), ...patch }, null, 2), 'utf8')
+	await writeConfig332({ deviceApproval: true })
+	const waiting = await fetch(`${base}/api/login`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.201' },
+		body: JSON.stringify({ pin: config.pin }),
+	})
+	const waitingBody = await waiting.json().catch(() => ({}))
+
+	// ① 非本机（手机 / 域名）打放行页 → 403 ✓，页面上印的"请在电脑上打开"地址必须**带 pathSecret**，
+	//    而且**照着它真能打开** ✓（3.3.1 印的是裸地址 → 404 ✗ —— "怎么放都不行"就是这么来的 ✓）。
+	const denied = await fetch(`${base}/approve`, { headers: { 'x-forwarded-for': '203.0.113.202' } })
+	const deniedHtml = await denied.text()
+	const printed = (/href="(http:\/\/127\.0\.0\.1:\d+\/[^"]+)"/.exec(deniedHtml) ?? [])[1] ?? ''
+	const printedStatus = printed === '' ? 0 : (await fetch(printed)).status
+	check('🔴 403 页印的本机地址**带 pathSecret**、照着它打是 **200** ✓（3.3.1 印的裸地址 → 404 ✗）',
+		denied.status === 403 && printed.includes(`/${config.pathSecret}/`) && printedStatus === 200,
+		printed === '' ? `403 页里没找到本机地址（status=${denied.status}）` : `${printed} → ${printedStatus}`)
+
+	// ② 放行页上的「放行 / 拒绝」必须是**相对路径** ✓（绝对路径 `/approve?…` 在带前缀的页面上必 404 ✗），
+	//    而且这两个链接**真的渲染出来了** ✓（否则"没有绝对路径"是空话 ✗）。
+	const page332 = await (await fetch(`${base}/approve`)).text()
+	check('🔴 放行页上的链接**渲染出来了、且是相对路径** ✓（绝对路径 `/approve?…` 点了必 404 ✗）',
+		page332.includes('href="approve?action=approve') && page332.includes('href="approve?action=deny')
+		&& page332.includes('href="/approve') !== true,
+		`等放行=${JSON.stringify(waitingBody).slice(0, 50)} links=${(page332.match(/href="[^"]*approve[^"]*"/g) ?? []).join(' , ').slice(0, 120)}`)
+
+	await writeConfig332({ deviceApproval: false })
 }
 
 for (const dispose of disposers) { try { dispose?.() } catch { /* ignore */ } }
