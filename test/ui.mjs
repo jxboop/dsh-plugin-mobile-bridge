@@ -4261,6 +4261,21 @@ await wait(40)
 	await wait(160)
 	check('Ctrl / ⌘ + Enter 一直都是发送 ✓（老行为没被这次改动弄坏 ✓）',
 		promptCount() === n3 + 1, `${n3} -> ${promptCount()}`)
+	/*
+	 * ⚠️ **中文输入法**：用拼音打字时按 Enter 是"选字/上屏" ✓ —— 勾了「Enter 直接发送」也**绝不能发** ✗✗
+	 * （这是最容易坑中文用户的一条 ✓）。两条判据都验：`isComposing` 与老的 `keyCode 229` ✓。
+	 */
+	$('text').value = '用拼音打字中'
+	const n4 = promptCount()
+	keydown('Enter', { isComposing: true })
+	await wait(120)
+	check('输入法组合中按 Enter（`isComposing=true`）**不发** ✓✗（按 Enter 是选字，不是发送 ✓）',
+		promptCount() === n4, `${n4} -> ${promptCount()}`)
+	const n5 = promptCount()
+	keydown('Enter', { keyCode: 229 })
+	await wait(120)
+	check('老输入法只给 `keyCode 229` 时也**不发** ✓（两条判据都认 ✓）',
+		promptCount() === n5, `${n5} -> ${promptCount()}`)
 	click($('kbEnter'))
 	await wait(80)
 
@@ -4278,6 +4293,22 @@ await wait(40)
 	await wait(100)
 	check('↓ 往回翻回"还没翻历史"的那份草稿 ✓（这里是空 ✓）',
 		$('text').value === '', JSON.stringify(String($('text').value).slice(0, 30)))
+	/*
+	 * ⚠️ **P1 回归：取回历史后在框里改字，再按 ↑ 不许把刚改的丢掉** ✗（冷视角复查：原来会静默丢输入 ✓）。
+	 * 修法是"一打字就退出翻历史状态"（`input` 监听 ✓）+ 每轮更新草稿 ✓ ——
+	 * 所以改完再按 ↓ 拿回的必须是**改过的那句** ✓，而不是第一次 ↑ 时的旧快照 ✗。
+	 */
+	$('text').value = ''
+	try { $('text').setSelectionRange(0, 0) } catch { /* 无所谓 */ }
+	keydown('ArrowUp')
+	await wait(100)
+	$('text').value = '我改过的草稿'
+	$('text').dispatchEvent(new window.Event('input', { bubbles: true }))
+	await wait(80)
+	keydown('ArrowDown')
+	await wait(100)
+	check('P1 回归：取回历史后**改过的草稿不许被抹掉** ✓（一打字就退出翻历史状态 ✓，↓ 拿回的是改过的那句 ✓）',
+		$('text').value === '我改过的草稿', JSON.stringify(String($('text').value).slice(0, 30)))
 	/*
 	 * 多行的保护：光标**不在第一行**时 ↑ 不接管 ✓（那是"看上一行" ✓）。
 	 * ⚠️ 光标在第 0 位时接管是**对的** ✓（shell 里也是这个语义 ✓）—— 我第一版断言写成了
@@ -4314,11 +4345,15 @@ await wait(40)
 	const q = (selector) => $('log').querySelector(selector)
 
 	// ① 代码块：认出围栏 ✓ / **往返一字不差** ✓ / 高亮真的标了 ✓ / 注入被转义 ✓。
+	//    样本**故意挑最容易被高亮啃掉的字符** ✓（转义反斜杠、反引号、URL 里的 #、十六进制、
+	//    浮点、中文、emoji、`&` `<` `>`）—— 高亮写坏时最先丢的就是这些 ✓。
 	const code = [
 		'function add(a, b) {',
-		'  // 注释里有 <尖括号> 和 #井号',
-		'  const s = "a & b <img src=x onerror=alert(1)>"',
-		'  return a + b + 42',
+		'  // 注释里有 <尖括号> 和 #井号，还有 URL https://x/y#z',
+		'  const s = "a & b <img src=x onerror=alert(1)> \\"转义引号\\""',
+		'  const t = `模板 ${a} 串`',
+		'  const hex = 0xFF, float = 3.14, big = 1_000_000',
+		'  return `${a + b + hex + float + big}：中文与 emoji 😀`',
 		'}',
 	].join('\n')
 	say('看这段：\n```js\n' + code + '\n```\n完了', 700)
@@ -4326,13 +4361,24 @@ await wait(40)
 	const pre = q('pre.code')
 	const logHtml = $('log').innerHTML
 	check('围栏代码块被认出来了（`<pre class="code">` ✓）', pre !== null, pre === null ? '没有 pre.code' : '')
-	check('⚠️ 往返：渲染出来的代码文字与原文**一字不差** ✓（高亮只加标签、绝不啃内容 ✗）',
+	check('⚠️ 往返：渲染出来的代码文字与原文**一字不差** ✓（高亮只加标签、绝不啃内容 ✗ —— 样本含转义反斜杠/反引号/URL 的 #/十六进制/中文/emoji ✓）',
 		pre !== null && pre.textContent === code, JSON.stringify(String(pre?.textContent ?? '').slice(0, 70)))
-	check('关键字 / 字符串 / 注释真的被标出来了 ✓（`.hl-k` `.hl-s` `.hl-c` 都在）',
-		logHtml.includes('hl-k') && logHtml.includes('hl-s') && logHtml.includes('hl-c'))
+	check('关键字 / 字符串 / 注释 / 数字真的被标出来了 ✓（`.hl-k` `.hl-s` `.hl-c` `.hl-n` 都在）',
+		logHtml.includes('hl-k') && logHtml.includes('hl-s') && logHtml.includes('hl-c') && logHtml.includes('hl-n'))
 	check('代码里的 HTML 被原样转义 ✓（`<img … onerror>` 绝不许变成真元素 ✗）',
 		logHtml.includes('<img src=x') === false
 		&& pre !== null && String(pre.textContent).includes('<img src=x onerror=alert(1)>'))
+	/*
+	 * 一条**如实说明**（别把话说满 ✗）：`\r\n` 会被归一成 `\n` ✓ ——
+	 * 渲染时按 `/\r?\n/` 切行、再按 `\n` 拼回来 ✓（和浏览器 textarea 的归一行为一致 ✓）；
+	 * 除此之外**一个字符都不动** ✓（上面那条断言就是这条的保证 ✓）。
+	 */
+	say('```\r\n第一行\r\n第二行\r\n```', 706)
+	await wait(200)
+	const crlf = $('log').querySelectorAll('pre.code')
+	check('（如实）`\\r\\n` 归一成 `\\n` ✓ —— 除这一条外一字不动 ✓（不是"字节级往返"，别把话说满 ✗）',
+		crlf.length >= 1 && String(crlf[crlf.length - 1].textContent) === '第一行\n第二行',
+		JSON.stringify(String(crlf[crlf.length - 1]?.textContent ?? '')))
 
 	// ② 行内格式：`**粗**` 与反引号代码 ✓（内容同样要一字不差 ✓）。
 	say('这里有 **粗体** 和 `inlineCode` 两样', 701)
@@ -4361,9 +4407,36 @@ await wait(40)
 	check('Markdown 表格被画成真表格 ✓（3 列表头 + 2 行数据 ✓）',
 		wrap !== null && wrap.querySelectorAll('th').length === 3 && wrap.querySelectorAll('tbody tr').length === 2,
 		wrap === null ? '没有 .tablewrap' : `th=${wrap.querySelectorAll('th').length} tr=${wrap.querySelectorAll('tbody tr').length}`)
-	check('表格外面那层**能左右滑** ✓（手机上表格被压成面条就完全没法读 ✗）',
+	check('表格外面那层**声明了**能左右滑 ✓（`overflow-x:auto` ✓ —— ⚠️ jsdom 没有布局引擎，算不出"真的滑得动" ✗，这条只验声明 ✓，真机行为未验 ✓）',
 		wrap !== null && window.getComputedStyle(wrap).overflowX === 'auto',
 		wrap === null ? '(没有表格)' : `overflow-x=${window.getComputedStyle(wrap).overflowX}`)
+	// 表格写歪了（某行多一格）：**内容不许被悄悄丢掉** ✗（列数按最宽的一行算 ✓）。
+	say('| 甲 | 乙 |\n| --- | --- |\n| 1 | 2 | 3 |', 707)
+	await wait(200)
+	const wide = Array.from($('log').querySelectorAll('.tablewrap')).at(-1)
+	check('表格某行比表头宽时，多出来的格子照常显示 ✓（绝不悄悄丢内容 ✗）',
+		wide !== undefined && String(wide.textContent).includes('3')
+		&& wide.querySelectorAll('th').length === 3 && wide.querySelectorAll('td').length === 3,
+		wide === undefined ? '(没有表格)' : `th=${wide.querySelectorAll('th').length} td=${wide.querySelectorAll('td').length} 文本=${String(wide.textContent).slice(0, 30)}`)
+
+	/*
+	 * ⚠️⚠️ **P0 回归：一行"看着像表格、但下一行不是分隔行"** ✗✗ ——
+	 * 冷视角复查在真页面上复现过：`richText` 在那个分支里 `index` 原地不动 → **死循环，整页冻死** ✓
+	 * （`ps aux | grep`、`ls -l | awk` 粘成一行、表格少写 `| --- |` 都能触发 ✓，而且每次重画都重跑 ✓）。
+	 * 触发面覆盖**所有** text 块（用户消息 / 助手正文 / 工具结果 ✓），所以这条必须钉死 ✓。
+	 * ⚠️ 断言方式要注意：**修复之前这条会把整个套件挂住** ✗ —— 所以只能"先修代码再补断言" ✓
+	 * （这条就是修完之后补的 ✓）。
+	 */
+	const freezeCases = ['段落\n| a | b |\n结束语', '| a | b |', '| a | b |\n| c | d |', '正文\n| x |\n| y |\n尾巴']
+	for (let index = 0; index < freezeCases.length; index += 1) {
+		const before = $('log').textContent
+		say(freezeCases[index], 710 + index)
+		await wait(140)
+		const after = $('log').textContent
+		check(`P0 回归：孤立竖线行「${freezeCases[index].split('\n')[1]}」照常渲染、**不许死循环** ✓✗（修之前这里整页冻死 ✓）`,
+			after !== before && after.includes(freezeCases[index].split('\n').filter((line) => line !== '')[0]),
+			`渲染后长度 ${after.length}（前 ${before.length}）`)
+	}
 
 	// ⑤ 长回答（>22 行）默认折：开头几行留外面（"只看结论" ✓），其余进 details ✓。
 	const longText = Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行内容`).join('\n')
@@ -4392,15 +4465,15 @@ await wait(40)
 	click($('kbBack'))
 	await wait(80)
 
-	// ⑦ 超长（>24KB）降级：只转义、不跑正则、不折叠 ✓（流式输出每 80ms 重画一次，排版不能吃掉帧率 ✓）。
-	say('x'.repeat(26000) + '\n尾巴', 705)
-	await wait(240)
+	// ⑦ 超长（>24KB）降级：只转义、不跑正则 ✓ **但仍然要折** ✓（冷视角复查：最该折的那条原来恰恰不折 ✗）。
+	say(Array.from({ length: 40 }, (_, i) => `第${i + 1}段 ` + 'x'.repeat(700)).join('\n'), 705)
+	await wait(260)
 	const plainLong = q('.plainlong')
-	check('单条 >24KB 时降级成纯文本 ✓（`.plainlong` ✓，**这一条自己**里面不折不高亮 ✓）',
-		plainLong !== null && plainLong.querySelector('details.fold') === null
-		&& plainLong.querySelector('pre.code') === null
-		&& String(plainLong.textContent).startsWith('xxxx'),
-		plainLong === null ? '(没降级)' : `长度 ${String(plainLong.textContent).length}`)
+	const bigFold = Array.from($('log').querySelectorAll('details.fold')).at(-1)
+	check('单条 >24KB 时降级成纯文本 ✓（`.plainlong` ✓），**而且照样折** ✓（只露开头几行 ✓ —— 不跑正则、成本不变 ✓）',
+		plainLong !== null && bigFold !== null && bigFold.open === false
+		&& String(bigFold.querySelector('summary')?.textContent ?? '').includes('共 40 行'),
+		plainLong === null ? '(没降级)' : `折叠=${bigFold === null ? '没有' : String(bigFold.querySelector('summary')?.textContent ?? '').slice(0, 30)}`)
 }
 
 /* --- 2026-10-12：顶栏随页签收放 + 工具键可收起（用户当天报的两条）------------- */
@@ -4579,7 +4652,11 @@ await wait(40)
 	// ③ 导入：白名单外的键**不许写进去** ✓；白名单内的照常恢复 ✓。
 	const payload = JSON.stringify({
 		mark: 'dsh-plugin-mobile-bridge/phone-backup', version: 1, exportedAt: new Date().toISOString(),
-		data: { 'dshm.pins': JSON.stringify(['session-older']), 'dshm.readonly': '1', 'dshm.evil': 'x' },
+		data: {
+			'dshm.pins': JSON.stringify(['session-older']), 'dshm.readonly': '1', 'dshm.evil': 'x',
+			// ★6/★7 那几项也在白名单里 ✓ —— 冷视角复查抓到的 P1：恢复后它们**必须当场生效** ✗（原来要刷新 ✓）。
+			'dshm.history': JSON.stringify(['从备份恢复的一句']), 'dshm.foldLong': '1',
+		},
 	})
 	const good = new window.File([payload], 'backup.json', { type: 'application/json' })
 	Object.defineProperty(input, 'files', { value: [good], configurable: true })
@@ -4588,9 +4665,18 @@ await wait(40)
 	check('导入真备份：恢复白名单里的项 ✓、跳过快照里多出来的键 ✓、并说清恢复了几项 ✓',
 		window.localStorage.getItem('dshm.pins') === JSON.stringify(['session-older'])
 		&& window.localStorage.getItem('dshm.evil') === null
-		&& String($('backupNote')?.textContent ?? '').includes('已恢复 2 项')
+		&& String($('backupNote')?.textContent ?? '').includes('已恢复 4 项')
 		&& String($('backupNote')?.textContent ?? '').includes('跳过了 1 项'),
 		`pins=${window.localStorage.getItem('dshm.pins')} evil=${window.localStorage.getItem('dshm.evil')} note="${String($('backupNote')?.textContent ?? '').slice(0, 60)}"`)
+	/*
+	 * ⚠️ **P1 回归：恢复完 ⌨ 那一层要当场同步** ✓（冷视角复查：原来 ↑ 拿的还是这台机器的旧历史 ✗）。
+	 */
+	$('text').value = ''
+	try { $('text').setSelectionRange(0, 0) } catch { /* 无所谓 */ }
+	$('text').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
+	await wait(120)
+	check('P1 回归：恢复备份后 ↑ 立刻拿到**备份里的**历史 ✓（不是这台机器的旧历史 ✗ —— 恢复完要重读 ⌨ 那一层 ✓）',
+		$('text').value === '从备份恢复的一句', JSON.stringify(String($('text').value).slice(0, 30)))
 	check('恢复"只看不发"是**单向安全**的：备份里锁着就恢复成锁着 ✓（并当场生效 ✓）',
 		window.localStorage.getItem('dshm.readonly') === '1'
 		&& visible($('roStrip'))
