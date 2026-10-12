@@ -8201,7 +8201,22 @@
 			setDelText('kNote', '这 7 天有 ' + items.length + ' 个会话有活动 ✓（按最近活动排 ✓）'
 				+ (body?.truncated === true ? '；**还有更多** ✓ —— 这里只列了前 60 条 ✓' : ''))
 			const list = $('kList')
-			for (const item of items) {
+			/*
+			 * 3.3.0 复查给的"第二条出路" ✓（也是**用户 2026-10-11 的原话**：
+			 * "agent 子对话以及测试对话就不要显示在对话框里了，占位置" ✓）：
+			 * 后端已经把 `subagent`/`ownDir` 发出来了 ✓ → 这里**按手机自己的开关**筛 ✓
+			 * （键名沿用会话列表那个"显示全部" ✓）—— 不按我的口味一刀切 ✗。
+			 */
+			const showAll = readLocal('dshm.sessAll') === '1'
+			const visible = showAll === true
+				? items
+				: items.filter((item) => item.subagent !== true && item.ownDir !== true)
+			const hiddenCount = items.length - visible.length
+			if (hiddenCount > 0) {
+				setDelText('kNote', String($('kNote').textContent) + '；另有 ' + hiddenCount
+					+ ' 个子对话/测试会话**默认没列出** ✓（想全都看：在会话列表打开「显示全部」✓）')
+			}
+			for (const item of visible) {
 				const card = document.createElement('button')
 				card.className = 'wfcard'
 				card.style.cssText = 'display:block;width:100%;text-align:left;margin:6px 0'
