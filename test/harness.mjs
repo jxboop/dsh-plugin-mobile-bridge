@@ -2050,12 +2050,24 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
  * （2026-10-12 真机验证时就是这里抓到编码 bug 的 ✓）。
  */
 {
-	const clipboardGet = async () => (await (await fetch(`${base}/api/clipboard`, authed)).json())
+	// 2.7.3：用户拍板"要 PIN" ✓ —— **读**走 `x-dsh-pin` 头（**绝不放进 URL** ✗），**写**走 body 里的 pin ✓。
+	const pinHeaders = { cookie, 'x-dsh-pin': config.pin }
+	const clipboardGet = async () => (await (await fetch(`${base}/api/clipboard`, { headers: pinHeaders })).json())
 	const clipboardSet = (text) => fetch(`${base}/api/clipboard`, {
 		method: 'POST',
 		headers: { cookie, 'content-type': 'application/json' },
-		body: JSON.stringify({ text }),
+		body: JSON.stringify({ text, pin: config.pin }),
 	})
+
+	// 反面：**不带 PIN 就不给** ✓（这正是用户要的那条闸 ✓）——读和写、以及截屏都要拦。
+	check('不带 PIN 读剪贴板：403（cookie 不够了 ✓）',
+		(await fetch(`${base}/api/clipboard`, authed)).status === 403)
+	check('不带 PIN 写剪贴板：403 ✓',
+		(await fetch(`${base}/api/clipboard`, {
+			method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ text: 'x' }),
+		})).status === 403)
+	check('PIN 不对：403 ✓（不是"看一眼就当过关" ✗）',
+		(await fetch(`${base}/api/clipboard`, { headers: { cookie, 'x-dsh-pin': '000000' } })).status === 403)
 
 	const original = await clipboardGet()
 	check('读电脑剪贴板：登录就能读（读不到会明说，不是编一个空的 ✓）',
@@ -2069,10 +2081,11 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	check('写进去再读回来**一字不差**（base64 走 stdio：中文/emoji/引号/$/换行都不许烂 ✗）',
 		readBack.text === marker, JSON.stringify(readBack.text ?? readBack.error).slice(0, 80))
 	check('没带 text：400（不是 500，也不是静默成功）', (await fetch(`${base}/api/clipboard`, {
-		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({}),
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
 	})).status === 400)
 
-	const screen = await fetch(`${base}/api/screen`, authed)
+	const screen = await fetch(`${base}/api/screen`, { headers: pinHeaders })
+	check('不带 PIN 截屏：403（整屏更不能白给 ✓）', (await fetch(`${base}/api/screen`, authed)).status === 403)
 	const screenBytes = Buffer.from(await screen.arrayBuffer())
 	check('截屏：200 + image/png + 真的是一张图（PNG 头 + 至少 10KB ✓）',
 		screen.status === 200 && screen.headers.get('content-type') === 'image/png'

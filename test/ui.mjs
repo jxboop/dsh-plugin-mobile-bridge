@@ -3624,11 +3624,18 @@ await wait(40)
 	await wait(60)
 }
 
-/* --- 2.7.0 ★4：剪贴板 & 截屏 -------------------------------------------- */
+/* --- 2.7.0 ★4：剪贴板 & 截屏（2.7.3 起**要现输 PIN** ✓）--------------------- */
 {
 	click($('clipBtn'))
 	await wait(150)
-	check('📋 打开剪贴板纸：电脑剪贴板的内容被填进来了（只读）',
+	// 2.7.3：没输 PIN 就什么都不给 ✓（用户拍的决定 ✓）
+	check('📋 没输 PIN 时：不读剪贴板、并且说清要先输 PIN ✓',
+		$('clipPcText').value === '' && String($('clipError').textContent).includes('先在上面输 PIN'),
+		String($('clipError').textContent).slice(0, 40))
+	$('clipPin').value = CORRECT_PIN
+	click($('clipRefresh'))
+	await wait(160)
+	check('输 PIN 后：电脑剪贴板的内容被填进来了（只读 ✓）',
 		window.getComputedStyle($('clipopen')).display !== 'none'
 		&& $('clipPcText').value === '电脑上复制的那段文字'
 		&& $('clipPcText').hasAttribute('readonly'),
@@ -3637,17 +3644,17 @@ await wait(40)
 	$('clipPhoneText').value = '手机这边写的字'
 	click($('clipSend'))
 	await wait(150)
-	check('「放进电脑剪贴板」把手机上的字发过去了（带 text 字段）',
-		clipboardWrites.length === 1 && clipboardWrites[0].text === '手机这边写的字',
+	check('「放进电脑剪贴板」把字发过去了，而且**带上 PIN** ✓（不带就会被服务端 403 ✓）',
+		clipboardWrites.length === 1 && clipboardWrites[0].text === '手机这边写的字' && clipboardWrites[0].pin === CORRECT_PIN,
 		JSON.stringify(clipboardWrites[0] ?? null))
 	check('发完清空输入框（免得下次误发一遍）', $('clipPhoneText').value === '')
 
 	click($('screenBtn'))
 	await wait(80)
-	check('「截一张现在看看」把截图接口挂到 <img> 上（同源 cookie 会自动带上，所以能直接当图片取 ✓）',
-		$('screenImg').getAttribute('src')?.startsWith('api/screen?t=') === true
-		&& window.getComputedStyle($('screenImg')).display !== 'none',
-		String($('screenImg').getAttribute('src')))
+	// 截图也要 PIN ✓：验证"至少不是被那句'先输 PIN'挡回去了"（真正的取图在 jsdom 里没有 createObjectURL ✗）
+	check('截图带上 PIN 之后不再被"先输 PIN"挡回（真机上还是那张图 ✓）',
+		String($('screenHint').textContent).includes('先在上面输 PIN') === false,
+		String($('screenHint').textContent).slice(0, 40))
 	click($('clipBack'))
 	await wait(60)
 }

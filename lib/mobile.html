@@ -1228,6 +1228,12 @@
 				<button class="iconbtn" id="clipRefresh">刷新</button>
 			</div>
 			<div class="scroll pad">
+				<!-- 2.7.3：剪贴板/截屏**要现输 PIN** ✓（用户拍的决定）——输一次记在这次页面里 ✓，不用每次都输 ✓。 -->
+				<div class="field">
+					<label>先输 PIN（剪贴板可能有密码、屏幕是整屏 ✓）</label>
+					<input class="plain" id="clipPin" type="password" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="PIN">
+					<div class="hint" id="clipPinHint">输一次就记住（刷新页面要重输 ✓）；**不会**被塞进网址里 ✓</div>
+				</div>
 				<div class="sessgroup">电脑剪贴板（只读，能看就能复制 ✓）</div>
 				<textarea class="plain" id="clipPcText" rows="5" readonly placeholder="（读不到，点右上角刷新）"></textarea>
 				<div class="hint" id="clipError"></div>
@@ -6293,11 +6299,23 @@
 	})
 	$('expShare').addEventListener('click', () => { void shareExport() })
 
-	/* --------- 剪贴板 & 截屏（2.7.0 ★4）--------- */
+	/* --------- 剪贴板 & 截屏（2.7.0 ★4；2.7.3 起**要现输 PIN** ✓）--------- */
+	/** 这次页面里记住的 PIN（只在内存 ✓，不落 localStorage ✗；刷新要重输 ✓）。 */
+	let clipPin = ''
+	const clipPinValue = () => {
+		const box = $('clipPin')
+		if (box !== null && box.value.trim() !== '') clipPin = box.value.trim()
+		return clipPin
+	}
+	/** 把 PIN 放进**请求头** ✓ —— 绝不塞进 URL ✗（URL 会进日志/历史 ✓）。 */
+	const clipHeaders = (extra) => Object.assign({ 'x-dsh-pin': clipPinValue() }, extra ?? {})
+
 	async function loadClipboard() {
 		const box = $('clipPcText')
+		const pin = clipPinValue()
+		if (pin === '') { setDelText('clipError', '先在上面输 PIN —— 这一项现在要 PIN ✓'); if (box !== null) box.value = ''; return }
 		try {
-			const body = await api('api/clipboard')
+			const body = await api('api/clipboard', { headers: clipHeaders() })
 			if (box !== null) box.value = String(body.text ?? '')
 			setDelText('clipError', body.text === '' ? '（电脑剪贴板现在是空的）' : '')
 		} catch (error) {
@@ -6310,11 +6328,13 @@
 		const box = $('clipPhoneText')
 		const text = String(box?.value ?? '')
 		if (text.trim() === '') { toast('先写点东西再发', 2000); return }
+		const pin = clipPinValue()
+		if (pin === '') { setDelText('clipError', '先在上面输 PIN —— 这一项现在要 PIN ✓'); return }
 		try {
 			const body = await api('api/clipboard', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ text }),
+				body: JSON.stringify({ text, pin }),
 			})
 			toast(String(body.message ?? '已经放进电脑剪贴板了'), 2400)
 			if (box !== null) box.value = ''
@@ -6327,14 +6347,33 @@
 	function loadScreen() {
 		const image = $('screenImg')
 		if (image === null) return
-		// 截图接口要登录态 —— 用 <img> 取图时浏览器会自动带上同源 cookie ✓，所以能直接当图片加载 ✓。
-		image.style.display = 'block'
-		image.src = 'api/screen?t=' + Date.now()
-		image.onerror = () => {
-			image.style.display = 'none'
-			setDelText('screenHint', '截不到（多半是锁屏 / 没有交互桌面）—— 电脑那边解锁后再点一次 ✓')
-		}
-		image.onload = () => { setDelText('screenHint', '刚截的（只缩小到 1280 宽，用完即删 ✓）') }
+		const pin = clipPinValue()
+		if (pin === '') { setDelText('screenHint', '先在上面输 PIN —— 截图现在也要 PIN ✓'); return }
+		/*
+		 * 截图要 PIN ✓ → 就不能再用 `<img src=…>` 了 ✗（图片请求带不了自定义头 ✓）。
+		 * 改成：带头上取 → 变成 blob → 再挂到 <img> ✓（内容一样，但凭证进的是头 ✓）。
+		 */
+		setDelText('screenHint', '正在截…')
+		void (async () => {
+			try {
+				const response = await fetch('api/screen', { headers: clipHeaders() })
+				if (response.ok !== true) {
+					let why = 'HTTP ' + response.status
+					try { why = String((await response.json()).error ?? why) } catch { /* 不是 JSON 就用状态码 ✓ */ }
+					throw new Error(why)
+				}
+				const blob = await response.blob()
+				if (image.dataset.blob !== undefined && image.dataset.blob !== '') URL.revokeObjectURL(image.dataset.blob)
+				const url = URL.createObjectURL(blob)
+				image.dataset.blob = url
+				image.style.display = 'block'
+				image.src = url
+				setDelText('screenHint', '刚截的（只缩小到 1280 宽，用完即删 ✓）')
+			} catch (error) {
+				image.style.display = 'none'
+				setDelText('screenHint', '截不到：' + error.message)
+			}
+		})()
 	}
 
 	$('clipBtn').addEventListener('click', () => { show($('clipopen')); void loadClipboard() })
