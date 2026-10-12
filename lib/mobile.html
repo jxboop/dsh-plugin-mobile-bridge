@@ -476,6 +476,11 @@
 	/* 分成两行，输入框拿回整行宽度，窄屏（320px）也不会散架。 */
 	#composer { display: flex; flex-direction: column; gap: 8px; }
 	#tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+	/* 收起工具键（2026-10-12 用户：「底下功能栏太多了挡住视线」✓）：
+	   收起时整排工具键让位给对话 ✓，但**输入框与发送永远在** ✓（不许把"写消息"也藏起来 ✗）。
+	   开关自己必须一直看得见 ✓（否则就成了"功能不见了" ✗）。 */
+	#toolsToggle { padding: 6px 9px; font-size: 13px; line-height: 1; opacity: .82; }
+	#toolsToggle.folded { background: var(--accent); color: #071026; }
 	#compose { display: flex; gap: 8px; align-items: flex-end; }
 	#text {
 		flex: 1 1 auto; min-width: 0; background: var(--panel-2); border: 1px solid var(--field-line);
@@ -901,7 +906,9 @@
 				<div id="thumbs"></div>
 				<!-- 工具键单独一行：一排五个键（图片/原图/生图/权限/发送）在 390px 上
 				     实测放不下（键 220px + 输入框 120px + 间距 > 370px），硬塞就会
-				     掉行、把输入框挤成一条缝。分成两行后输入框拿回整行宽度。 -->
+				     掉行、把输入框挤成一条缝。分成两行后输入框拿回整行宽度。
+				     2026-10-12 用户：「底下功能栏太多了挡住视线」→ 这一排可以**收起** ✓
+				     （开关在下面那行的 ⋯ 上 ✓：收起后输入框与发送照旧在 ✓）。 -->
 				<div id="tools">
 					<button id="pick">图片</button>
 					<button id="pickAny" title="上传任意文件到电脑（原样传，agent 拿到路径）">文件</button>
@@ -938,6 +945,36 @@
 				包里是<b>自检结果 + 最近的日志 + 登录账</b>（PIN 与网址里的密钥段会被替换掉 ✓）。
 				连不上、发送失败、审批没弹出来这类问题，先下这一份发出去，比描述一百句都准 ✓。
 			</div>
+			<!-- 2.9.0 ★3：备份/换手机 —— 入口也放在这一页（和"诊断包"一样，都是"维护"这件事 ✓）。 -->
+			<div class="actions" style="flex:none;padding:0 14px 10px">
+				<button class="go" id="backupOpen">💾 备份 / 换手机</button>
+			</div>
+		</section>
+		<!-- 2.9.0 ★3「备份 / 迁移（换手机不丢）」：把这台手机上的设置导成一个文件 ✓，换手机/重装后导回来 ✓。
+		     **只备份"这台手机上的"东西** ✓ —— 电脑那边的设置不用备份（换手机不影响它 ✓）。
+		     两条**故意不备份**：网址里的密钥段 ✗（备份文件是拿来传来传去的 ✓）、离线发件箱 ✗
+		     （恢复一份旧备份会静默把过时的消息发出去 ✓）。 -->
+		<section class="sheet" id="backupopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="backupBack">← 返回</button>
+				<span class="title">备份 / 换手机</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="hint">备份的是<b>这台手机上的设置</b>：置顶 📌、常用 ⭐、用得多的顺序、只看不发 🔒、
+					上次停在哪个会话与哪个模型 ✓ —— 换手机、重装、清掉站点数据之后，导回来就还在 ✓。</div>
+				<div class="hint"><b>电脑那边的设置不用备份</b> ✓（换手机不影响它 ✓）。
+					网址里的<b>密钥段</b>不进备份文件 ✗（文件是要传来传去的 ✓），
+					离线发件箱里待发的消息也不进 ✗（恢复一份旧备份不该替你发出过时的消息 ✓）。</div>
+				<div class="actions">
+					<a class="go" id="backupGo" download style="text-decoration:none;text-align:center;line-height:2.4">⬇️ 导出备份文件</a>
+				</div>
+				<div class="actions">
+					<button class="go" id="backupPick">⬆️ 导入备份文件…</button>
+					<input type="file" id="backupFile" accept=".json,application/json" hidden>
+				</div>
+				<div class="hint" id="backupNote"></div>
+			</div>
 		</section>
 		<!-- 2.8.0 ★2「安全审计 + 陌生设备提醒」：谁登录过、从哪来、有没有陌生设备 ✓；
 		     「踢掉其它设备」要**现输 PIN** ✓（它是收回权限 ✓ —— 和"删除会话"同级 ✓）。 -->
@@ -952,6 +989,10 @@
 		</section>
 				</div>
 				<div id="compose">
+					<!-- 收起 / 展开上面那排工具键（2026-10-12 用户：「底下功能栏太多了挡住视线」✓）。
+					     放这一行是**故意的** ✗：工具键收起来之后，开关自己必须还在原地看得见 ✓
+					     （藏进被收起来的那排里 = 用户再也找不到 ✗）。 -->
+					<button id="toolsToggle" title="收起工具键，多看几行对话（再点一下展开；刷新也记得 ✓）">⋯</button>
 					<textarea id="text" rows="1" placeholder="给 agent 下达任务…"></textarea>
 					<button id="send" data-display="inline-block">发送</button>
 					<button id="stop" data-display="inline-block" style="display:none">停止</button>
@@ -1443,6 +1484,8 @@
 	const dot = $('dot'), text = $('text'), thumbs = $('thumbs'), fileInput = $('file'), fileAnyInput = $('fileAny')
 	const sendBtn = $('send'), stopBtn = $('stop'), banner = $('banner'), heading = $('heading')
 	const compose = $('compose')
+	/** 「当前模型」那一行（2.6.0）—— 它是**任务页**的东西，见 switchTab 里的取舍 ✓。 */
+	const modelRow = $('modelRow')
 
 	const views = { task: $('view-task'), bill: $('view-bill') }
 	const sheet = $('view-new')
@@ -1832,6 +1875,11 @@
 		// ⚠️ 连接**断了**就不再走表 ✓（冷视角复查：SSE 断在 `turn/end` 之前时，`state.running`
 		// 会一直停在 true，于是一个早已失联的回合能"跑"到天荒地老 ✗ —— 那种情况下
 		// 我们**根本不知道**它还在不在跑，所以如实收起来 ✓）。链路恢复后 turn/end 一到就正常收尾 ✓。
+		/*
+		 * **只在任务页显示** ✓（用户 2026-10-12 报的：切到余额页还挂着"已跑多久" ✗ ——
+		 * 和「当前模型」那一行同一个毛病 ✓）。计时状态照常维护 ✓（回到任务页立刻就是对的 ✓）。
+		 */
+		const visible = state.tab === 'task'
 		const busy = state.running === true && state.link !== 'down'
 		if (busy === true && run.timer === 0) run.timer = setInterval(() => renderRun(), 1000)
 		if (busy !== true && run.timer !== 0) { clearInterval(run.timer); run.timer = 0 }
@@ -1848,7 +1896,7 @@
 		if (entry !== null && entry !== undefined && entry.usage !== null && entry.usage !== undefined) {
 			parts.push('本会话累计 ↑' + fmtTok(entry.usage.input) + ' ↓' + fmtTok(entry.usage.output))
 		}
-		if (parts.length === 0) { box.textContent = ''; hide(box); return }
+		if (parts.length === 0 || visible !== true) { box.textContent = parts.length === 0 ? '' : box.textContent; hide(box); return }
 		box.textContent = parts.join('   ·   ')
 		show(box)
 	}
@@ -1894,14 +1942,36 @@
 		}, 60000)
 	}
 
-	/** 把宿主报的一段 usage 并进"这一轮"的账 ✓（字段名照宿主 ✓：inputTokens / outputTokens / cache*）。 */
-	function addRunUsage(usage) {
+	/**
+	 * 把宿主报的一段 usage 并进"这一轮"的账 ✓（字段名照宿主 ✓：inputTokens / outputTokens / cache*）。
+	 *
+	 * ⚠️ **照抄宿主的口径：同一 `(turn, step)` 只算一次** ✓（token-meter 的 fold 就是这么做的 ✓）——
+	 * 同一条事件在手机上**可能被送到两次**（SSE 推一遍、`since=` 补拉又重叠一遍 ✓），
+	 * 直接相加就会虚高 ✗。所以：同一个 (turn, step) 再来一条，就把上一次那一条**撤掉**再记新的 ✓。
+	 * （真数据核对：80 份会话日志、3104 个 (turn,step) 样本里**一个重复都没有** ✓ ——
+	 *   多 step 的一轮就是"每 step 一条"✓，但重复送达是客户端才有的风险 ✓。）
+	 */
+	function addRunUsage(usage, turn, step) {
 		if (usage === null || usage === undefined || typeof usage !== 'object') return
-		const current = run.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-		current.input += Number(usage.inputTokens ?? 0) || 0
-		current.output += Number(usage.outputTokens ?? 0) || 0
-		current.cacheRead += Number(usage.cacheReadTokens ?? 0) || 0
-		current.cacheWrite += Number(usage.cacheWriteTokens ?? 0) || 0
+		const current = run.usage ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastKey: '', last: null }
+		const buckets = {
+			input: Number(usage.inputTokens ?? 0) || 0,
+			output: Number(usage.outputTokens ?? 0) || 0,
+			cacheRead: Number(usage.cacheReadTokens ?? 0) || 0,
+			cacheWrite: Number(usage.cacheWriteTokens ?? 0) || 0,
+		}
+		const key = `${turn ?? ''}/${step ?? ''}`
+		if (key !== '/' && current.lastKey === key && current.last !== null) {
+			current.input -= current.last.input
+			current.output -= current.last.output
+			current.cacheRead -= current.last.cacheRead
+			current.cacheWrite -= current.last.cacheWrite
+		}
+		current.input += buckets.input
+		current.output += buckets.output
+		current.cacheRead += buckets.cacheRead
+		current.cacheWrite += buckets.cacheWrite
+		if (key !== '/') { current.lastKey = key; current.last = buckets }
 		run.usage = current
 		if (state.replay !== true) renderRun()
 	}
@@ -2237,6 +2307,16 @@
 		}
 		for (const button of tabButtons) button.classList.toggle('active', button.dataset.tab === name)
 		heading.textContent = HEADINGS[name] || 'DSH 手机端'
+		/*
+		 * ⚠️ **顶栏那两样是"任务页"的东西，别跟着去别的页** ✗（用户 2026-10-12 报：
+		 * "切换到余额界面时还有模型显示"）。
+		 *   · 「当前模型」= **当前那个会话**的模型 + 切换器 ✓ —— 余额页跟它没关系 ✓；
+		 *   · 「已跑 X:XX / 本轮 token」（2.8.0 ★12）同理：它是某个会话在跑的时候才有意义的 ✓。
+		 * 所以在这里统一按页签收放（`display` 用 CSS 里那套：`#modelRow` 是 flex ✓、
+		 * `#runstrip` 由 `show/hide` 按 `data-display` 给 ✓）。
+		 */
+		if (modelRow !== null) modelRow.style.display = name === 'task' ? 'flex' : 'none'
+		renderRun()
 		if (name === 'bill') loadBalance(false)
 		if (name === 'task') requestAnimationFrame(() => { if (state.stick) log.scrollTop = log.scrollHeight })
 	}
@@ -3117,7 +3197,8 @@
 				state.live = null
 				state.reasoning = null
 				// 2.8.0 ★12：宿主报的 token 用量就在这条消息上（`data.usage` ✓）—— 累进"这一轮" ✓。
-				if (data.usage !== undefined) addRunUsage(data.usage)
+				// 带上 (turn, step)：同一步被送到两次时按宿主口径**替换**而不是相加 ✓（见 addRunUsage）。
+				if (data.usage !== undefined) addRunUsage(data.usage, data.turn, data.step)
 				const message = data.message || {}
 				const { reasoning, rest } = splitAssistant(message.content)
 				const last = state.items[state.items.length - 1]
@@ -6498,6 +6579,175 @@
 			}
 		})()
 	})
+
+	/* --------- 备份 / 迁移（2.9.0 ★3「换手机不丢」）--------- */
+	/*
+	 * 用户要的：「一键导出/导入桥的配置 + 本地数据（置顶/常用/审批记录 ✓）；换手机或重装 PWA 后能还原 ✓」。
+	 *
+	 * **范围定在这儿（这一版最要紧的判断 ✓）**：只备份**这台手机上的**东西 ✓ ——
+	 *   · 电脑那边的设置（PIN、端口、隧道）**不用备份** ✓：换手机、重装 PWA、清站点数据都不会动到它 ✓；
+	 *   · 审批记录在**电脑上**（`~/.dsh/mobile-bridge.approvals.jsonl` ✓）、诊断包也能一键下 ✓ ——
+	 *     它们不在这台手机的 localStorage 里 ✗，硬塞进来只会让备份文件里混着别人的东西 ✓（所以不做 ✓）。
+	 * 两条**故意排除** ✓：
+	 *   · `dshm.canonical` / `dshm.addresses` —— 里面**带密钥段** ✗✗：备份文件是要发给自己/存网盘的 ✓，
+	 *     把访问密钥抄进去等于给文件本身配了一把钥匙 ✓（而且这两个值每次连上都会由桥重新发一份 ✓，
+	 *     导出它没有任何收益 ✓）；
+	 *   · `dshm.outbox` —— 离线待发消息 ✗：恢复一份**几天前**的备份会静默把过时的消息发出去 ✓，
+	 *     那种"自己动起来"的行为不该藏在"恢复备份"后面 ✓。
+	 * 恢复时**只认白名单里的键** ✓、只收字符串 ✓、有大小上限 ✓ —— 备份文件是外部输入 ✓。
+	 */
+	const BACKUP_MARK = 'dsh-plugin-mobile-bridge/phone-backup'
+	const BACKUP_VERSION = 1
+	/** 白名单**同时**是导出与导入的边界 ✓（两个方向用同一份，才不会有"导得出、导不回"✗）。 */
+	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools']
+	const BACKUP_MAX_BYTES = 512 * 1024
+	const BACKUP_MAX_VALUE = 200 * 1024
+
+	function buildBackup() {
+		const data = {}
+		for (const key of BACKUP_KEYS) {
+			const value = readLocal(key)
+			if (typeof value === 'string' && value !== '') data[key] = value
+		}
+		return {
+			mark: BACKUP_MARK,
+			version: BACKUP_VERSION,
+			exportedAt: new Date().toISOString(),
+			note: '手机桥的手机端设置备份（不含网址密钥段，也不含离线待发消息）',
+			data,
+		}
+	}
+
+	/** 导出的文件直接走 `data:` URL ✓ —— 不用 `URL.createObjectURL`（那个在部分环境里没有 ✓）。 */
+	function refreshBackupLink() {
+		const link = $('backupGo')
+		if (link === null) return
+		let href = 'data:application/json;charset=utf-8,%7B%7D'
+		try {
+			href = 'data:application/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(buildBackup(), null, 1))
+		} catch { /* 存不下/读不到就导一份空的：恢复时会说"里面没有可恢复的项" ✓ 不假装成功 ✗ */ }
+		link.setAttribute('href', href)
+		const stamp = new Date().toISOString().slice(0, 10)
+		link.setAttribute('download', `手机桥-手机端设置-${stamp}.json`)
+	}
+
+	/**
+	 * 恢复一份备份文本。返回 `{ ok, restored, skipped, error }` —— 调用方据此说人话 ✓。
+	 * **外部输入**：解析失败、格式不对、键不在白名单、值不是字符串、超长 —— 一律拒 ✓。
+	 */
+	function applyBackup(text) {
+		const raw = String(text ?? '')
+		if (raw.length > BACKUP_MAX_BYTES) return { ok: false, restored: 0, skipped: 0, error: '这个文件太大了（超过 512 KB），不像手机桥的备份' }
+		let parsed = null
+		try { parsed = JSON.parse(raw) } catch { return { ok: false, restored: 0, skipped: 0, error: '这不是一个 JSON 文件（或者内容坏了）' } }
+		if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed) === true) {
+			return { ok: false, restored: 0, skipped: 0, error: '这不是手机桥的备份文件' }
+		}
+		if (parsed.mark !== BACKUP_MARK) return { ok: false, restored: 0, skipped: 0, error: '这不是手机桥的备份文件（里面没有备份标记）' }
+		if (Number(parsed.version) > BACKUP_VERSION) {
+			return { ok: false, restored: 0, skipped: 0, error: '这份备份是更新版本的手机桥导出的 —— 先升级再恢复' }
+		}
+		const data = parsed.data
+		if (data === null || typeof data !== 'object' || Array.isArray(data) === true) {
+			return { ok: false, restored: 0, skipped: 0, error: '备份里没有可恢复的数据' }
+		}
+		let restored = 0
+		let skipped = 0
+		for (const key of Object.keys(data)) {
+			if (BACKUP_KEYS.includes(key) === false) { skipped += 1; continue }   // 白名单外一律不看 ✓
+			const value = data[key]
+			if (typeof value !== 'string' || value.length > BACKUP_MAX_VALUE) { skipped += 1; continue }
+			if (value === '') { writeLocal(key, ''); restored += 1; continue }
+			try { writeLocal(key, value); restored += 1 } catch { skipped += 1 }
+		}
+		if (restored === 0) return { ok: false, restored: 0, skipped, error: '没有可恢复的项（这个文件里没有手机端设置）' }
+		/*
+		 * 恢复完**就地生效**：置顶/常用/只看不发都是"每次用的时候现读 localStorage" ✓ →
+		 * 重画一次就生效 ✓。**上次的会话/模型**要重新连才生效 ✓ —— 如实说，不假装全都立刻好了 ✗。
+		 */
+		try { setReadOnly(readLocal('dshm.readonly') === '1', false) } catch { /* 恢复时读不出来就保持现状 ✓ */ }
+		renderSessBar()
+		return { ok: true, restored, skipped, error: '' }
+	}
+
+	function openBackup() {
+		refreshBackupLink()
+		setDelText('backupNote', '')
+		show($('backupopen'))
+	}
+
+	/** 选完文件：读文本 → 恢复 → 说清恢复了几项、跳过了几项 ✓。 */
+	function importBackupFile(file) {
+		if (file === null || file === undefined) return
+		const finish = (text) => {
+			const result = applyBackup(text)
+			if (result.ok !== true) { setDelText('backupNote', '没恢复：' + result.error); return }
+			const skipped = result.skipped > 0 ? `，跳过了 ${result.skipped} 项不认识的` : ''
+			setDelText('backupNote', `已恢复 ${result.restored} 项${skipped} ✓ —— 置顶 / 常用 / 只看不发已经生效；`
+				+ '上次的会话与模型要刷新一次页面才生效 ✓。')
+			toast(`已恢复 ${result.restored} 项手机端设置 ✓`, 3200)
+		}
+		// 先按"文本读"来（FileReader 在手机上各浏览器都有 ✓；`file.text()` 老 Safari 没有 ✗）。
+		try {
+			const reader = new FileReader()
+			reader.onload = () => finish(String(reader.result ?? ''))
+			reader.onerror = () => setDelText('backupNote', '读不到这个文件（权限或格式？）')
+			reader.readAsText(file)
+		} catch {
+			if (typeof file.text === 'function') { file.text().then(finish).catch(() => setDelText('backupNote', '读不到这个文件')) ; return }
+			setDelText('backupNote', '这个浏览器读不了文件 —— 换一个浏览器试试')
+		}
+	}
+
+	$('backupOpen').addEventListener('click', () => { openBackup() })
+	$('backupBack').addEventListener('click', () => hide($('backupopen')))
+	$('backupGo').addEventListener('click', () => { refreshBackupLink() })
+	$('backupPick').addEventListener('click', () => { const input = $('backupFile'); if (input !== null) input.click() })
+	$('backupFile').addEventListener('change', (event) => {
+		const input = event.target
+		const file = input?.files?.[0] ?? null
+		importBackupFile(file)
+		try { if (input !== null) input.value = '' } catch { /* 清不掉就算了 */ }
+	})
+
+	/* --------- 收起工具键（2026-10-12 用户：「底下功能栏太多了挡住视线」）--------- */
+	/*
+	 * 现场：任务页底部一共三样 —— **13 个工具键（两行）+ 输入行 + 页签栏** ✓，
+	 * 在小屏手机上差不多吃掉四分之一屏 ✗（用户原话："挡住视线"）。
+	 *
+	 * 做法（刻意的取舍 ✓）：
+	 *   · 收起的**只有工具键那一排** ✓ —— 输入框、发送、页签栏、附件缩略图**一个都不藏** ✗
+	 *     （把"写消息"也藏起来就本末倒置了 ✓）；
+	 *   · 开关放**输入行最左边**（`⋯`）✓：工具键收起来后开关**还在原地** ✓
+	 *     （放进被收起的那排 = 用户再也找不到 ✗）；
+	 *   · 状态记在 `localStorage`（`dshm.tools` ✓）—— 刷新、切回 App 都记得 ✓，
+	 *     也就是"出门看进度时收起一次，之后一直是清爽的" ✓（和「只看不发」同一条思路 ✓）。
+	 */
+	const toolsFolded = () => readLocal('dshm.tools') === '1'
+
+	function renderTools() {
+		const folded = toolsFolded()
+		const row = $('tools')
+		if (row !== null) row.style.display = folded ? 'none' : 'flex'
+		const button = $('toolsToggle')
+		if (button !== null) {
+			button.textContent = folded ? '⋯' : '⌄'
+			button.className = folded ? 'folded' : ''
+			button.title = folded
+				? '工具键已收起（图片/权限/状态盘/自检…都在这儿）—— 点一下展开 ✓'
+				: '点一下收起工具键，多看几行对话（刷新也记得 ✓）'
+		}
+	}
+
+	function setToolsFolded(folded) {
+		writeLocal('dshm.tools', folded ? '1' : '')
+		renderTools()
+		// 说一句就走 ✓（收起时用户会看到那排键突然消失，得知道它去哪了 ✓）。
+		toast(folded ? '工具键已收起（点 ⋯ 展开）✓' : '工具键展开了 ✓', 2200)
+	}
+
+	$('toolsToggle').addEventListener('click', () => { setToolsFolded(toolsFolded() !== true) })
+	renderTools()
 
 	/* --------- 只看不发（2.7.0 ★7）--------- */
 	/*

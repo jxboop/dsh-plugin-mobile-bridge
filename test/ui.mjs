@@ -4116,6 +4116,29 @@ await wait(40)
 	check('跑完留一句"这一轮用了多久 + 烧了多少"（60 秒后自己收走 ✓）',
 		done.includes('✓ 这一轮') && done.includes('本轮 ↑9.2k ↓340'), done.slice(0, 90))
 
+	/*
+	 * ③b 同一条 usage **被送到两次**（SSE 推一遍 + `since=` 补拉重叠一遍 ✓）：
+	 *     必须按宿主口径**替换**、不许相加 ✓ —— 真数据核对过"日志里没有重复的 (turn,step)"✓，
+	 *     但"重复送达"是客户端才有的风险 ✓，虚高一倍会直接骗到用户 ✗。
+	 */
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 303, time: Date.now() - 5000, data: { turn: 10 } } })
+	source.emit({ t: 'event', event: { type: 'assistant/message', seq: 304, time: Date.now(), data: {
+		turn: 10, step: 1, usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 },
+		message: { id: 'm10', role: 'assistant', content: [{ type: 'text', text: 'A' }] },
+	} } })
+	await wait(120)
+	const once = ($('runstrip')?.textContent ?? '')
+	source.emit({ t: 'event', event: { type: 'assistant/message', seq: 304, time: Date.now(), data: {
+		turn: 10, step: 1, usage: { inputTokens: 1000, outputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0 },
+		message: { id: 'm10', role: 'assistant', content: [{ type: 'text', text: 'A' }] },
+	} } })
+	await wait(140)
+	const twice = ($('runstrip')?.textContent ?? '')
+	check('同一步的 usage 被送两次：**替换**而不是相加 ✓（加起来会虚高一倍 ✗ —— 照宿主 token-meter 的口径 ✓）',
+		once.includes('本轮 ↑1.0k ↓100') && twice.includes('本轮 ↑1.0k ↓100'), `一次=${once.slice(0, 40)} 两次=${twice.slice(0, 40)}`)
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 305, time: Date.now(), data: { turn: 10, reason: { kind: 'completed' } } } })
+	await wait(120)
+
 	// ③ 重放：把"一小时前跑完的那一轮"整段推回来 → **不许**弹成"刚才跑过" ✗。
 	source.emit({ t: 'snapshot', tag: PAGE_TAG, cursor: 302, hasMore: false, records: [
 		{ type: 'event', event: { type: 'turn/start', seq: 400, time: Date.now() - 3600000, data: { turn: 11 } } },
@@ -4147,6 +4170,147 @@ await wait(40)
 	const replaying = ($('runstrip')?.textContent ?? '')
 	check('刷新时那一轮**还在跑**：照常显示"已跑 2:0X" ✓（起点用重放回来的事件时间，不是刷新那一刻 ✗）',
 		/已跑 2:0\d/.test(replaying) && replaying.includes('本轮 ↑2.0k ↓512'), replaying.slice(0, 90))
+}
+
+/* --- 2026-10-12：顶栏随页签收放 + 工具键可收起（用户当天报的两条）------------- */
+/*
+ * 用户原话：①「切换到余额界面时还有模型显示」②「底下功能栏太多了挡住视线，你加一个折叠功能」。
+ * 两条都是"**这个控件属于哪一页**"的问题 ✓：
+ *   · 「当前模型」+「已跑 X:XX」（★12）是**任务页**的东西 ✓ —— 切到余额不该跟着走 ✗；
+ *   · 底部那排 13 个工具键占掉小屏的四分之一 ✗ —— 要能收起来，但**输入框/发送/页签栏/附件
+ *     一个都不许藏** ✓（把"写消息"也藏了就是本末倒置 ✓），开关自己必须一直看得见 ✓。
+ */
+{
+	// ① 切到「余额」：模型那一行 + 耗时条都收起来 ✓（#12 那条此刻正在跑 ✓，正好当反例 ✓）。
+	const before = ($('runstrip')?.textContent ?? '')
+	check('（前置）任务页上「已跑…」那条是显示着的（后面切页才有对照 ✓）',
+		window.getComputedStyle($('runstrip')).display !== 'none' && before.includes('已跑'),
+		`display=${window.getComputedStyle($('runstrip')).display} text=${before.slice(0, 30)}`)
+	click(window.document.querySelector('#tabs button[data-tab="bill"]'))
+	await wait(200)
+	check('切到「余额」：**当前模型那一行收起来了** ✓（用户报的那条）',
+		window.getComputedStyle($('modelRow')).display === 'none',
+		`modelRow display=${window.getComputedStyle($('modelRow')).display}`)
+	check('切到「余额」：**「已跑 X:XX」也收起来了** ✓（同一个毛病，顺手一起修 ✓）',
+		window.getComputedStyle($('runstrip')).display === 'none',
+		`runstrip display=${window.getComputedStyle($('runstrip')).display}`)
+	check('余额页本身照旧在（收顶栏不等于把页面弄坏了 ✓）',
+		window.getComputedStyle($('view-bill')).display !== 'none')
+	click(window.document.querySelector('#tabs button[data-tab="task"]'))
+	await wait(160)
+	check('切回「任务」：两样都回来了 ✓（模型行 + 耗时条）',
+		window.getComputedStyle($('modelRow')).display !== 'none'
+		&& window.getComputedStyle($('runstrip')).display !== 'none',
+		`modelRow=${window.getComputedStyle($('modelRow')).display} runstrip=${window.getComputedStyle($('runstrip')).display}`)
+
+	// ② 工具键折叠：默认展开 → 点 ⋯ 收起 → 输入框/发送/附件缩略图都还在 → 再点展开 ✓。
+	check('（前置）工具键默认是展开的（不改老用户的习惯 ✓）',
+		window.getComputedStyle($('tools')).display !== 'none'
+		&& window.localStorage.getItem('dshm.tools') !== '1',
+		`tools=${window.getComputedStyle($('tools')).display} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+	click($('toolsToggle'))
+	await wait(140)
+	check('点 ⋯：13 个工具键那一排收起来了 ✓，而**输入框 / 发送一个都没藏** ✓',
+		window.getComputedStyle($('tools')).display === 'none'
+		&& window.getComputedStyle($('compose')).display !== 'none'
+		&& window.getComputedStyle($('text')).display !== 'none'
+		&& window.getComputedStyle($('send')).display !== 'none',
+		`tools=${window.getComputedStyle($('tools')).display} compose=${window.getComputedStyle($('compose')).display} text=${window.getComputedStyle($('text')).display} send=${window.getComputedStyle($('send')).display}`)
+	check('收起后**开关自己还在原地看得见** ✓（藏进被收起的那排 = 用户再也找不到 ✗）',
+		window.getComputedStyle($('toolsToggle')).display !== 'none')
+	check('收起状态记在手机本地（`dshm.tools=1` ✓ —— 刷新/切回 App 都记得 ✓）',
+		window.localStorage.getItem('dshm.tools') === '1',
+		String(window.localStorage.getItem('dshm.tools')))
+	check('收起时有话说（"工具键已收起（点 ⋯ 展开）" ✓ —— 那排键突然消失得有个交代 ✓）',
+		String($('toast')?.textContent ?? '').includes('工具键已收起'), String($('toast')?.textContent ?? '').slice(0, 40))
+	click($('toolsToggle'))
+	await wait(140)
+	check('再点 ⋯：工具键回来了 ✓、标记也清掉了 ✓',
+		window.getComputedStyle($('tools')).display !== 'none'
+		&& window.localStorage.getItem('dshm.tools') !== '1',
+		`tools=${window.getComputedStyle($('tools')).display} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+}
+
+/* --- 2.9.0 ★3：备份 / 换手机（导出与导入）----------------------------------- */
+/*
+ * 用户要的：「一键导出/导入桥的配置 + 本地数据；换手机或重装 PWA 后能还原 ✓」。
+ * 这一版把它**收口在"这台手机上的设置"** ✓ —— 三条要钉住：
+ *   ① 导出的是**手机端设置** ✓（置顶/常用/频率/模型/会话/只看不发/收起工具键）；
+ *   ② **网址里的密钥段与离线待发消息绝不进备份文件** ✓✗（文件是要传来传去的 ✓）；
+ *   ③ 导入**只认白名单** ✓，坏文件必须当场说清"没恢复"✗（不许半还原、也不许假装成功 ✓）。
+ */
+{
+	// 先往 localStorage 里放两样"**必须不被带走**"的东西（真机上它们分别带着密钥段与待发消息 ✓）。
+	window.localStorage.setItem('dshm.canonical', 'https://example.ts.net/0123456789abcdef/')
+	window.localStorage.setItem('dshm.addresses', JSON.stringify([{ url: 'https://example.ts.net/0123456789abcdef/' }]))
+	window.localStorage.setItem('dshm.outbox', JSON.stringify([{ clientId: 'c1', text: '过时的待发消息' }]))
+	window.localStorage.setItem('dshm.pins', JSON.stringify(['session-ui-test']))
+
+	click($('checkBtn'))
+	await wait(160)
+	click($('backupOpen'))
+	await wait(160)
+	check('🩺 纸里有「💾 备份 / 换手机」入口，点了开一张纸 ✓（写清备份的是**手机上的**设置 ✓）',
+		window.getComputedStyle($('backupopen')).display !== 'none'
+		&& String($('backupopen')?.textContent ?? '').includes('这台手机上的设置'),
+		String($('backupopen')?.textContent ?? '').slice(0, 50))
+
+	// ① + ② 导出：href 是一份 data: JSON —— 解出来看内容 ✓（不点它：jsdom 会把点击当成导航 ✗）。
+	const href = String($('backupGo')?.getAttribute('href') ?? '')
+	check('导出链接是一份 `data:` JSON（不用 `URL.createObjectURL` —— 部分环境里没有它 ✓）',
+		href.startsWith('data:application/json'), href.slice(0, 40))
+	let dump = null
+	try { dump = JSON.parse(decodeURIComponent(href.slice(href.indexOf(',') + 1))) } catch { dump = null }
+	check('导出的内容认得出是手机桥的备份（带标记 + 版本 + 时间 ✓）',
+		dump !== null && String(dump.mark).includes('phone-backup') && Number(dump.version) >= 1
+		&& typeof dump.exportedAt === 'string', JSON.stringify(dump ?? null).slice(0, 80))
+	check('导出带上了手机端设置（置顶那类 ✓）',
+		dump?.data?.['dshm.pins'] !== undefined, JSON.stringify(Object.keys(dump?.data ?? {})))
+	check('**网址里的密钥段不进备份** ✗✗（文件是要发给自己/存网盘的 ✓）',
+		Object.keys(dump?.data ?? {}).includes('dshm.canonical') === false
+		&& Object.keys(dump?.data ?? {}).includes('dshm.addresses') === false
+		&& href.includes('0123456789abcdef') === false)
+	check('**离线待发消息也不进备份** ✗（恢复旧备份不该替你发出过时的话 ✓）',
+		Object.keys(dump?.data ?? {}).includes('dshm.outbox') === false && href.includes('过时的待发消息') === false)
+
+	// ③ 导入：坏文件 → 当场说清"没恢复" ✓，而且**一点都没动** localStorage ✓。
+	const bogus = new window.File(['这不是 json'], 'bogus.json', { type: 'application/json' })
+	const input = $('backupFile')
+	Object.defineProperty(input, 'files', { value: [bogus], configurable: true })
+	input.dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(220)
+	check('导入坏文件：说清"没恢复" ✓，而且**旧设置一点没动** ✓（不许半还原 ✗）',
+		String($('backupNote')?.textContent ?? '').includes('没恢复')
+		&& window.localStorage.getItem('dshm.pins') === JSON.stringify(['session-ui-test']),
+		String($('backupNote')?.textContent ?? '').slice(0, 50))
+
+	// ③ 导入：白名单外的键**不许写进去** ✓；白名单内的照常恢复 ✓。
+	const payload = JSON.stringify({
+		mark: 'dsh-plugin-mobile-bridge/phone-backup', version: 1, exportedAt: new Date().toISOString(),
+		data: { 'dshm.pins': JSON.stringify(['session-older']), 'dshm.readonly': '1', 'dshm.evil': 'x' },
+	})
+	const good = new window.File([payload], 'backup.json', { type: 'application/json' })
+	Object.defineProperty(input, 'files', { value: [good], configurable: true })
+	input.dispatchEvent(new window.Event('change', { bubbles: true }))
+	await wait(260)
+	check('导入真备份：恢复白名单里的项 ✓、跳过快照里多出来的键 ✓、并说清恢复了几项 ✓',
+		window.localStorage.getItem('dshm.pins') === JSON.stringify(['session-older'])
+		&& window.localStorage.getItem('dshm.evil') === null
+		&& String($('backupNote')?.textContent ?? '').includes('已恢复 2 项')
+		&& String($('backupNote')?.textContent ?? '').includes('跳过了 1 项'),
+		`pins=${window.localStorage.getItem('dshm.pins')} evil=${window.localStorage.getItem('dshm.evil')} note="${String($('backupNote')?.textContent ?? '').slice(0, 60)}"`)
+	check('恢复"只看不发"是**单向安全**的：备份里锁着就恢复成锁着 ✓（并当场生效 ✓）',
+		window.localStorage.getItem('dshm.readonly') === '1'
+		&& window.getComputedStyle($('roStrip')).display !== 'none'
+		&& $('send').disabled === true,
+		`readonly=${window.localStorage.getItem('dshm.readonly')} strip=${window.getComputedStyle($('roStrip')).display} send.disabled=${$('send').disabled}`)
+	// 收尾：把这台"手机"恢复成能发消息的状态（后面的用例还要用 ✓）。
+	click($('roBtn'))
+	await wait(120)
+	click($('backupBack'))
+	await wait(80)
+	click($('checkBack'))
+	await wait(80)
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */
