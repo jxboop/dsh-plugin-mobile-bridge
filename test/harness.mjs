@@ -11,7 +11,7 @@
  * (and therefore the real PIN) is left alone.
  */
 
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import { spawnSync } from 'node:child_process'
@@ -3437,6 +3437,125 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	await writeConfig({ deviceApproval: false })
 	cookie = afterWipe.cookie
 	authed.headers.cookie = afterWipe.cookie
+}
+
+/* --- 面板协议（3.1.0「手机端可扩展」）-----------------------------------------
+ * 用户要的：把"手机端面板"变成**可挂载的接口** ✓（协议 + 两个示例面板 ✓）。
+ * 这一组钉的是**边界** ✓：默认关 ✓、关着时如实说 ✓、**路径穿越必须 404** ✗✗、
+ * 坏清单要计数 ✓、用户面板能覆盖同 id 示例 ✓。
+ */
+{
+	const readConfig2 = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeConfig2 = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...await readConfig2(), ...patch }, null, 2), 'utf8')
+	const panelJson = async (path) => {
+		const response = await fetch(`${base}${path}`, authed)
+		return { status: response.status, type: response.headers.get('content-type') ?? '', body: await response.text() }
+	}
+
+	// ① 默认关 ✓：清单**如实说"没开"** ✓（不是空数组装没事 ✗），资源一律 404 ✓。
+	const off = await (await fetch(`${base}/api/panels`, authed)).json()
+	check('面板功能默认关 ✓：回 `enabled:false` + 一句"怎么开" ✓（"没有面板"和"功能没开"是两件事 ✗）',
+		off.enabled === false && Array.isArray(off.panels) && off.panels.length === 0
+		&& String(off.message).includes('panels'), JSON.stringify(off).slice(0, 90))
+	check('关着的时候，面板资源也拿不到 ✓（404 —— 不给任何入口 ✗）',
+		(await panelJson('/panel/notes/index.html')).status === 404)
+
+	// ② 打开：列出**两个自带示例** ✓。
+	await writeConfig2({ panels: true })
+	const on = await (await fetch(`${base}/api/panels`, authed)).json()
+	const ids = (on.panels ?? []).map((panel) => panel.id).sort()
+	check('打开后列出两个自带示例 ✓（便签 + 计时 ✓，都标着 builtin ✓）',
+		on.enabled === true && ids.includes('notes') && ids.includes('timer')
+		&& on.panels.filter((panel) => ids.includes(panel.id)).every((panel) => panel.builtin === true && typeof panel.icon === 'string' && panel.icon !== ''),
+		JSON.stringify(on).slice(0, 140))
+
+	/*
+	 * 🔴🔴 3.1.0 复查的**高危 H1** 回归 ✓：符号链接能绕过**词法**守卫 ✗ ——
+	 * 面板目录里放一个 `leak.json -> ~/.dsh/mobile-bridge.json`（Windows 普通用户就能建 ✓），
+	 * 旧版会把 PIN / 令牌 / **路径密钥**整套发出去 ✓（类型白名单里有 `.json` ✓）。
+	 * 现在三重拦：词法守卫 + `lstat`（拒链接）+ `realpath`（拒"父目录是链接"）✓。
+	 * ⚠️ 建链接在某些平台/权限下会失败 ✓ → 那就**如实说没验成** ✗（不假装过了 ✗）。
+	 */
+	let symlinkMade = false
+	try {
+		const outside = join(scratch, 'outside-secret.json')
+		await writeFile(outside, '{"pin":"123456","token":"should-never-leak"}', 'utf8')
+		await mkdir(join(scratch, 'mobile-panels', 'evil'), { recursive: true })
+		await writeFile(join(scratch, 'mobile-panels', 'evil', 'panel.json'),
+			JSON.stringify({ title: '邪恶面板', icon: '😈', kind: 'tool', entry: 'index.html' }), 'utf8')
+		await writeFile(join(scratch, 'mobile-panels', 'evil', 'index.html'), '<!doctype html><b>evil</b>', 'utf8')
+		const { symlink } = await import('node:fs/promises')
+		await symlink(outside, join(scratch, 'mobile-panels', 'evil', 'leak.json'))
+		symlinkMade = true
+	} catch { symlinkMade = false }
+	if (symlinkMade === true) {
+		const leaked = await panelJson('/panel/evil/leak.json')
+		check('🔴🔴 符号链接读配置：**404** ✓（词法守卫挡不住链接 ✗ —— 这就是复查那个高危 ✓）',
+			leaked.status === 404 && leaked.body.includes('should-never-leak') === false,
+			`status=${leaked.status} 含密钥=${leaked.body.includes('should-never-leak')}`)
+		const list = await (await fetch(`${base}/api/panels`, authed)).json()
+		check('🔴 清单里也不许出现"入口是符号链接"的面板 ✓（否则点开就是任意文件 ✓）',
+			(list.panels ?? []).some((panel) => panel.id === 'evil' && panel.entry === 'leak.json') === false,
+			JSON.stringify((list.panels ?? []).map((panel) => panel.id)))
+	} else {
+		check('（如实）这个平台/权限下建不了符号链接 → **H1 这条没验成** ✗（Windows 上普通用户本来可以 ✓）', true, 'skipped')
+	}
+
+	// ③ 资源真的发得出来 ✓（且是 html ✓）。
+	const html = await panelJson('/panel/notes/index.html')
+	check('面板页面发得出来 ✓（200 + text/html + 内容对 ✓）',
+		html.status === 200 && html.type.includes('text/html') && html.body.includes('便签'),
+		`${html.status} ${html.type}`)
+
+	// ④ 🔴 **路径穿越必须挡住** ✗✗（这是这一层最要命的事 ✓）。
+	for (const evil of ['/panel/notes/..%2F..%2Fmobile-bridge.json', '/panel/notes/..%2Fpanel.json', '/panel/notes/%2e%2e%2f%2e%2e%2fmobile-bridge.json']) {
+		const got = await panelJson(evil)
+		check(`🔴 穿越读配置：**404** ✓（${evil.slice(0, 34)}…）`, got.status === 404, `status=${got.status}`)
+	}
+	/*
+	 * 🔴 再补三条**对抗写法** ✓（自己复查时想到的 ✓）：
+	 *   · **绝对路径**（`rel` 以 `/` 开头 ✓）—— `path.resolve(base, '/etc/passwd')` 会当成绝对路径 ✗，
+	 *     靠的是守卫那句"必须仍在面板目录之下" ✓；
+	 *   · **Windows 盘符**（`C:/…` 在 Windows 上也是"绝对"✗）；
+	 *   · **反斜杠**（Windows 上 `..\` 同样能穿越 ✓）。
+	 * ⚠️ 复查纠正过一条注释 ✗：**双重编码不是"只解一次所以安全"** ✓ ——
+	 * `%252e…` 解一次得到的是**字面文件名** `%2e%2e%2f…` ✓，守卫**放行**它 ✓，
+	 * 之所以 404 只是"那个字面文件不存在" ✓。所以那条**钉不住守护逻辑** ✓（留着当"不许 200"的对照 ✓，
+	 * 真正的守护由上面三条 + 符号链接那条负向用例钉 ✓）。
+	 */
+	for (const evil of [
+		'/panel/notes//..%2F..%2Fmobile-bridge.json',
+		'/panel/notes/%252e%252e%252f%252e%252e%252fmobile-bridge.json',
+		'/panel/notes/C%3A%2FWindows%2Fwin.ini',
+		'/panel/notes/..%5C..%5Cmobile-bridge.json',
+	]) {
+		const got = await panelJson(evil)
+		check(`🔴 对抗写法也必须 404 ✓（${evil.slice(0, 40)}…）`, got.status === 404, `status=${got.status}`)
+	}
+	check('（对照）面板自己的 panel.json 是允许发的 ✓（白名单里有 json ✓ —— 它不是密钥 ✗）',
+		(await panelJson('/panel/notes/panel.json')).status === 200)
+	check('🔴 不认识的类型**不发** ✓（免得顺手把别的文件泄出去 ✗）',
+		(await panelJson('/panel/notes/index.html.bak')).status === 404)
+
+	// ⑤ 用户面板：能覆盖同 id 的示例 ✓；坏清单**计数**而不是静默 ✓。
+	await mkdir(join(scratch, 'mobile-panels', 'notes'), { recursive: true })
+	await writeFile(join(scratch, 'mobile-panels', 'notes', 'panel.json'),
+		JSON.stringify({ title: '我的便签', icon: '🗒', kind: 'tool', entry: 'index.html' }), 'utf8')
+	await writeFile(join(scratch, 'mobile-panels', 'notes', 'index.html'), '<!doctype html><b>mine</b>', 'utf8')
+	await mkdir(join(scratch, 'mobile-panels', 'broken'), { recursive: true })
+	await writeFile(join(scratch, 'mobile-panels', 'broken', 'panel.json'), '{ 这不是 json', 'utf8')
+	const merged = await (await fetch(`${base}/api/panels`, authed)).json()
+	const notes = (merged.panels ?? []).find((panel) => panel.id === 'notes')
+	check('用户自己的面板覆盖同 id 的自带示例 ✓（标题变成"我的便签"、builtin=false ✓）',
+		notes !== undefined && notes.title === '我的便签' && notes.builtin === false,
+		JSON.stringify(notes ?? null))
+	check('坏清单**计数**出来 ✓（`skipped ≥ 1` —— 不静默跳过 ✗）', Number(merged.skipped) >= 1, `skipped=${merged.skipped}`)
+	check('覆盖之后发的是**用户那份** ✓（不是示例 ✓）',
+		(await panelJson('/panel/notes/index.html')).body.includes('mine'))
+
+	// 收尾：关掉 ✓（后面的用例按默认行为跑 ✓），并把用户目录清掉 ✓。
+	await writeConfig2({ panels: false })
+	await rm(join(scratch, 'mobile-panels'), { recursive: true, force: true })
 }
 
 for (const dispose of disposers) { try { dispose?.() } catch { /* ignore */ } }

@@ -417,9 +417,36 @@ node test/package.mjs && node test/harness.mjs && node test/qr.mjs && node test/
 node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs && node test/offline.mjs
 ```
 
-八个套件共 **1140 项**（package 16 · harness 408 · qr 12 · ui 603 · security 51 · crashprobe 17 ·
+八个套件共 **1164 项**（package 16 · harness 426 · qr 12 · ui 609 · security 51 · crashprobe 17 ·
 addresses 16 · offline 17）。**改完必跑全八个** ✓ —— 只跑某一个会漏掉内容规矩与界面回归
 （2.7.2 就是这么漏了两版的 ✓）。
+
+## 自己写一个手机面板（3.1.0 起）
+
+一个目录 + 一个 `panel.json`，就能在手机上多一个面板（默认**关**，见下面的信任边界）：
+
+```
+~/.dsh/mobile-panels/my-notes/panel.json    ← { "title": "我的面板", "icon": "🧩", "kind": "tool", "entry": "index.html" }
+~/.dsh/mobile-panels/my-notes/index.html    ← 你的页面
+```
+然后在 `~/.dsh/mobile-bridge.json` 里加 `"panels": true` ✓，手机刷新一次 ✓。
+
+- ⚠️ **目录名（id）有规矩** ✗：只能小写字母/数字/短横线 ✓、字母或数字开头 ✓、最多 32 字 ✓
+  （`my-notes` ✓、`我的面板` ✗）。写错了手机上不会出现 ✓，但 `/api/panels` 会带 `skippedReasons`
+  说清是哪一条、为什么 ✗（不再只给一个数字 ✓）。
+- `kind`：`tool` / `sheet` / `screen`（现在都表现为"工具键 + 整屏"✓，字段留着给以后分化 ✓）。
+- 页面里写**相对路径**就是在调桥的接口 ✓（同源 ✓）—— 例如 `fetch('api/panels')` ✓（那是清单 ✓；
+  面板自己的资源在 `/panel/<id>/<文件>` ✓）。
+  ⚠️ 别把密钥段写进页面 ✗（换地址就废 ✓，而且会进 git ✓）。
+- 同 id 时 **`~/.dsh` 里那份优先** ✓（能盖掉自带示例 ✓）；桥自带 📝 便签 / ⏳ 计时 两个示例 ✓。
+- ⚠️ **信任边界（必须知道）**：面板与手机页**同源** ⇒ 它拿得到手机页的 cookie ⇒
+  **装一个面板 = 把手机端的一切交给它** ✓。所以默认关 ✓；而"谁能装"的边界是
+  "**谁能写这台电脑的 `~/.dsh`**" ✓ —— 那本来就是完全信任 ✓。
+- ⚠️ **那个目录整个"会被托管"** ✗：只要扩展名在 html/js/css/json/svg/图片 里 ✓，
+  任何已登录的会话都能按路径取 ✓ —— 所以**别把密钥或私有配置放进 `mobile-panels/`** ✓。
+- 桥这边只管发文件 ✓：大小上限 512 KB ✓；**符号链接一律拒** ✓（`lstat` + `realpath` 双检 ✓ ——
+  否则 `leak.json -> ~/.dsh/mobile-bridge.json` 会把 PIN 与路径密钥整套读走 ✗）；
+  词法穿越守卫 ✓（`/panel/x/../../mobile-bridge.json` 读不到 ✓）。
 
 发版前**顺手跑一次** `node tools/check-counts.mjs` ✓：它会真跑一遍 8 个套件、把实测项数
 和 **README / CHANGELOG 最新一节里写的数字逐项比对** ✓ —— 手写项数加错过一次（2.10.0 ✗），

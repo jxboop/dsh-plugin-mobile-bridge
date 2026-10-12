@@ -1272,6 +1272,20 @@
 		<!-- 换手机界面的背景：手机自己挑一张图 / 动图（GIF）/ 视频。
 		     以前这一步是「把文件发进会话 → 让 agent 改 mobile-bridge.json 的 backgroundFile
 		     → 重载插件」——那是开发动作，用户自己办不到。 -->
+		<!-- 3.1.0「面板协议」：外挂面板在这里打开 ✓（整屏 + iframe ✓，与手机页**同源** ✓）。
+		     ⚠️ 同源 ⇒ 面板拿得到手机页的 cookie ✓ ⇒ **装面板 = 把手机端交给它** ✓；
+		     所以整个功能**默认关** ✓（`panels: true` 才开 ✓），这句话也印在下面 ✓。 -->
+		<section class="sheet" id="panelopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="panelBack">← 返回</button>
+				<span class="title" id="panelTitle">面板</span>
+				<span class="spacer"></span>
+			</div>
+			<iframe id="panelFrame" title="面板" style="flex:1;min-height:0;width:100%;border:0;background:#0f1620"></iframe>
+			<div class="hint" id="panelNote" style="flex:none;padding:6px 12px calc(10px + env(safe-area-inset-bottom))">
+				面板是外挂进来的页面 ✓ —— 它与手机页**同源**，等于把手机端交给它 ✓（所以默认关 ✓，谁需要谁开 ✓）。
+			</div>
+		</section>
 		<section class="sheet" id="bgopen" data-display="flex" style="display:none">
 			<div class="sheetbar">
 				<button class="iconbtn" id="bgBack">← 返回</button>
@@ -8040,6 +8054,74 @@
 
 	$('toolsToggle').addEventListener('click', () => { setToolsFolded(toolsFolded() !== true) })
 	renderTools()
+
+	/* --------- 面板协议（3.1.0「手机端可扩展」）--------- */
+	/*
+	 * 协议在服务端那半 ✓（`lib/panels.js`：一个目录 + `panel.json` ✓）；手机这半只做两件事：
+	 *   · 把清单里的面板画成**工具键** ✓（运行时追加到"可收起的那一排"✓，不写死 ✗）；
+	 *   · 点开成**整屏 iframe** ✓（`panel/<id>/<entry>` 是**相对路径** ✓ —— 所以面板里写
+	 *     `api/xxx` 就是在调桥的接口 ✓，因为它和手机页同源 ✓）。
+	 * ⚠️ 信任边界**必须说给用户** ✗：同源 ⇒ 面板拿得到手机页的 cookie ✓ ⇒
+	 * **装一个面板 = 把手机端的一切交给它** ✓；所以服务端**默认关** ✓（`panels: true` ✓），
+	 * 纸上也写着这句话 ✓（`#panelNote` ✓）。
+	 */
+	const panelState = { items: [] }
+
+	function renderPanels() {
+		const row = $('toolKeys')
+		if (row === null) return
+		for (const node of Array.from(row.querySelectorAll('button[data-panel]'))) node.remove()
+		for (const panel of panelState.items) {
+			const button = document.createElement('button')
+			button.dataset.panel = String(panel.id)
+			button.textContent = String(panel.icon ?? '🧩')
+			button.title = String(panel.title ?? '面板') + (panel.builtin === true ? '（手机桥自带示例 ✓）' : '（外挂面板 ✓）')
+			button.addEventListener('click', () => { openPanel(panel) })
+			row.appendChild(button)
+		}
+	}
+
+	async function loadPanels() {
+		try {
+			const body = await api('api/panels')
+			panelState.items = Array.isArray(body?.panels) ? body.panels : []
+			/*
+			 * 关着的时候也**说一句** ✓：把服务端那句"面板功能没开（…）"留在纸上 ✓ ——
+			 * "没有面板"和"功能没开"是两件事 ✗（用户会以为坏了 ✓）。
+			 */
+			if (body?.enabled !== true && typeof body?.message === 'string' && body.message !== '') {
+				setDelText('panelNote', body.message + ' 装面板等于把手机端交给它 ✓，所以默认关 ✓。')
+			}
+		} catch (error) {
+			// 读不到就**说出来** ✓（静默吞掉的话，用户看到的是"面板没了"，而我们连一行线索都没有 ✗）。
+			panelState.items = []
+			setDelText('panelNote', '读面板清单失败：' + String(error?.message ?? error))
+		}
+		renderPanels()
+	}
+
+	function openPanel(panel) {
+		$('panelTitle').textContent = String(panel.title ?? '面板')
+		$('panelFrame').setAttribute('src', 'panel/' + encodeURIComponent(String(panel.id)) + '/' + String(panel.entry ?? 'index.html'))
+		show($('panelopen'))
+	}
+
+	$('panelBack').addEventListener('click', () => {
+		// ⚠️ 关掉就把 src 清空 ✓ —— 面板里可能有 `setInterval`（示例里的计时就是 ✓），
+		// 留在后台继续跑 = 白耗电 ✓（而用户以为已经关掉了 ✓）。
+		const frame = $('panelFrame')
+		if (frame !== null) frame.setAttribute('src', 'about:blank')
+		hide($('panelopen'))
+	})
+	/*
+	 * ⚠️ 这一次**不能直接 `void loadPanels()`** ✗ —— 立刻调用会踩 TDZ（这个项目的老熟人 ✓）：
+	 * 它走的 `api()` 读 `readOnly.on` ✓，而那个 `const` 在脚本更后面才初始化 ✓ →
+	 * `Cannot access 'readOnly' before initialization` ✓，被上面那个 catch 逮住 ✓ →
+	 * 界面上就是"面板一个都不出现" ✓（**如果 catch 是静默的，这里连线索都没有** ✗ ——
+	 * 所以那个 catch 现在会把原因写到纸上 ✓，这一次就是它一句话点破的 ✓）。
+	 * 放到下一个 tick = 脚本已经跑完 = 所有 const 都就位 ✓。
+	 */
+	setTimeout(() => { void loadPanels() }, 0)
 
 	/* --------- 收起顶栏（2026-10-12 用户：「上方栏也做一个折叠效果」）--------- */
 	/*

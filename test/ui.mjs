@@ -657,6 +657,13 @@ async function stubFetch(input, options = {}) {
 			message: '这台设备还在等放行：请在**电脑上**打开 DSH 的徽标页（或 http://127.0.0.1:<端口>/approve）点一次「放行」✓',
 		})
 	}
+	if (path.startsWith('/api/panels')) {
+		// 3.1.0 面板协议：清单里有**一个**能点的面板 ✓（`id` 用真示例的 id ✓，路径也就对得上 ✓）。
+		return jsonResponse({
+			ok: true, enabled: true, skipped: 0,
+			panels: [{ id: 'notes', title: '便签', icon: '📝', kind: 'tool', entry: 'index.html', builtin: true }],
+		})
+	}
 	if (path.startsWith('/api/speech')) {
 		// 3.0.0 ★③：`sttOffline` 切到"这台电脑没开语音"那条路 ✓（要验"如实说" ✓）。
 		if (sttOffline === true) {
@@ -5509,6 +5516,48 @@ await wait(40)
 	click($('gateBtn'))
 	await wait(320)
 	check('（收尾）恢复正常登录：`#app` 回来了 ✓', window.getComputedStyle($('app')).display !== 'none')
+}
+
+/* --- 3.1.0 面板协议（手机侧）----------------------------------------------- */
+/*
+ * 协议那半在 harness 里钉（默认关 / 穿越 404 / 覆盖 ✓）；这里钉**手机侧三件事**：
+ * ① 清单里的面板变成**工具键** ✓（而且是加在"可收起的那一排"里 ✓）；
+ * ② 点开是**整屏 iframe** ✓，src 是相对路径 `panel/<id>/<entry>` ✓（面板里写 `api/xxx` 才连得上 ✓）；
+ * ③ 关掉时把 `src` 清空 ✓（示例里的计时器不该在后台继续跑 ✗）。
+ */
+{
+	await ensureAppVisible()
+	const panelKey = $('toolKeys').querySelector('button[data-panel="notes"]')
+	check('服务端清单里的面板出现在**工具键那一排**里 ✓（图标是清单里的 ✓，标题带"自带示例"✓）',
+		panelKey !== null && panelKey.textContent === '📝' && String(panelKey.title).includes('便签'),
+		panelKey === null ? '(没有那个键)' : `${panelKey.textContent} / ${panelKey.title}`)
+	/*
+	 * ⚠️ 复查点名（假象断言 ②）：上面那条只证明"DOM 里有这个按钮" ✓ —— 而它自称验的是
+	 * "在**可收起的那一排**里" ✗。面板键是 `setTimeout(...,0)` 之后异步追加的 ✓，
+	 * 所以折叠那组用例（跑得更早 ✓）根本没见过它 ✓ → "收起时面板键跟着藏"从未被验 ✓。
+	 * 这里补上真动作 ✓：收起 → 断言看不见 → 展开 → 断言又看得见 ✓。
+	 */
+	click($('toolsToggle'))
+	await wait(140)
+	check('⭐ 收起工具键时，**面板键也跟着收起** ✓（它是 `#toolKeys` 的子节点 ✓ —— 不是"挂在外面"✗）',
+		visible(panelKey) === false && String(window.localStorage.getItem('dshm.tools')) === '1',
+		`visible=${visible(panelKey)} dshm.tools=${window.localStorage.getItem('dshm.tools')}`)
+	click($('toolsToggle'))
+	await wait(140)
+	check('展开之后面板键又看得见 ✓', visible(panelKey) === true)
+	click(panelKey)
+	await wait(160)
+	check('点开面板：**整屏纸 + iframe** ✓，src 是相对路径 `panel/<id>/<entry>` ✓（同源才连得上桥的接口 ✓）',
+		visible($('panelopen')) && $('panelFrame').getAttribute('src') === 'panel/notes/index.html'
+		&& String($('panelTitle').textContent) === '便签',
+		`open=${visible($('panelopen'))} src=${$('panelFrame').getAttribute('src')}`)
+	check('纸上写着"面板与手机页同源 = 等于信任它" ✓（信任边界不许藏着 ✗）',
+		String($('panelNote').textContent).includes('同源'))
+	click($('panelBack'))
+	await wait(140)
+	check('关掉面板：纸收起 ✓、且 `src` 被清空 ✓（里面的计时器不该在后台继续跑 ✗）',
+		visible($('panelopen')) === false && $('panelFrame').getAttribute('src') === 'about:blank',
+		`open=${visible($('panelopen'))} src=${$('panelFrame').getAttribute('src')}`)
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */
