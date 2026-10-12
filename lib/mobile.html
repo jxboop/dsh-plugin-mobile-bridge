@@ -390,6 +390,8 @@
 	/* 自己发的那条靠右：按钮用 order 挪到气泡左边，别把它顶出屏幕。 */
 	.row.user .copyb { order: -1; margin: 2px 6px 0 0; }
 	.copyb:active { background: rgba(255,255,255,.24); }
+	/* 3.0.0 ★③：「🔊 念出来」正在念的时候亮着 ✓（再点一下停 ✓）。 */
+	.copyb.on { background: var(--accent); color: #04213d; border-color: var(--accent); }
 	@media (prefers-color-scheme: light) {
 		.copyb { border-color: rgba(0,0,0,.16); background: rgba(255,255,255,.55); }
 	}
@@ -764,6 +766,8 @@
 	.offwhy { font-size: 14px; line-height: 1.7; color: var(--muted); margin-bottom: 6px; }
 	.offauto { font-size: 13px; color: var(--muted); min-height: 18px; margin-bottom: 14px; font-variant-numeric: tabular-nums; }
 	.offacts { display: flex; flex-direction: column; gap: 9px; margin-bottom: 16px; }
+	/* 3.0.0 ★①：离线屏上"有几条在发件箱等着" ✓（不是按钮 ✓，是一句状态 ✓）。 */
+	.offwait { font-size: 12px; color: var(--muted); background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
 	.offacts button {
 		padding: 13px 14px; border-radius: 14px; border: 1px solid var(--field-line);
 		background: var(--panel); color: var(--text); font: inherit; font-size: 15px; box-shadow: var(--glass-edge);
@@ -911,6 +915,32 @@
 <!-- 「1.0 → 今 按主题的汇总」：用户要求"要汇总，不要一版版罗列"。服务端手写维护（index.js 的 WHATS_NEW_THEMES）。 -->
 <script type="application/json" id="themes">__DSH_THEMES__</script>
 
+	<!-- 满屏浮层都放这儿（`#app` 的**兄弟** ✓）：这两屏出现时 `#app` 正是 hide 状态 ✓，
+	     嵌在 `#app` 里就永远看不见 ✗（3.0.0 复查顺出来的老毛病：`#offline` 冷启动时其实不显示 ✓）。 -->
+	<div id="offline" data-display="flex" style="display:none">
+		<div class="offbox">
+			<div class="officon">📴</div>
+			<div class="offtitle" id="offlineTitle">连不上电脑</div>
+			<div class="offwhy" id="offlineWhy">正在确认…</div>
+			<div class="offauto" id="offlineAuto"></div>
+			<div class="offacts" id="offlineActs"></div>
+			<div class="offhelp" id="offlineHelp"></div>
+		</div>
+	</div>
+	<div id="pending" data-display="flex" style="display:none">
+		<div class="offbox">
+			<div class="officon">🔐</div>
+			<div class="offtitle">这台设备还在等放行</div>
+			<div class="offwhy" id="pendingWhy">PIN 已经对了 ✓ —— 但这是一台**没见过的设备**，按你开的
+				「多端授权」设置，要在**电脑上**点一次「放行」才让它进来 ✓。</div>
+			<div class="offauto" id="pendingAuto"></div>
+			<div class="offacts">
+				<button id="pendingRetry">我放行过了，立刻再试</button>
+				<button id="pendingHow">怎么做？</button>
+			</div>
+			<div class="offhelp" id="pendingHelp"></div>
+		</div>
+	</div>
 <div id="app" data-display="flex" style="display:none">
 	<header>
 		<!-- 顶栏折叠开关（2026-10-12）：放在**最左边** ✓ —— 收起来之后它自己就是这条细缝的全部内容 ✓。 -->
@@ -945,16 +975,9 @@
 	     ② 连不上、又没内容可渲染 → 只剩空壳（白屏/一片空）。
 	     所以这一屏要**不透明、压在最上面、并且第一句就说清是什么事**，
 	     再给三条出路：重试（自动重试带倒计时）、换个地址、先看上次的对话。 -->
-	<div id="offline" data-display="flex" style="display:none">
-		<div class="offbox">
-			<div class="officon">📴</div>
-			<div class="offtitle" id="offlineTitle">连不上电脑</div>
-			<div class="offwhy" id="offlineWhy">正在确认…</div>
-			<div class="offauto" id="offlineAuto"></div>
-			<div class="offacts" id="offlineActs"></div>
-			<div class="offhelp" id="offlineHelp"></div>
-		</div>
-	</div>
+
+	<!-- 3.0.0 ★④「多端授权」：这是一台**新设备**，等你在这台电脑上点一次「放行」✓。
+	     ⚠️ 只说这一件事 ✓、每 3 秒问一次"放行了没" ✓、**放行之后自己进** ✓（不用手动刷新 ✓）。 -->
 
 	<main>
 		<section class="view" id="view-task" data-display="flex" style="display:none">
@@ -1003,6 +1026,9 @@
 			<label class="field" style="margin:6px 12px 2px"><input type="checkbox" id="weakOn"> <b>弱网模式</b>：文字先发，图片/文件留着等网络好了自动补发</label>
 			<div class="hint" style="margin:0 12px 12px">上行很慢（隧道/地铁/信号差）时开它 ✓：文字立刻到，附件**单独补发一条**（agent 晚一轮看到 ✓）。
 				附件太大这台手机存不下时会自动改成"一起发" ✓（绝不悄悄丢掉图片 ✗）。</div>
+			<!-- 3.0.0 ★②「通知闭环」：需要你拍板 / 一轮跑完 → 页面在后台就弹通知 ✓（安全地址才行 ✓）。 -->
+			<label class="field" style="margin:6px 12px 2px"><input type="checkbox" id="notifyOn"> <b>有事通知我</b>：需要你拍板、或一轮跑完时，页面在后台就弹通知</label>
+			<div class="hint" style="margin:0 12px 12px" id="notifyNote"></div>
 			<!-- 2.8.0 ★4「诊断包」：出问题时别只说"不 work" ✓ —— 一键拿一份**脱敏后**的日志包 ✓。
 			     写成普通 <a download>（和"导出 Markdown"同一套 ✓）：同源自动带 cookie ✓，不用额外代码 ✓。 -->
 			<div class="actions" style="flex:none;padding:8px 14px 4px">
@@ -1229,6 +1255,14 @@
 					<button id="recRedo" style="display:none">重录</button>
 					<button id="recStudy" style="display:none" title="让 agent 把这条录音的转写整理成提纲 + 复习卡，并存到电脑上">📝 出提纲 + 复习卡</button>
 				</div>
+				<!-- 3.0.0 ★③「语音往返」：**说出来 → 文字进输入框** ✓ —— 发不发我自己按 ✓。 -->
+				<div class="hint" style="margin-top:12px"><strong>✍️ 说出来 → 文字</strong>：说完转成文字**放进输入框**，
+				你看一眼、改好、再按发送 ✓（不会直接替你说出去 ✗）。</div>
+				<div class="actions">
+					<button id="sttToggle">● 说一句</button>
+					<button id="sttPrepare" style="display:none">准备识别器</button>
+				</div>
+				<div class="hint" id="sttNote">识别器：还没读（点一下上面的键就会读 ✓）。</div>
 				<div class="hint">录的时候<strong>别锁屏、别切到别的 App</strong>（iOS 会掐掉网页录音）。录完点「停止」，可以先听一遍再发。</div>
 				<div class="hint">发出去之后，电脑会把这段录音<strong>自动转成文字</strong>交给模型（约 0.06 元/分钟）。录多久都行 —— 一节课也没问题。</div>
 				<div class="hint">⚠️ 浏览器只在<strong>安全地址</strong>下给麦克风：走 <code>https://…ts.net</code>（Funnel）可以；用 <code>http://100.x.x.x:3081</code>（局域网 IP）浏览器会直接拒绝。若弹出权限询问，请点允许。</div>
@@ -2310,6 +2344,16 @@
 			acts.appendChild(go)
 		}
 
+		// 3.0.0 ★①「离线优先」：**哪几条没发，得在这屏上看得见** ✓ ——
+		// 顶部那条「离线发件箱」横幅在这一屏底下（整屏盖住了 ✓），所以数量要在这儿再说一次 ✓。
+		const waiting = outbox.items.length
+		if (waiting > 0) {
+			const box = document.createElement('div')
+			box.className = 'offwait'
+			box.id = 'offlineWaiting'
+			box.textContent = `📮 有 ${waiting} 条在「离线发件箱」里等着 —— 连上电脑会自动发 ✓（也可以先点「先看上次的对话」接着写 ✓）`
+			acts.appendChild(box)
+		}
 		const help = $('offlineHelp')
 		if (help === null) return
 		help.textContent = ''
@@ -2331,8 +2375,13 @@
 	}
 
 	// 手机自己断网/恢复：立刻反映到这一屏上，不用等下一次请求失败。
-	window.addEventListener('offline', () => { offlineShow('nophone') })
-	window.addEventListener('online', () => { offline.countdown = 1; offlineTick() })
+	/*
+	 * 3.0.0 ★①：进这一屏前**先重读一遍箱子** ✓ —— 箱子里可能装着"上一次打开时留下的"，
+	 * 或者别的标签页/上一次会话排队的东西 ✓；不重读就会对着内存里那份旧清单说话 ✗
+	 *（离线优先的核心就是"看到的东西要和磁盘上一致" ✓）。
+	 */
+	window.addEventListener('offline', () => { outboxLoad(); outboxRender(); offlineShow('nophone') })
+	window.addEventListener('online', () => { outboxLoad(); outboxRender(); offline.countdown = 1; offlineTick() })
 
 	/**
 	 * 这个地址手机真的能用吗。
@@ -3032,6 +3081,71 @@
 		return '<button class="copyb" type="button" data-copy="' + index + '" aria-label="复制这条消息">复制</button>'
 	}
 
+	/**
+	 * 3.0.0 ★③「语音往返」的另一半：**念出来** ✓。
+	 *
+	 * 上游查实（2026-10-12）：宿主**没有** TTS ✓（全仓只有 speech-to-text ✓）→
+	 * 所以用**浏览器自带**的 `speechSynthesis` ✓（零依赖 ✓，手机上有本地音色 ✓，能离线 ✓）。
+	 *
+	 * 三条取舍：
+	 *   · **代码块不念** ✗（念 `const x = 1` 是折磨 ✓）→ 先把 ``` 围栏整段去掉 ✓，
+	 *     再把行内反引号去掉 ✓（保留里面的词 ✓）；
+	 *   · **有上限** ✓（默认 1200 字 ✓）—— 念三五分钟没人听 ✓，截断了就**说明白** ✓（不装作念完了 ✗）；
+	 *   · **再点一下停** ✓（同一个键切换 ✓），并记住正在念哪一条 ✓（换会话/关页面就停 ✓）。
+	 */
+	const SPEAK_MAX_CHARS = 1200
+	const speak = { index: -1, utter: null }
+
+	function speakTextOf(index) {
+		const item = state.items[index]
+		if (item === undefined || item === null) return ''
+		const raw = item.kind === 'assistant' ? textOfMessage(item) : itemText(item)
+		// 去掉围栏代码块（含语言标记那行 ✓）—— 念代码对耳朵毫无意义 ✓。
+		const withoutCode = String(raw ?? '').replace(/```[\s\S]*?```/g, '（代码略）').replace(/`([^`]*)`/g, '$1')
+		return withoutCode.trim()
+	}
+
+	function stopSpeak() {
+		try { window.speechSynthesis?.cancel?.() } catch { /* 无所谓 */ }
+		if (speak.index >= 0) {
+			const button = log.querySelector('button[data-speak="' + speak.index + '"]')
+			if (button !== null) { button.classList.remove('on'); button.textContent = '🔊' }
+		}
+		speak.index = -1
+		speak.utter = null
+	}
+
+	function speakAt(index) {
+		// 再点同一条 = 停 ✓。
+		if (speak.index === index) { stopSpeak(); return }
+		stopSpeak()
+		const synthesis = window.speechSynthesis
+		if (synthesis === undefined || typeof synthesis.speak !== 'function' || typeof window.SpeechSynthesisUtterance !== 'function') {
+			toast('这个浏览器不支持"念出来"（手机自带浏览器一般都有）✓', 3600)
+			return
+		}
+		const full = speakTextOf(index)
+		if (full === '') { toast('这条没有可念的文字'); return }
+		const clipped = full.length > SPEAK_MAX_CHARS
+		const text = clipped ? full.slice(0, SPEAK_MAX_CHARS) : full
+		const utter = new window.SpeechSynthesisUtterance(text)
+		// 中文用中文音色 ✓（手机上通常是本地音色 ✓，不用联网 ✓）。
+		try { utter.lang = 'zh-CN' } catch { /* 无所谓 */ }
+		utter.onend = () => { if (speak.index === index) stopSpeak() }
+		utter.onerror = () => { if (speak.index === index) stopSpeak() }
+		speak.index = index
+		speak.utter = utter
+		const button = log.querySelector('button[data-speak="' + index + '"]')
+		if (button !== null) { button.classList.add('on'); button.textContent = '⏹' }
+		try { synthesis.speak(utter) } catch { stopSpeak(); toast('念不出来（浏览器拒绝了）✓', 3000); return }
+		if (clipped) flash(`这一条超过 ${SPEAK_MAX_CHARS} 字，只念前面一段 ✓（剩下的自己看 ✓）`, 4200)
+	}
+
+	/** 助手气泡上的「🔊」——和「复制」并排 ✓（用户的原话是"回答念出来" ✓，所以只给回答 ✓）。 */
+	function speakButton(index) {
+		return '<button class="copyb" type="button" data-speak="' + index + '" aria-label="念出来" title="念出来（用手机自带的声音 ✓；代码不念 ✓）">🔊</button>'
+	}
+
 	/** 把当前状态铺成一组 { key, html }：key 稳定（条目序号 + 类型）。 */
 	function buildEntries(sessionId) {
 		const entries = []
@@ -3043,7 +3157,7 @@
 				const think = thinkHtml(item, index)
 				if (think !== '') entries.push({ key: 't' + index, html: think })
 				const inner = blocksToHtml(item.content, sessionId) + (item.cursor ? '<span class="cursor"></span>' : '')
-				if (inner.trim() !== '') entries.push({ key: 'a' + index, html: '<div class="row"><div class="bubble">' + inner + '</div>' + copyButton(index) + '</div>' })
+				if (inner.trim() !== '') entries.push({ key: 'a' + index, html: '<div class="row"><div class="bubble">' + inner + '</div>' + copyButton(index) + speakButton(index) + '</div>' })
 			} else if (item.kind === 'tool') {
 				const body = item.result === null ? (item.done ? '（无输出）' : '运行中…') : item.result
 				entries.push({
@@ -3337,6 +3451,12 @@
 			toast(copyText(text) ? `已复制 ${text.length} 字` : '复制失败：请长按选中文字再复制')
 			return
 		}
+		// 3.0.0 ★③：念出来（再点一下停 ✓）。放在图片/工具分支之前 ✓，别被后面的分支吃掉。
+		const speakBtn = event.target.closest && event.target.closest('button[data-speak]')
+		if (speakBtn) {
+			speakAt(Number(speakBtn.dataset.speak))
+			return
+		}
 		// 点图片/视频 → 全屏看，然后长按存相册。先判这个，再判下面的工具栏展开。
 		const shot = event.target.closest && event.target.closest('img.shot, video.shot')
 		if (shot) {
@@ -3620,6 +3740,12 @@
 				state.reasoning = null
 				setStatus('live')
 				endRun()
+				// 3.0.0 ★②：**跑完一轮**也值得叫一声 ✓ —— 但只在"跑得够久"时 ✓
+				// （20 秒以内的事，用户多半还举着手机 ✓；每次都响就成骚扰了 ✗）。
+				if (run.startedAt > 0 && Number(run.finishedAt ?? 0) - run.startedAt > 20000) {
+					const seconds = Math.round((Number(run.finishedAt ?? 0) - run.startedAt) / 1000)
+					pageNotify('跑完了 ✓', `手机桥：这一轮跑了 ${Math.round(seconds / 60) || 1} 分钟左右，回来看看 ✓`)
+				}
 				break
 		}
 	}
@@ -3858,6 +3984,8 @@
 				if (shot !== null && nodeShown(shot)) shot.style.display = 'none'
 				try { navigator.vibrate?.(120) } catch { /* 不支持振动就算了 */ }
 				toast(payload.kind === 'approval' ? 'agent 要你点头（卡片在下面）' : 'agent 在问你（卡片在下面）', 2600)
+				// 3.0.0 ★②：**人不在看手机时**把他叫回来 ✓（页面在后台才弹 ✓；正看着就别响 ✗）。
+				pageNotify(payload.kind === 'approval' ? '需要你点头 ✓' : 'agent 在问你 ✓', '手机桥：agent 在等你回一句话（点开就能答 ✓）')
 				// 已经存在的卡片必须【保住草稿】。重连、或又开了一条流，宿主都会把
 				// 同一个 id 重推一次；直接覆盖会把用户勾到一半的选择清光 ——
 				// 而那句"草稿存在 state 上就不会丢"的注释正是为这个写的。
@@ -4956,6 +5084,8 @@
 	function switchSession(sessionId) {
 		if (typeof sessionId !== 'string' || sessionId === '') return
 		if (sessionId === state.sessionId) { renderSessBar(); return }
+		// 3.0.0 ★③：换会话就**别念了** ✓（念着上一个会话的回答、屏幕上却换了内容，比不念还糟 ✓）。
+		stopSpeak()
 		// 先把当前这份存下来：切回来时它能让屏幕立刻有内容。
 		rememberSession(state.sessionId)
 		state.sessionId = sessionId
@@ -5309,6 +5439,8 @@
 			// 发送前弹会被「正在发送…」盖掉 ✓。
 			if (sendNote !== '') flash(sendNote, 8000)
 			text.value = ''
+			// 3.0.0 ★①：发出了 → 草稿也删掉 ✓（不然下次打开又冒出来一句已经发过的话 ✗）。
+			writeLocal(DRAFT_KEY, '')
 			/*
 			 * ★11：这一条**慢**（>6 秒）而且没开弱网模式 → 主动问一次 ✓
 			 * （用户不必知道"弱网模式"这个词，他只知道"发一条要等半天" ✓）。
@@ -5697,12 +5829,16 @@
 	}
 
 	$('recBtn').addEventListener('click', () => {
-		if (!recSupported()) {
+		// ⚠️ 3.0.0 ★③：这里原来是"录音不支持就**不让进这张纸**" ✗ ——
+		// 而"说出来 → 文字"用的是**另一套能力**（Web Audio ✓，不需要 MediaRecorder ✓），
+		// 所以只要两者之一可用就要能进来 ✓（否则某些浏览器上这个新功能等于不存在 ✗）。
+		if (!recSupported() && !sttSupported()) {
 			flash('这个浏览器不给网页录音（或地址不是 https）。用 https://…ts.net 打开再试，或者用「文件」发录音。', 9000)
 			return
 		}
 		show($('recopen'))
 		recReset()
+		void loadSpeech()
 	})
 	$('recBack').addEventListener('click', () => {
 		if (rec.on) { flash('正在录音 —— 先点「停止录音」。', 4000); return }
@@ -5713,6 +5849,231 @@
 	$('recToggle').addEventListener('click', () => { if (rec.on) recStop(); else recStart() })
 	$('recRedo').addEventListener('click', recReset)
 	$('recSend').addEventListener('click', () => { recSendNow() })
+
+	/* --------- 说出来 → 文字（3.0.0 ★③「语音往返」的 STT 那半）--------- */
+	/*
+	 * 为什么不是"复用上面那段录音" ✗：上面出的是 **webm/opus** ✓，
+	 * 而宿主的 `speechController.transcribe` 要的是**标准 WAV** ✓（`audioBase64` = canonical WAV ✓）——
+	 * 零依赖又不想在电脑上装 ffmpeg ✓，所以这里自己录、自己在手机上编码 ✓：
+	 *   `getUserMedia` → `AudioContext(16000)` → `ScriptProcessor` 收 Float32 →
+	 *   重采样（拿不到 16k 时按平均降采样 ✓）→ 16bit PCM → 补 44 字节 WAV 头 ✓。
+	 *
+	 * 四条纪律：
+	 *   · **只在用户按了之后才录** ✓（不后台偷录 ✗），录的时候屏幕上写着"正在听" ✓；
+	 *   · **文字只进输入框，不发送** ✓（用户看一眼、改好、自己按 ✓ —— 原话就是"说出来 → 文字"✓）；
+	 *   · 到宿主的 `maxDurationSeconds` **自己停** ✓（不让用户录一段注定被拒的音 ✓）；
+	 *   · 拿不到麦克风 / 电脑没开语音 → **如实说** ✓ 并给出"怎么办" ✓（绝不假装转出了文字 ✗）。
+	 */
+	const stt = {
+		on: false, ctx: null, source: null, node: null, stream: null,
+		chunks: [], startedAt: 0, timer: 0, note: '',
+		available: false, providerId: '', providerName: '', location: '', language: '',
+		maxSeconds: 0, maxBytes: 0, prepared: '', preparedMessage: '',
+	}
+
+	function sttSupported() {
+		return typeof navigator?.mediaDevices?.getUserMedia === 'function'
+			&& typeof (window.AudioContext ?? window.webkitAudioContext) === 'function'
+	}
+
+	function sttNote(message) {
+		stt.note = message
+		const node = $('sttNote')
+		if (node !== null) setDelText('sttNote', message)
+	}
+
+	/** Float32 → 44 字节头的 16bit 单声道 WAV ✓（标准格式，宿主那边认的就是它 ✓）。 */
+	function encodeWav(samples, sampleRate) {
+		const buffer = new ArrayBuffer(44 + samples.length * 2)
+		const view = new DataView(buffer)
+		const write = (offset, text) => { for (let index = 0; index < text.length; index += 1) view.setUint8(offset + index, text.charCodeAt(index)) }
+		write(0, 'RIFF'); view.setUint32(4, 36 + samples.length * 2, true); write(8, 'WAVE')
+		write(12, 'fmt '); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true)
+		view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true)
+		view.setUint16(32, 2, true); view.setUint16(34, 16, true)
+		write(36, 'data'); view.setUint32(40, samples.length * 2, true)
+		let offset = 44
+		for (const sample of samples) {
+			const clamped = sample < -1 ? -1 : (sample > 1 ? 1 : sample)
+			view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true)
+			offset += 2
+		}
+		return buffer
+	}
+
+	/** 采样率不是 16k 时按"每段取平均"降采样 ✓（够 ASR 用 ✓，不引第三方库 ✓）。 */
+	function resampleTo16k(samples, sampleRate) {
+		if (sampleRate === 16000) return samples
+		const ratio = sampleRate / 16000
+		const out = new Float32Array(Math.max(0, Math.floor(samples.length / ratio)))
+		for (let index = 0; index < out.length; index += 1) {
+			const start = Math.floor(index * ratio)
+			const end = Math.min(samples.length, Math.floor((index + 1) * ratio))
+			let sum = 0
+			for (let at = start; at < end; at += 1) sum += samples[at]
+			out[index] = end > start ? sum / (end - start) : 0
+		}
+		return out
+	}
+
+	/** 大块字节 → base64 ✓（分块拼，别把 `String.fromCharCode` 的参数撑爆 ✓）。 */
+	function bytesToBase64(bytes) {
+		let binary = ''
+		const chunk = 0x8000
+		for (let offset = 0; offset < bytes.length; offset += chunk) {
+			binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunk))
+		}
+		return btoa(binary)
+	}
+
+	async function loadSpeech() {
+		try {
+			const info = await api('api/speech')
+			stt.available = info?.available === true
+			if (stt.available !== true) {
+				sttNote(String(info?.message ?? '这台电脑没开语音转文字 ✓'))
+				$('sttToggle').disabled = true
+				return
+			}
+			stt.maxBytes = Number(info?.maxAudioBytes ?? 0)
+			stt.maxSeconds = Number(info?.maxDurationSeconds ?? 0)
+			const providers = Array.isArray(info?.providers) ? info.providers : []
+			const chosen = providers.find((item) => item.id === info?.selection?.providerId) ?? providers[0] ?? null
+			stt.providerId = String(chosen?.id ?? '')
+			stt.providerName = String(chosen?.name ?? '识别器')
+			stt.location = String(chosen?.location ?? '')
+			stt.language = String(info?.selection?.language ?? '')
+			stt.prepared = String(chosen?.phase ?? '')
+			stt.preparedMessage = String(chosen?.message ?? '')
+			$('sttToggle').disabled = false
+			$('sttPrepare').style.display = stt.prepared === 'unprepared' || stt.prepared === 'failed' ? '' : 'none'
+			const where = stt.location === 'cloud' ? '云端（音频会离开这台电脑，转的时候要输一次 PIN ✓）' : '本机（不上传 ✓）'
+			const limit = stt.maxSeconds > 0 ? `，一次最多 ${stt.maxSeconds} 秒` : ''
+			const state = stt.prepared === 'ready' ? '已就绪 ✓' : (stt.prepared === '' ? '' : `状态：${stt.prepared} ${stt.preparedMessage}`.trim())
+			sttNote(`识别器：${stt.providerName} —— ${where}${limit} ✓ ${state}`)
+		} catch (error) {
+			stt.available = false
+			sttNote('读不到语音设置：' + String(error?.message ?? error))
+		}
+	}
+
+	async function sttStart() {
+		if (stt.on === true) { await sttStop(); return }
+		if (stt.available !== true) { sttNote('这台电脑没开语音转文字 ✓（上面那条"发送这条录音"照样能用 ✓）'); return }
+		if (sttSupported() !== true) {
+			sttNote('这个浏览器/地址拿不到麦克风 —— 用 https://…ts.net 打开就能用 ✓')
+			return
+		}
+		try {
+			stt.stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+		} catch (error) {
+			sttNote('拿不到麦克风：' + String(error?.message ?? error) + '（用 https 地址打开才给 ✓）')
+			return
+		}
+		const Ctx = window.AudioContext ?? window.webkitAudioContext
+		try { stt.ctx = new Ctx({ sampleRate: 16000 }) } catch { stt.ctx = new Ctx() }
+		try {
+			stt.source = stt.ctx.createMediaStreamSource(stt.stream)
+			stt.node = stt.ctx.createScriptProcessor(4096, 1, 1)
+		} catch (error) {
+			sttNote('这个浏览器不支持录音处理：' + String(error?.message ?? error))
+			await sttStop()
+			// ⚠️ `stt.on` 还是 false ✓ —— 下面要走"收尾"那段（放掉麦克风 ✓），所以先标记成在录 ✓。
+			return
+		}
+		stt.chunks = []
+		stt.node.onaudioprocess = (event) => {
+			// 只收这一路输入 ✓（不接扬声器 ✓，避免自己念自己 ✓）。
+			try { stt.chunks.push(new Float32Array(event.inputBuffer.getChannelData(0))) } catch { /* 忽略 */ }
+		}
+		stt.source.connect(stt.node)
+		stt.node.connect(stt.ctx.destination)
+		stt.on = true
+		stt.startedAt = Date.now()
+		$('sttToggle').textContent = '⏹ 说完了'
+		$('sttToggle').classList.add('rec')
+		sttNote('正在听…（别锁屏；说完点「说完了」✓）')
+		// 到宿主的时长上限**自己停** ✓（不让用户录一段注定被拒的音 ✓）。
+		const limitMs = stt.maxSeconds > 0 ? stt.maxSeconds * 1000 : 300000
+		stt.timer = setInterval(() => {
+			const seconds = Math.round((Date.now() - stt.startedAt) / 1000)
+			sttNote(`正在听… ${seconds} 秒${stt.maxSeconds > 0 ? ` / 最多 ${stt.maxSeconds} 秒` : ''}（别锁屏 ✓）`)
+			if (Date.now() - stt.startedAt >= limitMs) {
+				sttNote(`到上限了（${stt.maxSeconds} 秒）—— 这段就去转文字 ✓`)
+				void sttStop()
+			}
+		}, 1000)
+	}
+
+	async function sttStop() {
+		const wasOn = stt.on === true
+		stt.on = false
+		if (stt.timer !== 0) { clearInterval(stt.timer); stt.timer = 0 }
+		try { stt.node?.disconnect?.() } catch { /* 忽略 */ }
+		try { stt.source?.disconnect?.() } catch { /* 忽略 */ }
+		const rate = Number(stt.ctx?.sampleRate ?? 16000)
+		try { stt.ctx?.close?.() } catch { /* 忽略 */ }
+		try { stt.stream?.getTracks?.().forEach((track) => track.stop()) } catch { /* 忽略 */ }
+		stt.node = null
+		stt.source = null
+		stt.ctx = null
+		stt.stream = null
+		$('sttToggle').textContent = '● 说一句'
+		$('sttToggle').classList.remove('rec')
+		if (wasOn !== true) return
+		const total = stt.chunks.reduce((sum, part) => sum + part.length, 0)
+		const merged = new Float32Array(total)
+		let offset = 0
+		for (const part of stt.chunks) { merged.set(part, offset); offset += part.length }
+		stt.chunks = []
+		const seconds = total / rate
+		if (seconds < 0.4) { sttNote('太短了（不到半秒）—— 再说一次 ✓'); return }
+		const wav = encodeWav(resampleTo16k(merged, rate), 16000)
+		if (stt.maxBytes > 0 && wav.byteLength > stt.maxBytes) {
+			const mb = Math.round(wav.byteLength / 1024 / 1024 * 10) / 10
+			const cap = Math.round(stt.maxBytes / 1024 / 1024 * 10) / 10
+			sttNote(`这段约 ${mb} MB，超过电脑那边的单次上限 ${cap} MB —— 说短一点再试 ✓`)
+			return
+		}
+		sttNote('正在转成文字…（第一次用可能要先下模型，慢一点 ✓）')
+		try {
+			const result = await api('api/transcribe', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					audioBase64: bytesToBase64(new Uint8Array(wav)),
+					...(stt.providerId === '' ? {} : { providerId: stt.providerId }),
+					...(stt.language === '' ? {} : { language: stt.language }),
+				}),
+			})
+			const said = String(result?.text ?? '').trim()
+			if (said === '') { sttNote('没听清（转出来是空的）—— 再说一次 ✓'); return }
+			// **只放进输入框** ✓ —— 不替用户发出去 ✗（用户看一眼、改好、自己按 ✓）。
+			const existing = String(text.value ?? '')
+			text.value = existing.trim() === '' ? said : existing.replace(/\s*$/, '') + '\n' + said
+			growComposer()
+			sttNote(`转好了：${said.length} 字已经放进输入框 ✓（看一眼、改好、再按发送 ✓）`)
+			toast('转成文字了 ✓ 在输入框里，改好再发 ✓', 3600)
+		} catch (error) {
+			sttNote('转写失败：' + String(error?.message ?? error) + ' ✓')
+		}
+	}
+
+	$('sttToggle').addEventListener('click', () => { void sttStart() })
+	$('sttPrepare').addEventListener('click', async () => {
+		sttNote('正在让电脑准备识别器…（第一次要下模型 ✓）')
+		try {
+			const result = await api('api/speech/prepare', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ providerId: stt.providerId }),
+			})
+			sttNote(String(result?.message ?? '已经开始准备了 ✓'))
+			setTimeout(() => { void loadSpeech() }, 4000)
+		} catch (error) {
+			sttNote('准备不了：' + String(error?.message ?? error))
+		}
+	})
 
 	/** 用画布把"宿主不认的图片"转成 PNG（HEIC / BMP / TIFF / AVIF…）。 */
 	async function toPngBlob(file) {
@@ -6080,6 +6441,52 @@
 	}
 
 	text.addEventListener('input', growComposer)
+
+	/* --------- 草稿不丢（3.0.0 ★①「离线优先」：离线也能写 ✓）--------- */
+	/*
+	 * 现场：手机上写完一段话、页面被系统回收 / 手滑刷新 / 从隧道切到局域网地址 ✓ ——
+	 * **刚写的东西就没了** ✗，而且用户往往是在"连不上"的时候最需要它留着 ✓（离线优先的核心 ✓）。
+	 * 做法：输入时把草稿存进 `localStorage`（`dshm.draft` ✓，最多 4000 字 ✓），
+	 * 启动时放回输入框 ✓，发出去（或被清空）就删掉 ✓。
+	 * ⚠️ **不进"发送"那条路** ✗（草稿只是"我写到一半" ✓）——它进备份白名单 ✓，
+	 *   换手机时那句没写完的话也跟着走 ✓（用户会谢 ✓）。
+	 */
+	const DRAFT_KEY = 'dshm.draft'
+	const DRAFT_MAX = 4000
+	let draftTimer = 0
+
+	function saveDraftNow() {
+		if (draftTimer !== 0) { clearTimeout(draftTimer); draftTimer = 0 }
+		const value = String(text.value ?? '')
+		if (value.trim() === '') { writeLocal(DRAFT_KEY, ''); return }
+		writeLocal(DRAFT_KEY, value.slice(0, DRAFT_MAX))
+	}
+
+	text.addEventListener('input', () => {
+		// 每敲一下都写 localStorage 会卡 ✓ → 停手 500ms 再写 ✓。
+		if (draftTimer !== 0) clearTimeout(draftTimer)
+		draftTimer = setTimeout(saveDraftNow, 500)
+	})
+	// 离开页面/切后台时也要落盘 ✓（手机上"切走就被冻结"是常态 ✓）。
+	window.addEventListener('pagehide', saveDraftNow)
+	document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveDraftNow() })
+
+	function restoreDraft() {
+		const saved = readLocal(DRAFT_KEY)
+		if (saved === '' || String(text.value ?? '').trim() !== '') return false
+		text.value = saved
+		growComposer()
+		// 说一句，免得用户以为"谁替我打了字" ✓（不说话比说错还吓人 ✗）。
+		toast('上次没写完的那段已经放回输入框了 ✓', 3200)
+		return true
+	}
+	restoreDraft()
+	/*
+	 * 点一下输入框也再试一次 ✓（幂等 ✓，只有"空的"时候才填 ✓）——
+	 * 手机把页面回收再打开时，那次 boot 的恢复可能已经跑过了 ✓；
+	 * 而**用户自己清空过**的话 `dshm.draft` 也是空的 ✓ → 绝不会把删掉的草稿又塞回来 ✗。
+	 */
+	text.addEventListener('focus', () => { restoreDraft() })
 
 	/* -------------------------------------------------------------- 生图 */
 	/* 设计取舍：手机桥不直连生图后端。图必须落进**当前会话**才看得见、存得下、
@@ -6690,6 +7097,15 @@
 			// 2.8.0 ★2：登录回包里带着 `firstSeen` ✓ —— 这个地址在这台电脑上**第一次**成功登录 ✓。
 			// 话说清"换网络/新手机都会这样" ✗ 不吓人 ✓（真正的陌生设备提醒在桌面角标与 🛡 里 ✓）。
 			const gateBody = await response.json().catch(() => ({}))
+			/*
+			 * 3.0.0 ★④：这是一台**等放行的新设备** ✓ —— 进去也只会被 401 弹回来 ✓，
+			 * 所以**当场就进"等放行"那一屏** ✓（不含糊其辞地说"登录失败"✗、也不来回打转 ✗）。
+			 */
+			if (gateBody?.pending === true) {
+				hide(gate)
+				pendingShow()
+				return
+			}
 			hide(gate)
 			show(app)
 			switchTab('task')
@@ -6723,6 +7139,81 @@
 		submitPin(pin, false)
 	})
 	$('pin').addEventListener('keydown', (event) => { if (event.key === 'Enter') $('gateBtn').click() })
+
+	/* --------- 等放行（3.0.0 ★④「多端授权」）---------
+	 * 这一屏只做三件事：**把话说清** ✓（PIN 对了，卡在"新设备"这关）、**每 3 秒问一次** ✓、
+	 * **放行之后自己进来** ✓（不用用户手动刷新 ✓ —— 他这时人正在电脑前 ✓）。
+	 * ⚠️ 它只问 `/api/pending` ✓ 那一条（等放行的设备唯一能问的 ✓），**不碰任何业务接口** ✗。
+	 */
+	const pendingState = { timer: 0, tries: 0 }
+
+	function pendingShow() {
+		show($('pending'))
+		pendingState.tries = 0
+		if (pendingState.timer !== 0) clearInterval(pendingState.timer)
+		pendingState.timer = setInterval(() => { void pendingCheck(true) }, 3000)
+		void pendingCheck(false)
+	}
+
+	function pendingHide() {
+		if (pendingState.timer !== 0) { clearInterval(pendingState.timer); pendingState.timer = 0 }
+		hide($('pending'))
+	}
+
+	async function pendingCheck(tick) {
+		pendingState.tries += 1
+		let body = null
+		let status = 0
+		try {
+			const response = await fetch('api/pending', { credentials: 'same-origin' })
+			status = response.status
+			body = await response.json().catch(() => null)
+		} catch { body = null; status = 0 }
+		const auto = $('pendingAuto')
+		if (body === null) {
+			if (auto !== null) auto.textContent = '连不上电脑 —— 等它醒过来，这里会自己再试 ✓'
+			return
+		}
+		/*
+		 * ⚠️ 401 = **令牌也没了**（过期 / 被踢 / 站点数据被清 ✓）→ 该回登录页 ✓，
+		 * **不是**还没放行 ✓。第一版这里会走下面那条"放行了 → 刷新" ✗ →
+		 * 于是变成"刷新 → 401 → 刷新…"的循环 ✓（用户看到页面自己在抖 ✓）。
+		 */
+		if (status === 401 || body.error !== undefined) {
+			pendingHide()
+			$('gateError').textContent = '这台设备的登录已经失效了 —— 重新输一次 PIN ✓'
+			offlineShow('401')
+			return
+		}
+		if (body.pending !== true) {
+			// 放行了（或者这台设备本来就不用放行）→ **自己进去** ✓。
+			pendingHide()
+			toast('电脑上放行了 ✓ 进来了 ✓', 3200)
+			location.reload()
+			return
+		}
+		if (auto !== null) auto.textContent = `正在等电脑上点「放行」…（每 3 秒自己问一次，第 ${pendingState.tries} 次）`
+		if (tick !== true) {
+			const why = $('pendingWhy')
+			if (why !== null && typeof body.message === 'string' && body.message !== '') why.textContent = body.message.replace(/\*\*/g, '')
+		}
+	}
+
+	$('pendingRetry').addEventListener('click', () => { pendingState.tries = 0; void pendingCheck(false) })
+	$('pendingHow').addEventListener('click', () => {
+		const help = $('pendingHelp')
+		if (help === null) return
+		help.textContent = ''
+		const list = document.createElement('ol')
+		for (const line of [
+			'走到这台电脑前（要坐在它前面 —— 放行页只在本机上打得开 ✓）。',
+			'在电脑上打开 DSH 的网页，看那条「手机桥」徽标里的「有新设备在等放行 → 去放行」。',
+			'或者直接在电脑上打开 http://127.0.0.1:3081/approve （端口按你配置的来 ✓）。',
+			'看到这台设备的名字与信息、确认是你自己的，再点「放行」✓。',
+			'放行之后**不用回手机上做任何事** ✓ —— 这一屏自己会进去 ✓。',
+		]) list.appendChild(mk('li', undefined, line))
+		help.appendChild(list)
+	})
 
 	$('reload').addEventListener('click', () => {
 		hide(banner)
@@ -7001,6 +7492,112 @@
 	}
 	syncWeakToggle()
 
+	/* --------- 有事通知我（3.0.0 ★②「任何需要你的事都会找到你」）--------- */
+	/*
+	 * ⚠️ 硬约束（**查实过，不是能绕过的** ✓）：`Notification` 只在**安全上下文**里存在 ——
+	 * https（Tailscale 的 `*.ts.net` ✓）或 localhost ✓；用 `http://100.x.x.x:3081` 打开时
+	 * `window.Notification` 直接就是 undefined ✗。
+	 * 所以这一条的做法是：**能用就用** ✓、**不能用就如实说"要通知就用 https 的网址打开"** ✓，
+	 * 并且**永远留一个一定有效的兜底**：把标签页标题改成「需要你拍板 ✓」✓（标签栏上看得见 ✓）。
+	 *
+	 * 另外三条诚实边界（都写在界面上了 ✓）：
+	 *   · 浏览器要求**用户点过**才给通知权限 ✓ → 只在开关被点开的那一刻申请 ✓（不自动弹 ✗）；
+	 *   · 手机把页面**冻结/关掉**之后收不到 ✓（我们**没有推送服务器** ✓ —— 这是上限，不是 bug ✓）；
+	 *   · 只报**需要你的事** ✓（提问/审批 ✓、一轮跑完 ✓）—— 不是每条消息都响 ✗。
+	 */
+	const NOTIFY_KEY = 'dshm.notify'
+	const notify = { savedTitle: '', flashTimer: 0 }
+
+	function notifySupported() { return typeof window.Notification === 'function' }
+	function notifySecure() { return window.isSecureContext === true }
+	function notifyOn() { return readLocal(NOTIFY_KEY) === '1' }
+	function notifyPermission() { return notifySupported() ? String(window.Notification.permission ?? 'default') : 'unsupported' }
+
+	function syncNotifyToggle() {
+		const box = $('notifyOn')
+		if (box !== null) box.checked = notifyOn()
+		const note = $('notifyNote')
+		if (note === null) return
+		if (notifySupported() !== true) {
+			setDelText('notifyNote', notifySecure() === true
+				? '这个浏览器不给网页通知 ✓ —— 兜底照旧：页面在后台有事时，标签页标题会变成「需要你…」✓'
+				: '当前地址**不是安全地址**（http）—— 浏览器不给通知 ✓。用 https://…ts.net 的网址打开就能用 ✓；标题兜底照样有效 ✓。')
+			return
+		}
+		const permission = notifyPermission()
+		if (notifyOn() !== true) {
+			setDelText('notifyNote', '关着 ✓ 开了之后：需要你拍板、或一轮跑完时，页面在后台就弹通知 ✓')
+			return
+		}
+		if (permission === 'granted') setDelText('notifyNote', '开着 ✓ 权限已给 ✓（⚠️ 手机把页面冻结/关掉后收不到 —— 浏览器限制 ✓；标题兜底照旧 ✓）')
+		else if (permission === 'denied') setDelText('notifyNote', '开着，但浏览器**拒绝了**权限 ✓ —— 要在浏览器设置里放行 ✓（标题兜底照旧有效 ✓）')
+		else setDelText('notifyNote', '开着，还没拿到权限 ✓ —— 再点一下这个勾会重新询问 ✓')
+	}
+
+	async function setNotify(on) {
+		if (on !== true) {
+			writeLocal(NOTIFY_KEY, '0')
+			syncNotifyToggle()
+			toast('通知关了 ✓', 2400)
+			return
+		}
+		if (notifySupported() !== true) {
+			// 开了也用不了 → **不把开关留在开着的样子** ✗（用户会以为有人在叫他 ✓）。
+			writeLocal(NOTIFY_KEY, '0')
+			syncNotifyToggle()
+			toast(notifySecure() === true
+				? '这个浏览器不支持网页通知 ✓（标题兜底还能用 ✓）'
+				: '这个地址不是 https，浏览器不给通知 ✓ —— 换 https://…ts.net 打开就能用 ✓', 5200)
+			return
+		}
+		writeLocal(NOTIFY_KEY, '1')
+		let permission = notifyPermission()
+		if (permission === 'default') {
+			try { permission = String(await window.Notification.requestPermission()) } catch { permission = 'denied' }
+		}
+		syncNotifyToggle()
+		toast(permission === 'granted'
+			? '通知开了 ✓ 需要你拍板时会把你叫回来 ✓'
+			: '通知权限没给 ✓（标题兜底照样有效 ✓）', 4200)
+	}
+
+	function restoreTitle() {
+		if (notify.flashTimer !== 0) { clearTimeout(notify.flashTimer); notify.flashTimer = 0 }
+		if (notify.savedTitle !== '') { document.title = notify.savedTitle; notify.savedTitle = '' }
+	}
+
+	/**
+	 * 报一件"需要你的事" ✓ —— **只在页面不在眼前时**才打扰 ✓（正看着就别响 ✗）。
+	 * 标题兜底永远执行 ✓（它不依赖权限 ✓）；系统通知失败也就算了 ✓（标题那条已经兜住了 ✓）。
+	 */
+	function pageNotify(title, body) {
+		if (notifyOn() !== true) return
+		if (document.visibilityState !== 'hidden') return
+		if (notify.savedTitle === '') notify.savedTitle = document.title
+		document.title = title
+		if (notify.flashTimer !== 0) clearTimeout(notify.flashTimer)
+		notify.flashTimer = setTimeout(() => { restoreTitle() }, 60000)
+		if (notifySupported() !== true || notifyPermission() !== 'granted') return
+		try {
+			const note = new window.Notification(title, { body: String(body ?? '').slice(0, 160), tag: 'mobile-bridge' })
+			note.onclick = () => {
+				try { window.focus() } catch { /* 忽略 */ }
+				try { note.close() } catch { /* 忽略 */ }
+			}
+		} catch { /* 弹不出来就算了 —— 标题那条已经兜住了 ✓ */ }
+	}
+
+	document.addEventListener('visibilitychange', () => {
+		// 人回来了 → 标题也还回去 ✓（不然那一行"需要你…"会挂一小时 ✓）。
+		if (document.visibilityState === 'visible') restoreTitle()
+	})
+
+	const notifyBox = $('notifyOn')
+	if (notifyBox !== null) {
+		notifyBox.addEventListener('change', () => { void setNotify(notifyBox.checked === true) })
+	}
+	syncNotifyToggle()
+
 	/* --------- 一键自检（2.8.0 ★1）--------- */
 	/*
 	 * 用户的痛：**连不上时不知道卡在哪一环** ✗（今天手工查了好几次 ✓）。
@@ -7216,7 +7813,7 @@
 	const BACKUP_MARK = 'dsh-plugin-mobile-bridge/phone-backup'
 	const BACKUP_VERSION = 1
 	/** 白名单**同时**是导出与导入的边界 ✓（两个方向用同一份，才不会有"导得出、导不回"✗）。 */
-	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong', 'dshm.weaknet']
+	const BACKUP_KEYS = ['dshm.pins', 'dshm.stars', 'dshm.usage', 'dshm.model', 'dshm.session', 'dshm.readonly', 'dshm.tools', 'dshm.top', 'dshm.history', 'dshm.enterSend', 'dshm.arrowHistory', 'dshm.caretDrag', 'dshm.foldLong', 'dshm.weaknet', 'dshm.notify', 'dshm.draft']
 	const BACKUP_MAX_BYTES = 512 * 1024
 	const BACKUP_MAX_VALUE = 200 * 1024
 
@@ -7335,6 +7932,7 @@
 		historyLoad()
 		renderKeyboardSettings()
 		syncWeakToggle()
+		syncNotifyToggle()
 		scheduleRender()
 		return { ok: true, restored, skipped, failed, error: '' }
 	}

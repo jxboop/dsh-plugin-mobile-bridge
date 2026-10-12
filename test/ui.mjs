@@ -82,6 +82,25 @@ const SECRET_PREFIX = `/${SECRET}/`
 const PAGE_URL = `http://127.0.0.1:3081${SECRET_PREFIX}`
 
 /** jsdom refuses real navigation; that refusal is how we observe a reload. */
+/**
+ * 3.0.0 ★③「念出来」（TTS）：jsdom 没有 `speechSynthesis` ✓ —— 塞一对假的进去 ✓，
+ * 记录"念了什么、停没停" ✓。这就是"TTS 到底有没有真的接上"最直接的证据 ✓
+ * （只看 DOM 上有没有那个 🔊 键，证明不了它按下去了会说话 ✓）。
+ */
+const speechStub = { spoken: [], cancelCount: 0, pending: null }
+
+/**
+ * 3.0.0 ★③「说出来 → 文字」（STT）：Web Audio 与 jsdom 无关 ✓ —— 这里记下页面拿到的
+ * ScriptProcessor（测试要靠它**灌进假采样** ✓，才谈得上"真的录了一段"✓）与关了几次 ✓。
+ */
+const audioStub = { processors: [], closed: 0, stopped: 0 }
+
+/**
+ * 3.0.0 ★②「有事通知我」：jsdom 没有 `Notification` ✓ —— 塞一个假的 ✓，
+ * 记录"弹了什么标题/正文" ✓（只看界面上有没有那个勾，证明不了它真会叫人 ✓）。
+ */
+const notifyStub = { made: [], instances: [], requested: 0, permission: 'default' }
+
 const jsdomErrors = []
 /**
  * 页面自己的 `console` 输出（2026-10-12 加）✓。
@@ -206,6 +225,13 @@ let promptFailTimes = 0
 let promptFailStatus = 0
 /** 让**下一次** /api/prompt 拖一会儿才回（2.11.0 ★11：「正在发送…」得看得见 ✓）。 */
 let promptDelayMs = 0
+/** 3.0.0 ★③：切到"这台电脑没开语音"那条路 ✓（要验"如实说"而不是假装转了 ✓）。 */
+let sttOffline = false
+/** 3.0.0 ★③/④：云识别器转写回"要 PIN"（**必须带 needPin** ✓）—— 要验 PIN 门真能弹出来 ✓。 */
+let sttNeedPin = false
+/** 3.0.0 ★④：让 `/api/login` 回"等放行"、`/api/pending` 回 pending / 401 ✓（多端授权那两屏）。 */
+let loginPending = false
+let pendingExpired = false
 /** 手机上报给桥的客户端日志（`POST /api/clientlog`）。 */
 const clientLogs = []
 /** 上传接口的并发观测（峰值同时在飞的片数）。 */
@@ -302,7 +328,8 @@ async function stubFetch(input, options = {}) {
 		// 造"网络层失败"（页面认定：电脑没开/隧道没起来）与"PIN 不对"（HTTP 401）两种情况。
 		if (loginFailures > 0) { loginFailures -= 1; throw new TypeError('Failed to fetch') }
 		if (loginStatus !== 200) return jsonResponse({ error: 'PIN 不对' }, loginStatus)
-		return jsonResponse({ ok: true })
+		// 3.0.0 ★④：`loginPending` 打开时回"PIN 对了，但这台设备要放行" ✓。
+		return jsonResponse(loginPending === true ? { ok: true, pending: true } : { ok: true })
 	}
 	if (path.startsWith('/api/permission')) {
 		if (options.method === 'POST') {
@@ -622,6 +649,42 @@ async function stubFetch(input, options = {}) {
 			balances: [{ currency: 'CNY', total: 12.34, totalText: '12.34', granted: 2, toppedUp: 10.34 }],
 		})
 	}
+	if (path.startsWith('/api/pending')) {
+		// 3.0.0 ★④：等放行那屏的两个分支 ✓（还在等 / 令牌已经没了 ✓）。
+		if (pendingExpired === true) return jsonResponse({ error: 'unauthorized' }, 401)
+		return jsonResponse({
+			ok: true, pending: true, approved: false, deviceApproval: true, waiting: 1,
+			message: '这台设备还在等放行：请在**电脑上**打开 DSH 的徽标页（或 http://127.0.0.1:<端口>/approve）点一次「放行」✓',
+		})
+	}
+	if (path.startsWith('/api/speech')) {
+		// 3.0.0 ★③：`sttOffline` 切到"这台电脑没开语音"那条路 ✓（要验"如实说" ✓）。
+		if (sttOffline === true) {
+			return jsonResponse({ ok: true, available: false, message: '这台电脑没开语音转文字（宿主的语音服务没启用）—— 语音那一条先按「录音发过去」用 ✓' })
+		}
+		if (path.startsWith('/api/speech/prepare')) {
+			return jsonResponse({ ok: true, providerId: 'local-1', message: '已经开始准备了（第一次用要下模型，慢的话几分钟）✓' })
+		}
+		return jsonResponse({
+			ok: true, available: true,
+			providers: [{
+				id: 'local-1', name: '本机小模型', location: 'host-local', languages: ['zh', 'en'],
+				phase: 'ready', message: '',
+			}],
+			selection: { providerId: 'local-1', language: 'zh' },
+			maxAudioBytes: 8 * 1024 * 1024,
+			maxDurationSeconds: 600,
+		})
+	}
+	if (path.startsWith('/api/transcribe')) {
+		// 3.0.0 复查：`sttNeedPin` 打开时回"这一项要 PIN"（**必须带 needPin** ✓）——
+		// 手机端只有看到这个字段才会把 PIN 门弹出来 ✓（不带的话云端 STT 完全没有入口 ✗）。
+		if (sttNeedPin === true) return jsonResponse({ needPin: true, error: '这一项要 PIN —— 在手机上输一次才看得到 ✓' }, 403)
+		return jsonResponse({
+			ok: true, text: '这是测试转写出来的一句话', audioSeconds: 1.2, inferenceSeconds: 0.3,
+			providerId: 'local-1', location: 'host-local',
+		})
+	}
 	return jsonResponse({ error: 'not found' }, 404)
 }
 
@@ -651,6 +714,32 @@ const dom = new JSDOM(html, {
 	beforeParse(window) {
 		window.fetch = stubFetch
 		window.EventSource = FakeEventSource
+		// 3.0.0 ★③：TTS 的开发桩 ✓（不自动结束 ✓ —— 要验"正在念"那个高亮状态 ✓）。
+		window.SpeechSynthesisUtterance = function SpeechSynthesisUtterance(text) { this.text = text; this.lang = '' }
+		window.speechSynthesis = {
+			speak(utter) { speechStub.spoken.push({ text: utter.text, lang: utter.lang }); speechStub.pending = utter },
+			cancel() { speechStub.cancelCount += 1; speechStub.pending = null },
+		}
+		// 3.0.0 ★②：通知的开发桩 ✓（权限可控 ✓）；`isSecureContext` 写死成真 ✓
+		// —— 页面那条"不是 https 就不给通知"的分支，测试里靠临时改它来验 ✓。
+		window.Notification = function Notification(title, options) {
+			this.title = String(title)
+			this.body = String(options?.body ?? '')
+			this.closed = false
+			this.close = () => { this.closed = true }
+			this.onclick = null
+			notifyStub.made.push({ title: this.title, body: this.body })
+			notifyStub.instances.push(this)
+		}
+		window.Notification.permission = 'default'
+		// ⚠️ 真浏览器在拿到权限后会**把 `permission` 改成 `granted`** ✓ —— 桩也要这么做 ✓，
+		// 不然页面问完权限、回头再读还是 `default` ✓（第一版就是这么错的 ✗：4 条断言全红 ✓）。
+		window.Notification.requestPermission = async () => {
+			notifyStub.requested += 1
+			window.Notification.permission = notifyStub.permission
+			return notifyStub.permission
+		}
+		try { Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true }) } catch { /* 无所谓 */ }
 		/*
 		 * 录音（1.5.0）：jsdom 既没有 MediaRecorder 也没有麦克风，塞一对假的进去，
 		 * 好把「开录 → 计时/电平 → 停止 → 预览 → 发送」整条链路验完。
@@ -677,14 +766,25 @@ const dom = new JSDOM(html, {
 			}
 		}
 		window.navigator.mediaDevices = {
-			getUserMedia: async () => ({ getTracks: () => [{ stopped: false, stop() { this.stopped = true } }] }),
+			getUserMedia: async () => ({ getTracks: () => [{ stopped: false, stop() { this.stopped = true; audioStub.stopped += 1 } }] }),
 		}
 		window.AudioContext = class {
-			createMediaStreamSource() { return { connect() {} } }
+			// 3.0.0 ★③「说出来 → 文字」要的几样：采样率 / 目的地 / ScriptProcessor ✓
+			// （录音电平那个 `createAnalyser` 是 1.x 就有的 ✓，一并留着 ✓）。
+			constructor(options) {
+				this.sampleRate = Number(options?.sampleRate ?? 16000)
+				this.destination = {}
+			}
+			createMediaStreamSource() { return { connect() {}, disconnect() {} } }
+			createScriptProcessor() {
+				const node = { connect() {}, disconnect() {}, onaudioprocess: null }
+				audioStub.processors.push(node)
+				return node
+			}
 			createAnalyser() {
 				return { fftSize: 512, getByteTimeDomainData: (buffer) => buffer.fill(140) }
 			}
-			close() {}
+			close() { audioStub.closed += 1 }
 		}
 		window.URL.createObjectURL = () => 'blob:fake-recording'
 		// 页面启动时用 XHR 拉 /api/boot（要真实的下载进度：XHR 的 progress 与
@@ -769,6 +869,24 @@ const dom = new JSDOM(html, {
 
 const { window } = dom
 const wait = (ms = 40) => new Promise((resolve) => setTimeout(resolve, ms))
+/**
+ * 等一个"会自己收敛的量"稳定下来 ✓（滚动位置就是这样：页面会在下一帧做锚定 ✓）。
+ *
+ * ⚠️ 为什么需要：`log.scrollTop` 在 jsdom 里是**异步**被页面自己的锚定逻辑改的 ✓ ——
+ * 固定 `await wait(90)` 会偶尔落在锚定之前 / 之后 ✓，于是同一条断言**时红时绿** ✗
+ * （2026-10-12 就撞到过：连着复跑两次才确认是偶发 ✓，第一次还以为是自己的改动弄坏的 ✓）。
+ * 这类"偶发红"最坏的地方是**教人忽略红色** ✗ —— 宁可多等一轮，也别留这种断言 ✓。
+ */
+const settled = async (read, { tries = 14, gap = 50 } = {}) => {
+	let last = read()
+	for (let index = 0; index < tries; index += 1) {
+		await wait(gap)
+		const next = read()
+		if (next === last) return next
+		last = next
+	}
+	return last
+}
 const $ = (id) => window.document.getElementById(id)
 const textOf = (id) => $(id).textContent.trim()
 const click = (node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
@@ -2593,7 +2711,7 @@ check('说明指向了下拉框或读取状态',
 		stable(nodesBefore).every((node) => nodesAfter.includes(node)),
 		`${nodesBefore.length} -> ${nodesAfter.length}`)
 	check('新消息确实画出来了', log.textContent.includes('追加一条，看你跳不跳'))
-	check('往上翻着看历史时追加消息，不抢滚动位置', log.scrollTop === 300, String(log.scrollTop))
+	check('往上翻着看历史时追加消息，不抢滚动位置', await settled(() => Math.round(log.scrollTop)) === 300, String(log.scrollTop))
 
 	// 2) 流式输出只改最后一条：前缀节点必须原地不动（否则每帧都在重置滚动）。
 	const prefix = [...log.children]
@@ -2776,7 +2894,7 @@ check('说明指向了下拉框或读取状态',
 	log.dispatchEvent(new window.Event('touchend'))
 	await wait(280)
 	check('往上滑一点就不会被拽回底部（视线不再被光标钉住）',
-		log.scrollTop === parked, `scrollTop=${log.scrollTop} 期望${parked}`)
+		await settled(() => Math.round(log.scrollTop)) === Math.round(parked), `scrollTop=${log.scrollTop} 期望${parked}`)
 	check('确实没有贴到底（贴底才是老 bug 的表现）',
 		log.scrollTop !== bottom(), `scrollTop=${log.scrollTop} 底部=${bottom()}`)
 
@@ -4350,6 +4468,356 @@ await wait(40)
 	await wait(80)
 }
 
+/* --- 3.0.0 ★①：离线优先（草稿不丢 + 离线屏看得见"哪条没发"）----------------- */
+/*
+ * 用户要的（总路线原话）：**断网可读写、恢复自动同步** ✓。
+ * 这一组的两个真缺口：① 写到一半的话**不能因为刷新/切换地址就没了** ✗；
+ * ② 整屏离线时顶部那条发件箱横幅被盖住 ✓ → 数量得在这一屏上再说一次 ✓。
+ */
+{
+	await ensureAppVisible()
+	// ① 草稿：打字 → 停手 → 存进本地 ✓；清空 → 跟着清 ✓；点输入框能放回来 ✓。
+	$('text').value = '写到一半的一句'
+	$('text').dispatchEvent(new window.Event('input', { bubbles: true }))
+	await wait(700)
+	check('打字停下 0.5 秒后草稿落进手机本地 ✓（`dshm.draft` ✓ —— 刷新/切地址都不该丢 ✗）',
+		window.localStorage.getItem('dshm.draft') === '写到一半的一句',
+		JSON.stringify(String(window.localStorage.getItem('dshm.draft')).slice(0, 30)))
+	// 模拟"页面被回收再打开"：把输入框清空、草稿留着 ✓ → 点一下输入框就该回来 ✓。
+	$('text').value = ''
+	$('text').dispatchEvent(new window.Event('focus', { bubbles: true }))
+	await wait(120)
+	check('页面被回收后再点输入框：**草稿自己回来了** ✓（不用重新打一遍 ✓）',
+		$('text').value === '写到一半的一句', JSON.stringify(String($('text').value).slice(0, 30)))
+	// 用户自己清空 → 草稿也要跟着清 ✓（绝不能在下次点进来时又冒出来 ✗）。
+	$('text').value = ''
+	$('text').dispatchEvent(new window.Event('input', { bubbles: true }))
+	await wait(700)
+	$('text').dispatchEvent(new window.Event('focus', { bubbles: true }))
+	await wait(120)
+	check('用户自己清空之后：草稿也清了 ✓、点输入框**不会再冒出来** ✗（不然像闹鬼 ✓）',
+		window.localStorage.getItem('dshm.draft') === '' && $('text').value === '',
+		`draft="${String(window.localStorage.getItem('dshm.draft')).slice(0, 20)}" text="${String($('text').value).slice(0, 20)}"`)
+
+	// ② 离线屏：箱子里有几条，必须在这屏上看得见 ✓（顶部横幅被整屏盖住了 ✓）。
+	window.localStorage.setItem('dshm.outbox', JSON.stringify([{
+		at: Date.now(), clientId: 'off-1', sessionId: 'session-ui-test', text: '离线写的一句', images: [], fileRefs: [],
+	}]))
+	window.dispatchEvent(new window.Event('offline'))
+	await wait(200)
+	check('整屏离线时：**"有几条在发件箱等着"写在正中间这一屏上** ✓（不是只在被盖住的横幅里 ✗）',
+		visible($('offline')) && $('offlineWaiting') !== null
+		&& String($('offlineWaiting').textContent).includes('1 条'),
+		$('offlineWaiting') === null ? '(没有那条)' : String($('offlineWaiting').textContent).slice(0, 50))
+	check('离线屏仍然给得出"三条出路" ✓（重试 / 看缓存 / 换地址 —— 2.x 就有 ✓，别弄丢 ✗）',
+		String($('offlineActs').textContent).includes('重试'),
+		String($('offlineActs').textContent).replace(/\s+/g, ' ').slice(0, 60))
+	/*
+	 * 🔴 3.0.0 补的真回归 ✓（写新屏时顺出来的**老毛病** ✓）：
+	 * 满屏浮层（离线屏 / 等放行屏 / PIN 门）必须当 `#app` 的**兄弟** ✓ ——
+	 * 因为它们出现的那一刻，`#app` 正是 `display:none` ✓；
+	 * 嵌在 `#app` 里 = **永远看不见** ✗（`#offline` 一直是这样 ✓，只是从来没人测"冷启动 + 离线" ✓）。
+	 */
+	check('🔴 满屏浮层是 `#app` 的**兄弟**（不是后代）✓ —— 嵌在里面 = 该显示时永远看不见 ✗',
+		$('app').contains($('offline')) === false && $('app').contains($('pending')) === false
+		&& $('app').contains($('gate')) === false,
+		`offline在内=${$('app').contains($('offline'))} pending在内=${$('app').contains($('pending'))} gate在内=${$('app').contains($('gate'))}`)
+	// 收尾：把箱子清干净 ✓（**先清 localStorage 再回到在线** ✓ —— online 会重读箱子 ✓；
+	// 第一版直接派发 online，于是箱子里那条假消息**真的被补发出去了** ✗，
+	// 还顺带把后面 ★11 那组的计数搅乱 ✓）。
+	window.localStorage.setItem('dshm.outbox', '')
+	window.dispatchEvent(new window.Event('online'))
+	// ⚠️ 这里必须**等干净** ✓：`online` 会让页面重读箱子、并可能触发一次"重连/整屏恢复"的异步收尾 ✓ ——
+	// 不等它落定就往下走，后面 ★11 那组会偶发地量到"箱子还在/横幅还是旧的" ✗
+	//（2026-10-12 撞过一次：同样代码两次一绿一红 ✓）。
+	await wait(800)
+	check('（收尾）回到在线：箱子清空、假消息一条都没被补发 ✓（不给后面的用例留状态 ✓）',
+		window.localStorage.getItem('dshm.outbox') === '')
+}
+
+/* --- 3.0.0 ★②：有事通知我（通知闭环）---------------------------------------- */
+/*
+ * 用户要的（总路线原话）：**任何需要你的事都会找到你** ✓。
+ * 硬约束已查实：`Notification` 只在**安全上下文**（https / localhost）里存在 ✗ ——
+ * 所以这一组要钉的是三条：**能用就用** ✓、**不能用就如实说** ✓（并保留"标题兜底"✓）、
+ * **不骚扰** ✓（正看着不弹 ✓、几秒钟跑完的一轮不叫 ✓）。
+ */
+{
+	await ensureAppVisible()
+	const setHidden = (value) => {
+		// ⚠️ 两处都得对 ✓：① 用 **getter** 覆盖（jsdom 的在原型上，写 value 不一定盖得住 ✗）；
+		// ② 值是字符串 **`'hidden'`/`'visible'`** ✗（第一版把布尔 `true` 塞进去 ✓ ——
+		//    页面比的是 `=== 'hidden'` ✓，于是"后台"永远不成立 ✓，4 条断言全红 ✓）。
+		const state = value === true ? 'hidden' : 'visible'
+		try { Object.defineProperty(window.document, 'visibilityState', { get: () => state, configurable: true }) } catch { /* 无所谓 */ }
+		window.document.dispatchEvent(new window.Event('visibilitychange'))
+	}
+	const originalTitle = window.document.title
+
+	click($('checkBtn'))
+	await wait(200)
+	check('通知开关在 🩺 纸里 ✓（不往工具键那排加键 ✗）、默认关 ✓、把"能不能用"说清楚 ✓',
+		visible($('notifyOn')) && $('notifyOn').checked === false
+		&& String($('notifyNote').textContent).includes('关着'),
+		`checked=${$('notifyOn').checked} note="${String($('notifyNote').textContent).slice(0, 40)}"`)
+
+	// ① 打开：**当场申请权限** ✓（浏览器要求用户点过才给 ✓），状态记在手机本地 ✓。
+	notifyStub.permission = 'granted'
+	notifyStub.requested = 0
+	click($('notifyOn'))
+	await wait(220)
+	check('打开时**当场申请权限** ✓（不是偷偷申请 ✓ 也不是从来不要 ✓）、状态写进本地 ✓',
+		notifyStub.requested === 1 && window.localStorage.getItem('dshm.notify') === '1'
+		&& String($('notifyNote').textContent).includes('权限已给'),
+		`requested=${notifyStub.requested} dshm.notify=${window.localStorage.getItem('dshm.notify')} note="${String($('notifyNote').textContent).slice(0, 30)}"`)
+
+	// ② 页面在后台 + agent 提问 → **真的弹通知** ✓（并且标题兜底也生效 ✓）。
+	setHidden(true)
+	notifyStub.made.length = 0
+	click($('checkBack'))
+	await wait(80)
+	source.emit({ t: 'interaction', id: 'notify-1', kind: 'question', payload: {} })
+	await wait(240)
+	check('⭐ 人在后台、agent 提问 → **真的弹了通知** ✓（"agent 在问你"✓）',
+		notifyStub.made.length === 1 && notifyStub.made[0].title.includes('在问你'),
+		JSON.stringify(notifyStub.made[0] ?? null))
+	check('兜底的标签标题也变了 ✓（没有权限/不支持时这条照样有效 ✓）',
+		window.document.title.includes('在问你'), window.document.title)
+	const note = notifyStub.instances.at(-1)
+	check('点通知能**把人拉回页面** ✓（`onclick` 里有 focus ✓ 且会自己关掉 ✓）',
+		note !== undefined && typeof note.onclick === 'function')
+	note?.onclick?.()
+	check('点完之后那条通知自己关掉 ✓（不堆在通知中心里 ✗）', note?.closed === true)
+
+	// ③ **正看着的时候不打扰** ✓（这条是"别变成骚扰"的关键 ✓）。
+	setHidden(false)
+	notifyStub.made.length = 0
+	source.emit({ t: 'interaction', id: 'notify-2', kind: 'question', payload: {} })
+	await wait(200)
+	check('人**正在看**的时候：不弹通知 ✓（只有振动和卡片本身 ✓）', notifyStub.made.length === 0,
+		`弹了 ${notifyStub.made.length} 条`)
+	check('回到前台时标题还原 ✓（"需要你…"不会挂一小时 ✓）',
+		window.document.title === originalTitle, window.document.title)
+
+	// ④ 跑很久的一轮结束 → 叫一声 ✓；几秒钟的 → 不叫 ✓。
+	setHidden(true)
+	notifyStub.made.length = 0
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 9600, time: Date.now() - 90000, data: { turn: 70 } } })
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9601, time: Date.now(), data: { turn: 70 } } })
+	await wait(260)
+	check('跑了几分钟才结束的那一轮 → 叫一声 ✓（"跑完了 ✓"）',
+		notifyStub.made.length === 1 && notifyStub.made[0].title.includes('跑完了'),
+		JSON.stringify(notifyStub.made[0] ?? null))
+	notifyStub.made.length = 0
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 9602, time: Date.now(), data: { turn: 71 } } })
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 9603, time: Date.now(), data: { turn: 71 } } })
+	await wait(260)
+	check('几秒钟就跑完的一轮：**不叫** ✓（每次都响 = 骚扰 ✗）', notifyStub.made.length === 0,
+		`弹了 ${notifyStub.made.length} 条`)
+
+	// ⑤ 不是安全地址（http）：**如实说** ✓、并且**开关不许留在"开着"的样子** ✗。
+	const savedNotification = window.Notification
+	try {
+		delete window.Notification
+		try { Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true }) } catch { /* 无所谓 */ }
+		click($('checkBtn'))
+		await wait(200)
+		// 先把它摆成"**没勾**"再看用户去点它 ✓（点一下 = 勾上 ✓ ——
+		// 第一版摆成 true 再点，等于**关掉** ✗，验的东西完全反了 ✓）。
+		window.localStorage.setItem('dshm.notify', '0')
+		$('notifyOn').checked = false
+		setHidden(true)
+		check('（前置）"后台"这个状态真的生效了 ✓（不然下面几条等于什么都没验 ✗）',
+			window.document.visibilityState === 'hidden', String(window.document.visibilityState))
+		click($('notifyOn'))
+		await wait(220)
+		check('不是 https（http 地址）：说清"浏览器不给通知、换 https 就好" ✓，且开关不留在开着 ✗',
+			$('notifyOn').checked === false && window.localStorage.getItem('dshm.notify') === '0'
+			&& String($('toast')?.textContent ?? '').includes('https'),
+			`checked=${$('notifyOn').checked} dshm.notify=${window.localStorage.getItem('dshm.notify')} toast="${String($('toast')?.textContent ?? '').slice(0, 40)}"`)
+	} finally {
+		window.Notification = savedNotification
+		try { Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true }) } catch { /* 无所谓 */ }
+		setHidden(false)
+		click($('checkBack'))
+		await wait(80)
+	}
+}
+
+/* --- 3.0.0 ★③：说出来 → 文字（STT，手机侧 ✓）-------------------------------- */
+/*
+ * 桥侧（`/api/speech`、`/api/transcribe`、云识别器要 PIN）已在 harness 里钉住 ✓；
+ * 这里钉**手机侧**：真的编码出一段**标准 WAV** ✗（不是随便传点东西过去 ✓）、
+ * 转出来的字**只进输入框、不自动发出去** ✓✗（这条是产品红线 ✓）、
+ * 电脑没开语音/拿不到麦克风时**如实说** ✓。
+ */
+{
+	await ensureAppVisible()
+	const b64ToBytes = (base64) => Uint8Array.from(Buffer.from(base64, 'base64'))
+	const prompts = () => requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+
+	// 让 /api/speech 说出"本机识别器 + 600 秒上限" ✓（默认桩就是这台机器的样子 ✓）。
+	click($('recBtn'))
+	await wait(220)
+	check('打开录音纸会去读语音设置 ✓，识别器写在屏幕上（本机=不上传 ✓、上限 ✓）',
+		String($('sttNote').textContent).includes('识别器') && String($('sttNote').textContent).includes('本机')
+		&& String($('sttNote').textContent).includes('600'),
+		String($('sttNote').textContent).slice(0, 70))
+
+	// ① 录一段（用假采样灌进去 ✓）→ 停下来 → 应该编码成 WAV 并请电脑转写 ✓。
+	const promptsBefore = prompts()
+	const textBefore = String($('text').value)
+	audioStub.processors.length = 0
+	click($('sttToggle'))
+	await wait(160)
+	check('按「说一句」：真的开始听了 ✓（键变成"说完了" ✓、屏幕写着正在听 ✓）',
+		$('sttToggle').textContent.includes('说完了') && String($('sttNote').textContent).includes('正在听'),
+		`toggle="${$('sttToggle').textContent}" note="${String($('sttNote').textContent).slice(0, 30)}"`)
+	const processor = audioStub.processors.at(-1)
+	// 灌 1.2 秒 16k 单声道正弦波 ✓（0.5 秒以下会被"太短"挡掉 ✓）。
+	const samples = new Float32Array(19200)
+	for (let index = 0; index < samples.length; index += 1) samples[index] = Math.sin(index / 12) * 0.4
+	processor?.onaudioprocess?.({ inputBuffer: { getChannelData: () => samples } })
+	await wait(60)
+	click($('sttToggle'))
+	await wait(520)
+	const transcribeCall = requests.filter((entry) => entry.path.startsWith('/api/transcribe')).at(-1)
+	const sentAudio = transcribeCall === undefined ? '' : String(JSON.parse(transcribeCall.options.body).audioBase64 ?? '')
+	const bytes = sentAudio === '' ? new Uint8Array() : b64ToBytes(sentAudio)
+	const head = String.fromCharCode(...bytes.subarray(0, 4))
+	const wave = String.fromCharCode(...bytes.subarray(8, 12))
+	check('☆ 传上去的是**标准 WAV** ✓（RIFF/WAVE 头 ✓ —— 宿主只认这个 ✓，随便塞点东西过去会被拒 ✗）',
+		transcribeCall !== undefined && head === 'RIFF' && wave === 'WAVE',
+		`head="${head}" wave="${wave}" 字节=${bytes.length}`)
+	check('WAV 头里写的是 16k / 单声道 / 16bit ✓（自己编码就得自己写对 ✓）',
+		bytes.length > 44 && new DataView(bytes.buffer, bytes.byteOffset).getUint32(24, true) === 16000
+		&& new DataView(bytes.buffer, bytes.byteOffset).getUint16(22, true) === 1
+		&& new DataView(bytes.buffer, bytes.byteOffset).getUint16(34, true) === 16,
+		bytes.length > 44
+			? `rate=${new DataView(bytes.buffer, bytes.byteOffset).getUint32(24, true)} ch=${new DataView(bytes.buffer, bytes.byteOffset).getUint16(22, true)} bits=${new DataView(bytes.buffer, bytes.byteOffset).getUint16(34, true)}`
+			: '(太短)')
+	check('录完把麦克风**放掉**了 ✓（`close()` 被调用 ✓ —— 不能偷偷一直拿着麦克风 ✗）',
+		audioStub.closed >= 1, `close ${audioStub.closed} 次`)
+	/*
+	 * ⚠️ 上面那条只验了 `ctx.close()` ✓（复查点名：桩里 `close()` 与 `track.stop()` 是**两件事** ✗）——
+	 * 把 `track.stop()` 整行删掉，那条断言照样绿 ✓，而手机上**麦克风指示灯会一直亮着** ✓。
+	 * 这里补上真正的那一半：**轨道被停掉** ✓（桩里每次 `getUserMedia` 都记一笔 ✓）。
+	 */
+	check('⚠️ 而且**麦克风轨道真的被 stop 了** ✓（只关 AudioContext 不够 ✓ —— 指示灯会一直亮 ✗）',
+		audioStub.stopped >= 1, `track.stop ${audioStub.stopped} 次`)
+	check('转好的文字**只进输入框** ✓、屏幕说清"改好再发" ✓', 
+		String($('text').value).includes('这是测试转写') && String($('sttNote').textContent).includes('输入框'),
+		`text="${String($('text').value).slice(0, 30)}" note="${String($('sttNote').textContent).slice(0, 30)}"`)
+	check('⚠️ **没有替用户发出去** ✗（prompt 数不变 ✓ —— 这条是产品红线 ✓）',
+		prompts() === promptsBefore, `${promptsBefore} → ${prompts()}（text 之前是 "${textBefore.slice(0, 12)}"）`)
+
+	/*
+	 * ⚠️ 3.0.0 复查抓到的**功能性**缺口（同 A2 那一类 ✓）：云识别器转写要现输 PIN ✓ ——
+	 * 而手机端**只有**收到 `needPin: true` 才会把 PIN 门弹出来 ✓。
+	 * 服务端第一版不带这个字段 ✓ → 用户只看到一行"要 PIN"的字 ✓、**没有任何输入入口** ✗。
+	 * 这里把服务端那条回包接上**真页面**验一遍 ✓（harness 里验的是回包字段 ✓，这里验"门真的会弹" ✓）。
+	 */
+	sttNeedPin = true
+	audioStub.processors.length = 0
+	click($('sttToggle'))
+	await wait(160)
+	const processor2 = audioStub.processors.at(-1)
+	processor2?.onaudioprocess?.({ inputBuffer: { getChannelData: () => samples } })
+	await wait(60)
+	click($('sttToggle'))
+	await wait(560)
+	check('⭐ 云端识别器要 PIN：**PIN 门真的弹出来了** ✓（服务端不带 needPin 时用户完全没有输入入口 ✗）',
+		visible($('gate')), `gate=${window.getComputedStyle($('gate')).display}`)
+	sttNeedPin = false
+	// 把门走完，回到 app ✓（不然会挡住后面几步的"看得见"判断 ✓）。
+	$('pin').value = CORRECT_PIN
+	click($('gateBtn'))
+	await wait(300)
+
+	// ② 电脑没开语音：**如实说**、并且把键禁用 ✓（不是点了没反应 ✗）。
+	sttOffline = true
+	click($('recBack'))
+	await wait(60)
+	click($('recBtn'))
+	await wait(220)
+	check('电脑没开语音时：屏幕上说"没开" ✓、那个键**禁用** ✓（不假装能录 ✓）',
+		$('sttToggle').disabled === true && String($('sttNote').textContent).includes('没开'),
+		`disabled=${$('sttToggle').disabled} note="${String($('sttNote').textContent).slice(0, 40)}"`)
+	sttOffline = false
+	click($('recBack'))
+	await wait(60)
+}
+
+/* --- 3.0.0 ★③：念出来（TTS，浏览器自带 ✓）---------------------------------- */
+/*
+ * 上游查实：宿主**没有** TTS ✓（全仓只有 speech-to-text ✓）→ 用 `speechSynthesis` ✓。
+ * 三条产品规矩要钉：**代码不念** ✗、**超长截断并说明** ✓、**再点一下停** ✓。
+ * ⚠️ 这一段**放在会折腾连接的用例（★8/★11）之前** ✓ —— 合成消息会被"重连后重铺"冲掉 ✗
+ * （这条教训写在 ★8 那段注释里 ✓）。
+ */
+{
+	await ensureAppVisible()
+	// 造一条带代码块、且很长的回答 ✓（长度 > 1200 字，用来验截断 ✓）。
+	const longTail = '这一段是正文，应该被念出来。'.repeat(120)
+	const withCode = '先说结论 ✓\n```js\nconst secret = "这行代码不该被念";\n```\n' + longTail
+	source.emit({ t: 'event', event: { type: 'assistant/message', seq: 900, time: Date.now(), data: {
+		turn: 50, step: 1, message: { id: 'tts-1', role: 'assistant', content: [{ type: 'text', text: withCode }] },
+	} } })
+	await wait(320)
+	const speakButtons = Array.from($('log').querySelectorAll('button[data-speak]'))
+	check('助手气泡上多了「🔊」键 ✓（用户的原话是"回答念出来" ✓ —— 只给回答加 ✓）',
+		speakButtons.length >= 1, `speak 键 ${speakButtons.length} 个`)
+	const mine = speakButtons.at(-1)
+
+	// ① 点它 → 真的调了 speechSynthesis.speak ✓，而且**代码被去掉** ✓、**超长截断** ✓。
+	const before = speechStub.spoken.length
+	click(mine)
+	await wait(140)
+	const spoken = speechStub.spoken.at(-1)
+	check('点 🔊：真的交给手机去念了 ✓（`speak()` 被调用 ✓，语言 zh-CN ✓）',
+		speechStub.spoken.length === before + 1 && spoken?.lang === 'zh-CN',
+		JSON.stringify({ 次数: speechStub.spoken.length - before, lang: spoken?.lang }))
+	check('**代码块不念** ✗（念 `const …` 是折磨 ✓）—— 但正文照念 ✓',
+		spoken !== undefined && spoken.text.includes('这段不该被念') === false
+		&& spoken.text.includes('这一段是正文') && spoken.text.includes('（代码略）'),
+		String(spoken?.text ?? '').slice(0, 60))
+	check('超长会**截断** ✓（1200 字封顶 ✓，并当场说明"只念前面一段" ✓ —— 不装作念完了 ✗）',
+		spoken !== undefined && spoken.text.length === 1200
+		&& String($('banner')?.textContent ?? '').includes('只念前面一段'),
+		`长度=${spoken?.text.length} banner="${String($('banner')?.textContent ?? '').slice(0, 30)}"`)
+	check('正在念的时候那个键是亮的 ✓（`on` ✓ —— 用户知道"现在在说话" ✓）',
+		mine.classList.contains('on') && mine.textContent === '⏹')
+
+	// ② 再点一下 = 停 ✓（并且状态复位 ✓）。
+	click(mine)
+	await wait(120)
+	check('再点一下：`cancel()` 被调用 ✓、键复位 ✓（不用等它念完 ✓）',
+		speechStub.cancelCount >= 1 && mine.classList.contains('on') === false && mine.textContent === '🔊',
+		`cancel=${speechStub.cancelCount} on=${mine.classList.contains('on')}`)
+
+	// ③ 念完了自己也要复位 ✓（用桩手动触发 onend ✓）。
+	click(mine)
+	await wait(120)
+	const utter = speechStub.pending
+	check('（前置）念着的时候桩里留着那条 utterance ✓', utter !== null && mine.classList.contains('on'))
+	utter?.onend?.()
+	await wait(120)
+	check('念完（`onend`）后键自己复位 ✓（不会一直亮着 ✗）',
+		mine.classList.contains('on') === false && mine.textContent === '🔊')
+
+	// ④ 浏览器不支持时**如实说** ✓（不静默失败 ✗）。
+	const saved = window.speechSynthesis
+	try {
+		delete window.speechSynthesis
+		click(mine)
+		await wait(120)
+		check('浏览器没有"念出来"能力时：说人话 ✓（不是点了没反应 ✗）',
+			String($('toast')?.textContent ?? '').includes('不支持'), String($('toast')?.textContent ?? '').slice(0, 30))
+	} finally {
+		window.speechSynthesis = saved
+	}
+}
+
 /* --- 2.11.0 ★8：图片对比 / 相册滑动 ----------------------------------------- */
 /*
  * 用户要的（池子原话）：「多张图并排对比（挑封面 ✓）、大图左右滑动切换 ✓」。
@@ -4490,6 +4958,12 @@ await wait(40)
 		} } })
 	}
 	const q = (selector) => $('log').querySelector(selector)
+	/*
+	 * ⚠️ 取**最后**一个匹配 ✓，不是第一个 ✗：日志里在这条消息**之前**还可能有别的代码块/表格
+	 * （任何一段用例往对话区放过东西都会 ✓ —— 3.0.0 加"念出来"用例时就当场踩到：
+	 *  它前面那条消息里也有代码块 ✓，`querySelector` 拿到的根本不是本用例的那一段 ✗）。
+	 */
+	const lastOf = (selector) => Array.from($('log').querySelectorAll(selector)).at(-1)
 
 	// ① 代码块：认出围栏 ✓ / **往返一字不差** ✓ / 高亮真的标了 ✓ / 注入被转义 ✓。
 	//    样本**故意挑最容易被高亮啃掉的字符** ✓（转义反斜杠、反引号、URL 里的 #、十六进制、
@@ -4505,7 +4979,7 @@ await wait(40)
 	].join('\n')
 	say('看这段：\n```js\n' + code + '\n```\n完了', 700)
 	await wait(240)
-	const pre = q('pre.code')
+	const pre = lastOf('pre.code')
 	const logHtml = $('log').innerHTML
 	check('围栏代码块被认出来了（`<pre class="code">` ✓）', pre !== null, pre === null ? '没有 pre.code' : '')
 	check('⚠️ 往返：渲染出来的代码文字与原文**一字不差** ✓（高亮只加标签、绝不啃内容 ✗ —— 样本含转义反斜杠/反引号/URL 的 #/十六进制/中文/emoji ✓）',
@@ -4530,8 +5004,8 @@ await wait(40)
 	// ② 行内格式：`**粗**` 与反引号代码 ✓（内容同样要一字不差 ✓）。
 	say('这里有 **粗体** 和 `inlineCode` 两样', 701)
 	await wait(200)
-	const strong = q('.bubble strong')
-	const inline = q('code.inline')
+	const strong = lastOf('.bubble strong')
+	const inline = lastOf('code.inline')
 	check('行内 `**粗**` 与 `` `代码` `` 都认 ✓（内容一字不差 ✓）',
 		strong !== null && strong.textContent === '粗体'
 		&& inline !== null && inline.textContent === 'inlineCode',
@@ -4541,7 +5015,7 @@ await wait(40)
 	const longCode = Array.from({ length: 25 }, (_, i) => `const line${i} = ${i}  // 第 ${i} 行`).join('\n')
 	say('```js\n' + longCode + '\n```', 702)
 	await wait(200)
-	const codeFold = q('details.codefold')
+	const codeFold = lastOf('details.codefold')
 	check('长代码块默认折起来 ✓（`<details class="codefold">` 且没 open ✓ —— 原生折叠，展开不跳滚动 ✓）',
 		codeFold !== null && codeFold.open === false
 		&& String(codeFold.querySelector('summary')?.textContent ?? '').includes('25 行'),
@@ -4550,7 +5024,7 @@ await wait(40)
 	// ④ 表格：连续 `|` 行成表 ✓ + 外面那层能横滑 ✓（手机读表格的关键 ✓）。
 	say('| 列一 | 列二 | 列三 |\n| --- | --- | --- |\n| a | b | c |\n| d | e | f |', 703)
 	await wait(200)
-	const wrap = q('.tablewrap')
+	const wrap = lastOf('.tablewrap')
 	check('Markdown 表格被画成真表格 ✓（3 列表头 + 2 行数据 ✓）',
 		wrap !== null && wrap.querySelectorAll('th').length === 3 && wrap.querySelectorAll('tbody tr').length === 2,
 		wrap === null ? '没有 .tablewrap' : `th=${wrap.querySelectorAll('th').length} tr=${wrap.querySelectorAll('tbody tr').length}`)
@@ -4589,7 +5063,7 @@ await wait(40)
 	const longText = Array.from({ length: 30 }, (_, i) => `第 ${i + 1} 行内容`).join('\n')
 	say(longText, 704)
 	await wait(220)
-	const fold = q('details.fold')
+	const fold = lastOf('details.fold')
 	check('长回答默认折起来 ✓，且**开头 8 行留在外面** ✓（结论通常在开头 ✓）、summary 报出行数 ✓',
 		fold !== null && fold.open === false
 		&& String(fold.querySelector('summary')?.textContent ?? '').includes('共 30 行')
@@ -4615,7 +5089,7 @@ await wait(40)
 	// ⑦ 超长（>24KB）降级：只转义、不跑正则 ✓ **但仍然要折** ✓（冷视角复查：最该折的那条原来恰恰不折 ✗）。
 	say(Array.from({ length: 40 }, (_, i) => `第${i + 1}段 ` + 'x'.repeat(700)).join('\n'), 705)
 	await wait(260)
-	const plainLong = q('.plainlong')
+	const plainLong = lastOf('.plainlong')
 	const bigFold = Array.from($('log').querySelectorAll('details.fold')).at(-1)
 	check('单条 >24KB 时降级成纯文本 ✓（`.plainlong` ✓），**而且照样折** ✓（只露开头几行 ✓ —— 不跑正则、成本不变 ✓）',
 		plainLong !== null && bigFold !== null && bigFold.open === false
@@ -4989,6 +5463,52 @@ await wait(40)
 	await wait(80)
 	click($('checkBack'))
 	await wait(80)
+}
+
+/* --- 3.0.0 ★④：等放行那一屏（手机侧）---------------------------------------- */
+/*
+ * 桥侧规矩（默认关 / 防锁死 / 只给本机）在 harness 里钉 ✓；这里钉**手机侧**：
+ * ① PIN 对了但设备要放行 → **当场进"等放行"那屏** ✓（不是先说"登录失败"再打转 ✗）；
+ * ② 令牌已经没了（401）→ **回登录页** ✓，**不是**"放行了 → 刷新"循环 ✗（页面自己抖 ✗）。
+ */
+{
+	// ① 退出登录 → 回到 PIN 门 → 输对 PIN（桩回 pending ✓）→ 应当看到"等放行"那屏 ✓。
+	loginPending = true
+	pendingExpired = false
+	window.confirm = () => true
+	click($('logout'))
+	await wait(260)
+	check('（前置）退出登录后回到 PIN 门 ✓', visible($('gate')),
+		`gate=${window.getComputedStyle($('gate')).display}`)
+	$('pin').value = CORRECT_PIN
+	click($('gateBtn'))
+	await wait(300)
+	check('⭐ PIN 对了但设备在等放行 → **当场进"等放行"那屏** ✓（不说"登录失败"✗、也不来回去撞 ✗）',
+		visible($('pending')) && visible($('gate')) === false
+		&& String($('pendingWhy').textContent).includes('电脑'),
+		`pending=${visible($('pending'))} gate=${visible($('gate'))} app=${window.getComputedStyle($('app')).display} `
+		+ `gateError="${String($('gateError').textContent).slice(0, 30)}" auto="${String($('pendingAuto').textContent).slice(0, 30)}" `
+		+ `loginPending=${loginPending}`)
+	check('那一屏说清了"每 3 秒自己问一次" ✓（用户知道不用手点 ✓），也给「怎么做」一个键 ✓',
+		String($('pendingAuto').textContent).includes('等') && $('pendingHow') !== null,
+		String($('pendingAuto').textContent).slice(0, 40))
+
+	// ② 令牌已经没了（401）→ 回登录页 ✓（不是"放行了→刷新"的循环 ✗）。
+	pendingExpired = true
+	click($('pendingRetry'))
+	await wait(300)
+	check('等放行那屏遇到 401：**回登录页** ✓ 并说清"登录已失效" ✓（否则会变成刷新循环 ✗）',
+		visible($('pending')) === false && visible($('gate'))
+		&& String($('gateError').textContent).includes('失效'),
+		`pending=${visible($('pending'))} gate=${visible($('gate'))} err="${String($('gateError').textContent).slice(0, 24)}"`)
+
+	// 收尾：恢复正常登录 ✓，别给后面的用例留下"退出了"的状态 ✓。
+	loginPending = false
+	pendingExpired = false
+	$('pin').value = CORRECT_PIN
+	click($('gateBtn'))
+	await wait(320)
+	check('（收尾）恢复正常登录：`#app` 回来了 ✓', window.getComputedStyle($('app')).display !== 'none')
 }
 
 /* --- stale-page self-heal ------------------------------------------------ */

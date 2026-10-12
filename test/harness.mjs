@@ -16,7 +16,7 @@ import { existsSync } from 'node:fs'
 import { createServer, request } from 'node:http'
 import { spawnSync } from 'node:child_process'
 import net from 'node:net'
-import { homedir, tmpdir } from 'node:os'
+import { homedir, tmpdir, networkInterfaces } from 'node:os'
 import { join } from 'node:path'
 
 /*
@@ -3146,6 +3146,298 @@ await new Promise((resolve) => setTimeout(resolve, 150))
 const afterLogoutTokens = JSON.parse(await readFile(tokensFile, 'utf8')).tokens ?? {}
 check('logout also clears the token on disk', Object.keys(afterLogoutTokens).length === 0,
 	`${Object.keys(afterLogoutTokens).length} token(s) left`)
+
+/* --- 语音转文字（3.0.0 ★③「语音往返」：说 → 文字）-----------------------------
+ * 上游是宿主的 `speechController`（**实验性** ✓，2026-10-12 用只读 inspect 查实它在当前 profile 里是活的 ✓）。
+ * 桥这边的规矩是这一组要钉的：**不在就说不在** ✓、**云识别器要现输 PIN** ✓（音频会离开这台电脑 ✗）、
+ * **超上限先拒** ✓、日志**只记字数不记内容** ✓。这里用一个假服务替身 ✓（真转写要靠真机 ✓）。
+ */
+{
+	/*
+	 * ⚠️ 前面那条"退出登录"的用例把 cookie 作废了 ✓ —— 这一组要**重新登一次** ✓
+	 * （我第一次写完就吃到了 9 个 401 ✗：断言全红但原因跟语音一点关系都没有 ✓）。
+	 */
+	const relogin = await fetch(`${base}/api/login`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
+	})
+	const freshCookie = (relogin.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ')
+	if (freshCookie !== '') { cookie = freshCookie; authed.headers.cookie = freshCookie }
+
+	const json = async (path, options) => {
+		const res = await fetch(`${base}${path}`, options)
+		return { status: res.status, body: await res.json().catch(() => ({})) }
+	}
+	const post = (path, payload, headers = {}) => json(path, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json', ...headers },
+		body: JSON.stringify(payload),
+	})
+
+	// ① 服务不在：**如实说**"没开" ✓ —— 绝不能假装转出一个空字符串 ✗。
+	delete services.speechController
+	const absent = await json('/api/speech', authed)
+	check('宿主没开语音服务时：`available:false` + 一句人话 ✓（不假装成功 ✗）',
+		absent.status === 200 && absent.body.available === false && String(absent.body.message).includes('没开'),
+		JSON.stringify(absent.body).slice(0, 90))
+	const absentTranscribe = await post('/api/transcribe', { audioBase64: 'QUJD' })
+	check('没开服务时转写：503 + 说清原因 ✓（不是 200 空文字 ✗）',
+		absentTranscribe.status === 503 && String(absentTranscribe.body.error).includes('没开'),
+		JSON.stringify(absentTranscribe.body).slice(0, 90))
+
+	// ② 装一个假服务：一个**本地**识别器 + 一个**云**识别器 ✓（位置不同，闸门就该不同 ✓）。
+	const seen = []
+	/** 3.0.0 复查：让 `prepare` 抛错 ✓（"忘了 await" 会让 rejection 逃出去打死整个进程 ✓）。 */
+	let prepareFails = false
+	services.speechController = {
+		catalog: () => ({
+			providers: [
+				{ id: 'local-1', name: '本机小模型', location: 'host-local', languages: ['zh', 'en'], preparation: { phase: 'ready' } },
+				{ id: 'cloud-1', name: '云端识别', location: 'cloud', languages: ['zh'], preparation: { phase: 'ready' } },
+			],
+			selection: { providerId: 'local-1', language: 'zh' },
+			maxAudioBytes: 1024 * 1024,
+			maxDurationSeconds: 60,
+		}),
+		prepare: async (providerId) => {
+			// ⚠️ **必须 async** ✗（3.0.0 复查抓到的崩溃级 bug 就是这么漏过去的 ✓）：
+			// 真宿主的 `prepare` 是 async ✓，而"下模型失败"是这条路的常态 ✓ ——
+			// 用同步替身测，"忘了 await" 这个 bug **永远不可能被触发** ✓。
+			if (prepareFails === true) throw new Error('下模型失败（测试桩）')
+			seen.push(['prepare', providerId])
+		},
+		transcribe: async (request) => {
+			seen.push(['transcribe', request.providerId, String(request.audioBase64 ?? '').length, request.language])
+			return { text: '把这句话变成文字', audioSeconds: 3.2, inferenceSeconds: 0.4 }
+		},
+	}
+	const catalog = await json('/api/speech', authed)
+	check('语音设置读得出来：识别器 + 位置（本地/云 ✓）+ 宿主的两个上限 ✓（手机靠它决定录多久 ✓）',
+		catalog.body.available === true && catalog.body.providers.length === 2
+		&& catalog.body.providers[0].location === 'host-local' && catalog.body.providers[1].location === 'cloud'
+		&& catalog.body.maxAudioBytes === 1024 * 1024 && catalog.body.maxDurationSeconds === 60,
+		JSON.stringify(catalog.body).slice(0, 140))
+
+	// ③ 本地识别器：登录就能转 ✓（不额外要 PIN ✓ —— 音频不出这台电脑 ✓）。
+	const local = await post('/api/transcribe', { audioBase64: 'QUJD' })
+	check('本机识别器：登录就能转 ✓、原样回文字与秒数 ✓、把 provider / 语言交给宿主 ✓',
+		local.status === 200 && local.body.text === '把这句话变成文字' && local.body.audioSeconds === 3.2
+		&& seen.some((row) => row[0] === 'transcribe' && row[1] === 'local-1' && row[2] === 4 && row[3] === 'zh'),
+		JSON.stringify({ status: local.status, text: local.body.text, seen: seen.slice(-1) }))
+
+	// ④ 云识别器：**必须现输 PIN** ✓（音频要离开这台电脑 ✗）。
+	const cloudNoPin = await post('/api/transcribe', { audioBase64: 'QUJD', providerId: 'cloud-1' })
+	check('云识别器不带 PIN：403 ✓（音频会出这台电脑 ✗）', cloudNoPin.status === 403, JSON.stringify(cloudNoPin.body).slice(0, 80))
+	const cloudPin = await post('/api/transcribe', { audioBase64: 'QUJD', providerId: 'cloud-1', pin: config.pin })
+	check('云识别器带对 PIN：转 ✓（不是"永久禁止"，是"每次本人点头" ✓）',
+		cloudPin.status === 200 && cloudPin.body.text.length > 0, JSON.stringify(cloudPin.body).slice(0, 80))
+
+	// ⑤ 超上限：**先拒再传** ✓（2 MB base64 ≈ 1.5 MB 音频 > 宿主的 1 MB ✓）。
+	const big = await post('/api/transcribe', { audioBase64: 'A'.repeat(2 * 1024 * 1024) })
+	check('超过宿主的单次上限：413 + 说清"约多少 MB / 上限多少" ✓（不给宿主送大包 ✗）',
+		big.status === 413 && String(big.body.error).includes('超过') && String(big.body.error).includes('MB'),
+		String(big.body.error ?? '').slice(0, 90))
+
+	// ⑥ 「准备识别器」转发给宿主 ✓（第一次用要下模型 ✓）。
+	const prepared = await post('/api/speech/prepare', {})
+	check('「准备识别器」转发给宿主 ✓（第一次用要下模型的出路 ✓）',
+		prepared.status === 200 && seen.some((row) => row[0] === 'prepare' && row[1] === 'local-1'),
+		JSON.stringify(prepared.body).slice(0, 80))
+	/*
+	 * 🔴 3.0.0 复查抓到的**崩溃级**回归 ✓：真宿主的 `prepare` 是 **async** ✓，而失败（下模型失败）是常态 ✓ ——
+	 * 第一版没 `await` ✗ → rejection 逃出那个 try/catch ✗ → unhandled rejection →
+	 * Node ≥15 默认 `--unhandled-rejections=throw` = **整个 DSH 进程被打死** ✓
+	 *（而同一刻已经先回了"已经开始准备了 ✓" ✗，用户看到的是"手机上说着准备、电脑上全掉线" ✓）。
+	 * 假替身也一并改成 async ✓ —— 同步替身下这个 bug **永远不可能被测出来** ✓。
+	 */
+	prepareFails = true
+	const prepFail = await post('/api/speech/prepare', {})
+	check('🔴 宿主准备失败（async reject）：回 503 ✓、**而且这个进程还活着** ✓（漏 await 会打死整个 DSH ✗）',
+		prepFail.status === 503 && String(prepFail.body.error).includes('准备不了')
+		&& (await json('/api/speech', authed)).status === 200,
+		JSON.stringify(prepFail.body).slice(0, 90))
+	prepareFails = false
+
+	/*
+	 * 🔴 3.0.0 复查抓到的**功能性**回归 ✓：云识别器的 403 少了 `needPin: true` ✗ →
+	 * 手机端只在看到这个字段时才**把 PIN 门弹出来** ✓（`mobile.html` 的 api() 分支 ✓）→
+	 * 不带的话：用户只看到一行"要 PIN"的字 ✓、**没有任何地方能输入 PIN** ✗ ——
+	 * "云端转写要现输 PIN"这句写进了文案、注释、harness，就是接不上 ✓（剪贴板/截屏同款 ✓，一并修了 ✓）。
+	 */
+	const needPin = await post('/api/transcribe', { audioBase64: 'QUJD', providerId: 'cloud-1' })
+	check('🔴 云识别器不带 PIN 的 403 **必须带 `needPin: true`** ✓（否则手机上根本没有输 PIN 的入口 ✗）',
+		needPin.status === 403 && needPin.body.needPin === true, JSON.stringify(needPin.body).slice(0, 90))
+
+	// ⑦ 日志里**只有字数/秒数** ✓，**绝不记转出来的内容** ✗（那可能是家里说的话 ✓）—— 走诊断包看 ✓。
+	const diag = await (await fetch(`${base}/api/diag`, authed)).text()
+	const voiceLines = diag.split('\n').filter((line) => line.includes('语音转文字'))
+	check('日志：有"语音转文字：N 字"这类行 ✓，但**没有转出来的内容** ✗（隐私 ✓）',
+		voiceLines.length > 0 && /语音转文字：\d+ 字/.test(diag) && diag.includes('把这句话变成文字') === false,
+		(voiceLines[0] ?? '(没有)').slice(0, 70))
+	delete services.speechController
+}
+
+/* --- 多端授权（3.0.0 ★④）-----------------------------------------------------
+ * 用户要的（总路线原话）：**新设备进来自动失效 + 一次性放行** ✓。
+ * 这一组的重点**不是"能不能拦"** ✗，而是三条**防锁死**的规矩 ✓（拦错了等于把自己关在门外 ✗）：
+ *   ① 默认关 ✓（安全类功能一律默认关 ✓）；
+ *   ② **一台已放行的设备都没有时，直接放行** ✓ —— 全新安装 / 全踢掉之后，下一次登录永远进得来 ✓；
+ *   ③ 放行入口**只在本机（loopback）** ✓ —— 手机（隧道/局域网）打不开 ✓（这比"再输一次 PIN"更接近本人 ✓）。
+ */
+{
+	const readConfig = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeConfig = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...await readConfig(), ...patch }, null, 2), 'utf8')
+	// 用 `x-forwarded-for` 假装"另一台设备" ✓（本机连接才会被采信 ✓，见 clientIp ✓）。
+	const loginAs = async (ip) => {
+		const response = await fetch(`${base}/api/login`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/json', ...(ip === undefined ? {} : { 'x-forwarded-for': ip }) },
+			body: JSON.stringify({ pin: config.pin }),
+		})
+		const body = await response.json().catch(() => ({}))
+		const jar = (response.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ')
+		return { status: response.status, body, cookie: jar }
+	}
+	const statusOf = async (path, jar) => (await fetch(`${base}${path}`, { headers: { cookie: jar } })).status
+
+	// ① 默认关：登录就进得来 ✓（老行为一个字不改 ✓）。
+	const normal = await loginAs('203.0.113.11')
+	check('「多端授权」默认关：登录不会被拦住 ✓（老行为不变 ✓）',
+		normal.status === 200 && normal.body.pending !== true && await statusOf('/api/bootstrap', normal.cookie) === 200,
+		JSON.stringify(normal.body))
+
+	// ② 打开它 + **一台已放行的设备都没有** ✓ → 直接放行 ✓（**防锁死**的第一条 ✓）。
+	//    ⚠️ 注意顺序 ✗：先得把设备全踢掉，否则上面那次登录留下的已放行设备还在 ✓
+	//    （那我就是在测"有可信设备时该拦"✗，不是测"没有任何可信设备时不许锁死" ✓）。
+	const seed = await loginAs('203.0.113.91')
+	await fetch(`${base}/api/logins/revoke`, {
+		method: 'POST', headers: { cookie: seed.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ pin: config.pin, all: true }),
+	})
+	await writeConfig({ deviceApproval: true })
+	const first = await loginAs('203.0.113.12')
+	check('打开了多端授权，但一台已放行的设备都没有 → **直接放行** ✓（否则清了 cookie 就是把自己关在门外 ✗）',
+		first.status === 200 && first.body.pending !== true && await statusOf('/api/bootstrap', first.cookie) === 200,
+		JSON.stringify(first.body))
+
+	// ③ 现在**有一台可信设备了** ✓ → 第二台新设备（另一个地址）必须**等放行** ✓。
+	const second = await loginAs('203.0.113.13')
+	check('第二台新设备：回包里就写着 pending ✓（手机据此直接进"等放行"那一屏 ✓，不来回打转 ✗）',
+		second.status === 200 && second.body.pending === true, JSON.stringify(second.body))
+	check('等放行的设备：**业务接口一律 401** ✓、但 `/api/pending` 能问 ✓（它得知道"放行了没" ✓）',
+		await statusOf('/api/bootstrap', second.cookie) === 401
+		&& await statusOf('/api/stream?sessionId=x', second.cookie) === 401
+		&& await statusOf('/api/pending', second.cookie) === 200,
+		`bootstrap=${await statusOf('/api/bootstrap', second.cookie)} pending=${await statusOf('/api/pending', second.cookie)}`)
+	const pendingBody = await (await fetch(`${base}/api/pending`, { headers: { cookie: second.cookie } })).json()
+	check('"等放行"那一屏拿到的话是**人话** ✓（说清"去电脑上点一下"✓，不含糊 ✗）',
+		pendingBody.pending === true && String(pendingBody.message).includes('电脑'), JSON.stringify(pendingBody).slice(0, 90))
+
+	// ④ 放行页只在本机给 ✓（这里从本机连 ✓）—— 要能列出**那一台**、并给两个键 ✓。
+	//    ⚠️ 认设备要**按来源地址认** ✓：页面上可能同时列着好几台在等放行的（前面用例留下的 ✓），
+	//    只按"第一个链接"取 id 会**处理错设备** ✗（第一版就是这么错的 ✓，两条断言全红 ✓）。
+	const idFor = (html, ip, action) => {
+		const row = new RegExp(`<b>[^<]*</b><div class="meta">${String(ip).replace(/\./g, '\\.')}[^<]*</div></div><div class="acts">[\\s\\S]{0,200}?action=${action}&id=([0-9a-f]+)`)
+		return row.exec(html)?.[1] ?? ''
+	}
+	const page = await fetch(`${base}/approve`)
+	const pageText = await page.text()
+	check('电脑上的放行页：列得出那台等放行的设备（名字 + 来源 + 时间 ✓）、并且给「放行 / 拒绝」两个键 ✓',
+		page.status === 200 && pageText.includes('放行') && pageText.includes('拒绝') && pageText.includes('203.0.113.13'),
+		pageText.includes('203.0.113.13') ? '页面里有那台设备 ✓' : '页面里没有那台设备 ✗')
+	const id = idFor(pageText, '203.0.113.13', 'approve')
+	check('放行页给的是**设备短 id**（不是令牌本身 ✓ —— 令牌是能直接用的凭证 ✗）', id !== '', id)
+
+	/*
+	 * 🔴 这一条是**真洞的回归** ✓（自己复查时抓到的 ✓）：隧道是**本机进程** ✓ ——
+	 * 公网请求转进来时 socket 对端**就是 127.0.0.1** ✓ → 只看 socket 的话，
+	 * `https://…ts.net/approve` 从公网也打得开 ✗ → 谁知道 PIN、谁就能给自己放行 ✓，
+	 * 而"新设备要你点头"防的正是**PIN 泄露**这一种 ✓（那就白做了 ✗）。
+	 * 所以判据必须走 `clientIp()` ✓（会认 `cf-connecting-ip` / `x-forwarded-for` 最后一跳 ✓）。
+	 * 测试里模拟"隧道转进来"：本机连接 + 带上 `cf-connecting-ip` ✓ → 应当 403 ✓。
+	 */
+	const viaTunnel = await fetch(`${base}/approve`, { headers: { 'cf-connecting-ip': '203.0.113.77' } })
+	check('🔴 隧道转进来的放行页（本机 socket + 真实来源在头里）→ **403** ✓（否则 PIN 一泄露就能自己放行 ✗）',
+		viaTunnel.status === 403, `status=${viaTunnel.status}`)
+	const tunnelList = await fetch(`${base}/api/devices/pending`, { headers: { 'cf-connecting-ip': '203.0.113.77' } })
+	check('🔴 同一个洞的另一半：等放行清单在隧道下也要 403 ✓（不能让人从外面看见有谁在排队 ✓）',
+		tunnelList.status === 403, `status=${tunnelList.status}`)
+	const viaForwarded = await fetch(`${base}/approve`, { headers: { 'x-forwarded-for': '203.0.113.78' } })
+	check('🔴 只有 `x-forwarded-for`（没有 cf 头）时同样 403 ✓（取的是**最后一跳** ✓ —— 我们自己那台代理加的 ✓）',
+		viaForwarded.status === 403, `status=${viaForwarded.status}`)
+
+	/*
+	 * 🔴 复查点名的"假象"（A1）✓：上面那条走的是 `x-forwarded-for` ✓ —— 那**只是"IP 标签不同"** ✗，
+	 * 因为 harness 自己就在 loopback 上 ✓（唯一让转发头生效的条件 ✓）。
+	 * 真实世界里的"另一台设备"是**另一个 socket 对端** ✓ —— 那条路 `clientIp()` **根本不看转发头** ✓。
+	 * 所以这里用**本机的真实非 loopback 地址**再打一次 ✓（报文真的从那个网卡出去再回来 ✓）：
+	 * `/approve` 必须 403 ✓（放行只认 127.0.0.1 ✓）。
+	 */
+	const lanCandidates = Object.values(networkInterfaces()).flat()
+		.filter((entry) => entry !== undefined && entry.family === 'IPv4' && entry.internal !== true)
+		.map((entry) => entry.address)
+	// ⚠️ 别漏了**密钥段那段路径** ✗（路由都在 `/<pathSecret>/…` 下 ✓ —— 我第一版写成
+	// `http://ip:port/approve` ✓，拿到的是 404 ✓，看着像"放行页不存在" ✓，其实是被路径挡了 ✓）。
+	const basePath = new URL(base).pathname.replace(/\/$/, '')
+	let lanStatus = 0
+	let lanUsed = ''
+	for (const address of lanCandidates.slice(0, 4)) {
+		try {
+			const response = await fetch(`http://${address}:${config.port}${basePath}/approve`, { signal: AbortSignal.timeout(2500) })
+			lanStatus = response.status
+			lanUsed = address
+			break
+		} catch { /* 这个地址本机不可达 → 试下一个 ✓ */ }
+	}
+	check('🔴 从**真实的非 loopback 地址**打 `/approve`：403 ✓（这条路不看转发头 ✓ —— 只有 127.0.0.1 能放行 ✓）',
+		lanStatus === 403,
+		lanUsed === '' ? `本机没有可达的非 loopback 地址（候选：${lanCandidates.join(', ') || '无'}，未验 ✓）` : `${lanUsed} → ${lanStatus}`)
+
+	/*
+	 * 🔴 另一条同类隐患（自己复查时抓到的 ✓）：**"等放行"必须活过重启** ✗✗ ——
+	 * 令牌落盘那份要是只存 `expiresAt`/`ip` ✓，重启之后 `approved` 就丢了 ✓ →
+	 * 等放行的设备**白等一场** ✓（谁会想到去等一次重启呢 ✓）。
+	 * 这里直接读**落盘的那份**验 ✓（进程里的 Map 看不出这个洞 ✗）。
+	 */
+	const tokensFile = JSON.parse(await readFile(join(scratch, 'mobile-bridge.tokens.json'), 'utf8'))
+	const pendingEntry = Object.values(tokensFile.tokens ?? {}).find((entry) => entry?.approved === false)
+	check('🔴 "等放行"这个状态**写进了令牌文件** ✓（重启之后仍然是等放行 ✗ —— 白等一场就是漏洞 ✓）',
+		pendingEntry !== undefined && typeof pendingEntry.ip === 'string' && pendingEntry.ip === '203.0.113.13',
+		JSON.stringify(pendingEntry ?? null))
+
+	// ⑤ 放行 → 那台设备立刻能用 ✓（不用重新登录 ✓）。
+	await fetch(`${base}/approve?action=approve&id=${id}`)
+	check('点「放行」之后：那台设备**立刻**能进 ✓（同一枚 cookie ✓ 不用再输 PIN ✓）',
+		await statusOf('/api/bootstrap', second.cookie) === 200,
+		`bootstrap=${await statusOf('/api/bootstrap', second.cookie)}`)
+
+	// ⑥ 拒绝 → 令牌直接作废 ✓（**不是**永久拉黑 ✓：下次登录还是"等放行"✓）。
+	const third = await loginAs('203.0.113.14')
+	const page2 = await (await fetch(`${base}/approve`)).text()
+	const id3 = idFor(page2, '203.0.113.14', 'deny')
+	check('（前置）第三台设备也在等放行 ✓', third.body.pending === true && id3 !== '', JSON.stringify(third.body))
+	await fetch(`${base}/approve?action=deny&id=${id3}`)
+	check('点「拒绝」：那台设备**当场作废** ✓（再问什么都 401 ✓ —— 不是"下次再说" ✗）',
+		await statusOf('/api/pending', third.cookie) === 401,
+		`pending=${await statusOf('/api/pending', third.cookie)}`)
+
+	// ⑦ 再走一遍"防锁死"：把已放行的设备全踢掉 → 下一台登录**直接放行** ✓
+	//    （这正是"改了配置又清了 cookie"那一刻的真实处境 ✓）。
+	// ⚠️ 踢设备要用**已放行的**那枚 cookie ✓（拿"等放行"设备的 cookie 去踢只会 401 ✗ ——
+	// 第一版就是拿 seed2 踢的 ✓：wipe 根本没发生 ✓，于是"全踢之后再登录"仍然是 pending ✗）。
+	await fetch(`${base}/api/logins/revoke`, {
+		method: 'POST', headers: { cookie: first.cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({ pin: config.pin, all: true }),
+	})
+	const afterWipe = await loginAs('203.0.113.15')
+	check('把设备全踢掉之后再登录：**直接放行** ✓（不会出现"谁也进不来"✗ —— 这是这一版最要紧的一条 ✓）',
+		afterWipe.status === 200 && afterWipe.body.pending !== true,
+		JSON.stringify(afterWipe.body))
+
+	// 收尾：关掉这个开关 ✓（后面的用例按默认行为跑 ✓）。
+	await writeConfig({ deviceApproval: false })
+	cookie = afterWipe.cookie
+	authed.headers.cookie = afterWipe.cookie
+}
 
 for (const dispose of disposers) { try { dispose?.() } catch { /* ignore */ } }
 await new Promise((resolve) => setTimeout(resolve, 200))
