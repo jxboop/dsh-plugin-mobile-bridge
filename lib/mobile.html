@@ -1225,6 +1225,13 @@
 						<li><strong>🔓 只看不发</strong> —— 出门看进度时一键锁住发送，不怕误触（再点一下解锁）。<strong>⌨</strong> 是键盘手感：Enter 直接发、↑ 取上一条、长按拖光标。</li>
 						<li><strong>🔗 只读链接</strong> —— 给别人（家人 / 另一台设备）临时看<strong>某一篇</strong>会话：<strong>默认关</strong>，生成要重输 PIN，随时可撤销。</li>
 					</ul>
+					<p><strong>把任何 App 里的东西"分享"进电脑</strong>（3.6.0 新增，<strong>手机上不用点任何键</strong>）：
+					用 iOS 的<strong>快捷指令</strong>做一个"分享表"动作 —— 「获取 URL 内容」POST 到桥的一条短链，
+					请求体写 <code>{"pin":"你的六位 PIN","text":"…"}</code>（有网址就再加 <code>"url"</code>，有图就
+					<code>"images"</code>）。之后在任何 App 点「分享」→ 选它，内容就进了电脑上<strong>最近那个会话</strong>
+					（会带一句【分享到桥】）。⚠️ <strong>默认关</strong>：先在这台电脑的 <code>mobile-bridge.json</code> 里加
+					<code>"shareIntake": true</code>，然后去 🩺 一键自检里抄那条<strong>带密钥段的短链</strong>；
+					<strong>每次都要带 PIN</strong>（它等于替你指挥电脑，和手机上点「发送」同级）。</p>
 					<p><strong>出门在外也要能连 —— 这一步是必需的，不是可选。</strong>电脑和手机各装一次
 					<a href="https://tailscale.com/download" target="_blank" rel="noreferrer" style="color:#8fb4ff">Tailscale</a>、
 					登录同一个账号，然后在电脑上开一次隧道（<code>tools\tunnel-start.ps1</code>；想让开机自动起来跑一次
@@ -10263,7 +10270,9 @@
 	// + **出门在外必须能连**（Tailscale + 隧道 + 验收办法）✓ + 开放接口（webhook，默认关）✓。
 	// 20（3.5.0）：补两条"功能有了但说明里没提"的 ✓ —— **新建任务时也能先选权限**（🔐 那一行 ✓）
 	// 与**大图切片上传时屏幕上写着传到第几片**（图片那一行 ✓）。服务端 `WELCOME_VERSION` 一起 +1 ✓。
-	const WELCOME_VERSION = '20'
+	// 21（3.6.0）：补**分享到桥**（快捷指令 + 一条短链 ✓ —— 这一条**页面上一个键都没加** ✓，
+	// 只在这里和 🩺 自检里出现 ✓，正是用户采纳的架构规矩 ✓）；服务端 `WELCOME_VERSION` 一起 +1 ✓。
+	const WELCOME_VERSION = '21'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

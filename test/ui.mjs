@@ -2592,6 +2592,16 @@ check('说明指向了下拉框或读取状态',
 		&& $('welcome').textContent.includes('4G/5G')
 		&& $('welcome').textContent.includes('外网隧道'),
 		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 120))
+	/*
+	 * 3.6.0「分享到桥」：这一版**页面上一个键都没加** ✓（用户采纳的架构规矩 ✓）——
+	 * 那么"用户从哪儿知道有这个功能"就只剩两处 ✓：说明页这段字 ✓ 与 🩺 自检里那条（开着才出现 ✓）。
+	 * 所以说明页这段**必须有断言** ✗ —— 删了它，功能就变成"没人知道它存在"（3.4.2 的教训 ✓）。
+	 * ⚠️ 判据挑的是这段话里**只有它有**的词 ✗（"分享"两个字别处也有 ✓ —— 拿它当判据会假绿 ✓）。
+	 */
+	check('说明页讲了「分享到桥」怎么配（3.6.0 ✓ —— 页面上不加键，说明页就是它唯一的入口 ✓）',
+		$('welcome').textContent.includes('分享到桥') && $('welcome').textContent.includes('快捷指令')
+		&& $('welcome').textContent.includes('shareIntake'),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 120))
 
 	click($('welcomeGo'))
 	await wait(60)

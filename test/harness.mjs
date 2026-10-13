@@ -4400,6 +4400,186 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	await writeConfig({ powerControl: false })   // 收尾：关回去 ✓（别给后面的用例留一个开着的关机开关 ✓）
 }
 
+/* --- 3.6.0「分享到桥」：iOS 快捷指令 POST 一条短链 ------------------------------------ */
+/*
+ * 用户 2026-10-13 亲口选的第 1 条 ✓（架构规矩：**能不加页面按钮就不加** ✗ —— 这一条整条不碰页面 ✓）。
+ * 必须钉住四件事 ✓：
+ *   ① **默认关** ✓（`shareIntake: true` 才开 ✓），关着时**一个字都不许进会话** ✗；
+ *   ② 开着也要 **PIN 随这次请求** ✓（短链没有 cookie ✓ —— "登录一次"那条路在这儿不存在 ✓）；
+ *   ③ 正确 PIN → 走**手机发消息那条路** ✓（`sessionController.prompt` / `mode:'queue'` ✓），
+ *      内容带【分享到桥】+ 文本 + 网址 ✓；没指定会话就**自动挑最近一个能用的** ✓；
+ *   ④ **回包绝不带 PIN** ✓（快捷指令的输出里不许出现凭据 ✗）。
+ *
+ * ⚠️ 顺序有讲究 ✗：**先跑一次正确 PIN 的**（它会 `state.attempts.delete(ip)` ✓ 把限速计数器清零 ✓），
+ * 再验"错的 PIN 不许进去" ✓ —— 反过来的话，前面十几个用例攒下的错 PIN 次数可能先把这条路限速成 429 ✗
+ * （那就会变成一条**假红** ✓，正好是这个项目最恨的东西 ✓）。
+ */
+{
+	const configPath = join(scratch, 'mobile-bridge.json')
+	const readConfig = async () => JSON.parse(await readFile(configPath, 'utf8'))
+	const writeConfig = async (patch) => writeFile(configPath, JSON.stringify({ ...await readConfig(), ...patch }, null, 2), 'utf8')
+	/*
+	 * ⚠️ 这一段在**文件靠后** ✓ —— 前面几段做过"注销 / 踢掉设备" ✗，共用的 `authed` 那时可能已经失效 ✓
+	 * （实测就是这么红的：`GET /api/intake` 拿回来的是 `{error:'unauthorized'}` ✓，`info.url` 自然是 undefined ✗）。
+	 * 所以**自己重新登录一次** ✓（靠后的段落都这么做 ✓）；顺带这一步会把限速计数器清零 ✓（下面的错 PIN 用例才稳 ✓）。
+	 */
+	const relogin = await fetch(`${base}/api/login`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify({ pin: config.pin }),
+	})
+	const freshCookie = (relogin.headers.getSetCookie?.() ?? []).map((entry) => entry.split(';')[0]).join('; ')
+	const mine = { headers: { cookie: freshCookie } }
+	check('（前置）这一段自己重新登录一次拿新 cookie ✓（前面有段落注销/踢过设备 ✓）',
+		relogin.status === 200 && freshCookie.startsWith('dshm='), `HTTP ${relogin.status}`)
+	const post = (body) => fetch(`${base}/api/intake`, {
+		method: 'POST',
+		headers: { 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+	})
+	const textOf = (prompt) => (prompt?.content ?? []).map((part) => (part.type === 'text' ? part.text : `[${part.type}]`)).join(' | ')
+	const typesOf = (prompt) => (prompt?.content ?? []).map((part) => part.type).join(',')
+
+	// ① 默认关 ✓
+	await writeConfig({ shareIntake: false })
+	const beforeOff = STATE.prompts.length
+	const off = await post({ pin: config.pin, text: '没开的时候不许进来' })
+	check('🔴 分享到桥**默认关** ✓：403 + 说清怎么开 ✓，而且**一个字都没进会话** ✗',
+		off.status === 403 && STATE.prompts.length === beforeOff,
+		`HTTP ${off.status} / prompts +${STATE.prompts.length - beforeOff}`)
+
+	await writeConfig({ shareIntake: true })
+
+	// ② 正确 PIN：内容进"最近那个能用的会话" ✓（自动挑 ✓）
+	/*
+	 * ⚠️ 先把桩里的会话列表**弄乱一点** ✗（复查第 90 轮点名）：原来的列表里，唯一的 blank 会话
+	 * （session-blank）**比 session-test 旧** ✓ —— 所以"自动挑最近那个能用的"其实只钉住了"最近" ✓，
+	 * 把那三个过滤（blank / subagent / ownDir）**删掉也照样绿** ✗。
+	 * 现在：临时塞两条**比 session-test 更新**的 —— 一条 blank ✓、一条子会话 ✓ ——
+	 * 如果过滤没了，被挑中的就会是它们 ✓（断言立刻红 ✓）。
+	 *
+	 * ⚠️ 还要等**列表缓存过期** ✗：`listSessions()` 有 5 秒缓存 ✓（`state.sessionListCache` ✓），
+	 * 前面几十个用例早就把它填上了 ✓ —— 不等就直接发，读到的是**没有这两条的旧列表** ✓，
+	 * 于是这条断言会因为"缓存"而绿 ✗（假绿 ✓，正是复查要我治的那种）。
+	 */
+	await new Promise((resolve) => setTimeout(resolve, 5200))
+	const noisy = [
+		{ sessionId: 'session-blank-newer', updatedAt: Date.now() + 9000, running: false, blank: true, cwd: 'D:\\tool' },
+		{ sessionId: 'session-subagent-newer', updatedAt: Date.now() + 8000, running: false, blank: false, cwd: 'D:\\tool', origin: 'subagent' },
+	]
+	listItems.push(...noisy)
+	const beforeText = STATE.prompts.length
+	const textRes = await post({ pin: config.pin, text: '把这条存进笔记', url: 'https://example.com/a' })
+	const textBody = await textRes.json().catch(() => ({}))
+	const sentText = STATE.prompts[beforeText]
+	check('正确 PIN + 文本/网址 → 进了**最近那个能用的**会话 ✓（空会话 / 子会话更新也不挑它们 ✓ —— 三个过滤都得在 ✓）',
+		textRes.status === 200 && textBody.ok === true && textBody.sessionId === 'session-test'
+		&& sentText?.sessionId === 'session-test' && sentText?.mode === 'queue',
+		JSON.stringify({ http: textRes.status, body: textBody, sent: { sessionId: sentText?.sessionId, mode: sentText?.mode } }))
+	check('内容里带【分享到桥】+ 文本 + 网址（会话里一眼看得出这条是分享进来的 ✓）',
+		textOf(sentText).includes('【分享到桥】') && textOf(sentText).includes('把这条存进笔记')
+		&& textOf(sentText).includes('https://example.com/a'),
+		textOf(sentText))
+	check('🔴 回包里**绝不带 PIN** ✓，而且它得是"成了"的那份回包 ✓（快捷指令的输出/日志里不许出现凭据 ✗）',
+		textBody.ok === true && JSON.stringify(textBody).includes(config.pin) === false
+		&& JSON.stringify(textBody).includes('000000') === false,
+		JSON.stringify(textBody))
+	check('requestId 回给调用方 ✓（快捷指令重试时复用同一个 → 宿主幂等，不会变成两条 ✓）',
+		/^[A-Za-z0-9-]{8,64}$/.test(String(textBody.requestId ?? '')) && sentText?.requestId === textBody.requestId,
+		String(textBody.requestId))
+
+	// ③ 没带 PIN / 错 PIN：**都不许进会话** ✓（这一条会咬 —— 两条都要查 prompts 数 ✗：
+	// 复查第 90 轮把 PIN 校验挪到 send 之后，只有"错 PIN"那条红了 ✗，"没带 PIN"那条照样绿 ✓ —— 就是漏了这里）
+	const beforeNoPin = STATE.prompts.length
+	const noPin = await post({ text: '没带 PIN' })
+	const noPinBody = await noPin.json().catch(() => ({}))
+	check('🔴 开着但**没带 PIN** → 403 + needPin，而且**一个字都不许进会话** ✗（短链没有 cookie ✓ —— "登录一次"不满足它 ✓）',
+		noPin.status === 403 && noPinBody.needPin === true && STATE.prompts.length === beforeNoPin,
+		`HTTP ${noPin.status} / prompts +${STATE.prompts.length - beforeNoPin}`)
+	const beforeWrong = STATE.prompts.length
+	const wrong = await post({ pin: '000000', text: '错 PIN' })
+	check('🔴 错 PIN → 403，而且**绝不许真的进会话** ✗（谁把校验挪到发消息后面，这条当场红 ✓）',
+		wrong.status === 403 && STATE.prompts.length === beforeWrong,
+		`HTTP ${wrong.status} / prompts +${STATE.prompts.length - beforeWrong}`)
+
+	// ④ 边界：指定不存在的会话 / 空内容 / 坏图片类型
+	// ⚠️ 这三条的判据都要**带上错误正文** ✗ —— 只看状态码的话，"路由没了"也能凑出 404/400 ✓
+	//（摘刀验会咬那次就看见了：404 把 ghost 那条假绿了 ✓）。带上"说清了什么"，它就真有牙 ✓。
+	const ghost = await post({ pin: config.pin, text: 'x', sessionId: 'session-nope' })
+	const ghostBody = await ghost.json().catch(() => ({}))
+	check('指定了不存在的会话 → 404 + 说清"没找到"（**不许**偷偷换个会话发 ✗）',
+		ghost.status === 404 && String(ghostBody.error ?? '').includes('没找到'), JSON.stringify(ghostBody))
+	const empty = await post({ pin: config.pin })
+	const emptyBody = await empty.json().catch(() => ({}))
+	check('空内容 → 400 + 说清要带一样（text / url / images ✓）',
+		empty.status === 400 && String(emptyBody.error ?? '').includes('内容为空'), JSON.stringify(emptyBody))
+	const beforeBadImage = STATE.prompts.length
+	const badImage = await post({ pin: config.pin, images: [{ mediaType: 'image/tiff', data: 'AAAA' }] })
+	const badImageBody = await badImage.json().catch(() => ({}))
+	check('图片类型不支持 → 400 + 点名那个类型，而且不许发出去 ✓（宿主啃不动的格式不塞给它 ✗）',
+		badImage.status === 400 && String(badImageBody.error ?? '').includes('image/tiff')
+		&& STATE.prompts.length === beforeBadImage,
+		JSON.stringify(badImageBody))
+
+	// ⑤ 图片：能进来 ✓；宿主拒了的（动图）→ 存成文件 + 只给路径再发一次 ✓（和手机那条路同一个退路 ✓）
+	const beforeImage = STATE.prompts.length
+	const goodImage = await post({ pin: config.pin, images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'share.png' }] })
+	check('图片能分享进来 ✓（走同一条 prompt 路 ✓，类型/大小都判过 ✓）',
+		goodImage.status === 200 && typesOf(STATE.prompts[beforeImage]).includes('image'),
+		`${goodImage.status} / ${typesOf(STATE.prompts[beforeImage])}`)
+	const beforeGif = STATE.prompts.length
+	const gif = await post({ pin: config.pin, images: [{ mediaType: 'image/gif', data: 'R0lGODlhAQABAAAAACw=', name: 'share.gif' }] })
+	const gifBody = await gif.json().catch(() => ({}))
+	check('🔴 动图被宿主拒了 → **存成文件 + 只给路径再发一次** ✓（绝不干瞪眼 ✗；和手机那条路同款 ✓）',
+		gif.status === 200 && typesOf(STATE.prompts[beforeGif + 1]).includes('image') === false
+		&& String(textOf(STATE.prompts[beforeGif + 1])).includes('share.gif')
+		&& Array.isArray(gifBody.files) && gifBody.files.length === 1,
+		JSON.stringify({ http: gif.status, 第一次: typesOf(STATE.prompts[beforeGif]), 重发: typesOf(STATE.prompts[beforeGif + 1]), files: gifBody.files }))
+
+	// ⑥ **收不下的要明说** ✓（复查第 90 轮点名：原来 text/url/图都是静默 slice ✗ —— 本项目最恨"我明明发了啊"✓）
+	const longText = 'x'.repeat(9000)
+	const manyImages = Array.from({ length: 5 }, (_, index) => ({ mediaType: 'image/png', data: 'iVBORw0KGgo=', name: `m${index}.png` }))
+	const beforeCut = STATE.prompts.length
+	const cut = await post({ pin: config.pin, text: longText, images: manyImages })
+	const cutBody = await cut.json().catch(() => ({}))
+	const cutPrompt = STATE.prompts[beforeCut]
+	const cutParts = (cutPrompt?.content ?? [])
+	check('🔴 文本太长（>8000 字）→ 收下了前 8000 字，而且**内容里 + 回包里都明说截断了** ✗（不许静默丢 ✓）',
+		cut.status === 200 && cutBody.truncated === true && cutBody.dropped?.text === true
+		&& textOf(cutPrompt).includes('只取了前 8000') && textOf(cutPrompt).includes('x'.repeat(20)),
+		JSON.stringify({ truncated: cutBody.truncated, dropped: cutBody.dropped, note: cutBody.note }))
+	check('🔴 图超上限（5 张 > 3）→ 只收 3 张，**回包说丢了几张** ✓（内容里也写一句 ✓）',
+		cutParts.filter((part) => part.type === 'image').length === 3 && cutBody.dropped?.images === 2
+		&& textOf(cutPrompt).includes('另外 2 张图没带上'),
+		JSON.stringify({ 收了几张: cutParts.filter((part) => part.type === 'image').length, dropped: cutBody.dropped }))
+	check('被截断的那条**照旧发进去了** ✓（不是 413 拒收 —— 收得下就收、收不下的明说 ✓）',
+		cutBody.ok === true && cutPrompt?.sessionId === 'session-test', JSON.stringify({ ok: cutBody.ok }))
+
+	// 收拾：把弄乱列表的那两条撤掉 ✓（别给后面的用例留状态）
+	listItems.splice(listItems.length - noisy.length, noisy.length)
+
+	// ⑦ 手机侧读取面（要 cookie ✓）+ 自检那一行（**开着才出现** ✓ —— 默认关是正常状态，不摆"没开"的红项 ✗）
+	const infoAnon = await fetch(`${base}/api/intake`)
+	check('读取面：没登录 → 401 ✓', infoAnon.status === 401, String(infoAnon.status))
+	const info = await (await fetch(`${base}/api/intake`, mine)).json()
+	check('开着时：给出短链（带密钥段 ✓）+ 要 PIN ✓ + 会进哪个会话 ✓ + 怎么配快捷指令 ✓',
+		info.enabled === true && String(info.url).endsWith('/api/intake') && String(info.url).includes(config.pathSecret)
+		&& info.pinRequired === true && info.sessionId === 'session-test' && String(info.how).includes('快捷指令'),
+		JSON.stringify({ enabled: info.enabled, url: String(info.url).split(config.pathSecret).join('<secret>'), session: info.sessionId }))
+	const selfOn = await (await fetch(`${base}/api/selfcheck`, mine)).json()
+	check('自检里有「分享到桥」并把短链摆出来 ✓（页面不按键也能看见它的地方 ✓ —— 这是架构规矩的落点 ✓）',
+		(selfOn.checks ?? []).some((item) => item.name === '分享到桥' && String(item.hint).includes('/api/intake')),
+		JSON.stringify((selfOn.checks ?? []).map((item) => item.name)))
+
+	await writeConfig({ shareIntake: false })
+	const selfOff = await (await fetch(`${base}/api/selfcheck`, mine)).json()
+	const infoOff = await (await fetch(`${base}/api/intake`, mine)).json()
+	check('关掉之后：自检里那条**不出现** ✓（默认关是正常状态 ✓，不摆红项 = 不"狼来了" ✗）+ 读取面如实说关着 ✓',
+		(selfOff.checks ?? []).some((item) => item.name === '分享到桥') === false
+		&& infoOff.enabled === false && infoOff.url === '',
+		JSON.stringify({ selfcheck: (selfOff.checks ?? []).map((item) => item.name), enabled: infoOff.enabled }))
+}
+
 // 冷启动那个接收器收工 ✓（它在文件头就起着 ✓ —— 进程本来也会退出，这里收干净一点 ✓）。
 coldReceiver.close()
 // 收尾：把所有代（每个 apply 一代）的 effect 都撤掉 ✓ —— 不只是"最后那一代" ✓。
