@@ -1216,7 +1216,7 @@
 						<li><strong>🔍 搜一搜</strong> —— 搜<strong>这台电脑上</strong>的会话内容（<strong>不上云</strong>），点一条直接跳过去。机器上没开会话检索时，它会<strong>如实念出宿主那句话</strong>，不会假装"没搜到"。</li>
 						<li><strong>📅 这周学了什么</strong> —— 最近 7 天有活动的会话列一份；超过 60 条会写明"还有更多"，不让你以为就这些。</li>
 						<li><strong>📤 导出 / 分享</strong> —— 这份对话导成 Markdown 下载、复制全文，或走系统分享发微信。</li>
-						<li><strong>📋 剪贴板 / 截屏</strong> —— 看电脑剪贴板、把手机上的字发到电脑；📸 一键看电脑屏幕（<strong>要现输 PIN</strong>，锁屏时它会如实说"截不到"）。</li>
+						<li><strong>📋 剪贴板 / 截屏</strong> —— 看电脑剪贴板、把手机上的字发到电脑；📸 一键看电脑屏幕（<strong>要现输 PIN</strong>，锁屏时它会如实说"截不到"）。<strong>3.8.0</strong> 起这张纸上还多了两样：<strong>「最近放进去的」</strong>（你发到电脑剪贴板的文字留最近 20 条，<strong>只在这台手机上</strong> —— 点一条只<strong>放进输入框</strong>，不替你按发送 ✓；⚠️ <strong>从电脑读回来的不进历史</strong>：那可能是密码）与 <strong>🔤 取字</strong>（把这一屏交给电脑上的 agent 认字、存成一份<strong>可搜索的</strong>笔记 —— 桥自己不认字）。</li>
 						<li><strong>📊 电脑状态</strong> —— CPU / 内存 / 磁盘 / 网速、哪个进程占着端口、哪个 node 卡住（只有真的能结束的才给「结束」，而且<strong>不许杀 DSH 本体</strong>）；底部还有「最近批过什么」。</li>
 						<li><strong>📅 定时任务</strong> —— 到点往这个会话发一句话（"每晚 23:00 整理今天的笔记"）；<strong>⏰ 工作流</strong>可以把"转写 → 出提纲 → 存笔记"这类步骤一行一步串起来跑一遍。</li>
 						<li><strong>🧩 面板</strong> —— 电脑上放一个目录 + <code>panel.json</code>，手机这里就多一个键（自带的便签、计时器就是例子）。</li>
@@ -1625,9 +1625,20 @@
 				<div class="actions"><button class="go" id="clipSend">放进电脑剪贴板</button></div>
 				<div class="hint">粘贴用 Ctrl+V（电脑那边不用切窗口）✓</div>
 
+				<!-- 3.8.0：**发出去的历史**（最近 20 条 ✓，只在这台手机上 ✓）—— 点一条**放进输入框** ✓（不直接发 ✗）。
+				     ⚠️ **只记"你放进去的"** ✓ —— **不记从电脑读回来的** ✗：那边可能是密码/验证码 ✓，
+				     读完只活在屏幕上、不落盘 ✓（这条取舍是有意的 ✓，别"顺手补全"✗）。 -->
+				<div class="sessgroup">最近放进去的（只在这台手机上 ✓）
+					<button class="iconbtn" id="clipHistClear" style="margin-left:8px">清空</button></div>
+				<div id="clipHist"></div>
+				<div class="hint">点一条**只放进输入框**（不替你按发送 ✓）；「清空」会把本机上这几条连同**由它填出来的草稿**一起清掉 ✓
+					—— 但**别把它当密码箱** ✗：你导出的那份备份（`dshm.*`）里可能还留着历史原文 ✓。</div>
+
 				<div class="sessgroup">电脑屏幕（截图）</div>
-				<div class="actions"><button class="go" id="screenBtn">📸 截一张现在看看</button></div>
+				<div class="actions"><button class="go" id="screenBtn">📸 截一张现在看看</button>
+					<button class="go" id="screenOcrBtn" style="margin-left:8px">🔤 取字</button></div>
 				<div class="hint" id="screenHint">锁屏或没人登录的时候截不到 —— 那时会如实说，不会给你一张黑图 ✗</div>
+				<div class="hint" id="screenOcrHint">「取字」= 把这一屏交给电脑上的 agent 认字（要现输 PIN ✓），它会把结果存成一份**可搜索的**笔记 ✓。</div>
 				<img id="screenImg" alt="" style="display:none;width:100%;border-radius:10px;margin-top:8px;cursor:zoom-in">
 				<div class="hint">点图片看大图 ✓（全屏、点一下关掉；手机上长按可以直接存相册 ✓）</div>
 			</div>
@@ -9427,11 +9438,116 @@
 				body: JSON.stringify({ text, pin }),
 			})
 			toast(String(body.message ?? '已经放进电脑剪贴板了'), 2400)
+			// 3.8.0：记一条历史 ✓（**只记"你放进去的"** ✓ —— 从电脑读回来的不记 ✗，那可能是密码 ✓）。
+			clipHistAdd(text)
 			if (box !== null) box.value = ''
 			await loadClipboard()
 		} catch (error) {
 			toast('没放进去：' + error.message, 2800)
 		}
+	}
+
+	/* ------------------------------------------------- 3.8.0 剪贴板历史（只在手机上 ✓） */
+	const CLIP_HIST_KEY = 'dshm.cliphist'
+	const CLIP_HIST_MAX = 20
+
+	function clipHistLoad() {
+		try {
+			const parsed = JSON.parse(readLocal(CLIP_HIST_KEY) || '[]')
+			return Array.isArray(parsed)
+				? parsed.filter((item) => typeof item === 'string' && item.trim() !== '').slice(0, CLIP_HIST_MAX)
+				: []
+		} catch { return [] }
+	}
+
+	function clipHistSave(list) { writeLocal(CLIP_HIST_KEY, JSON.stringify(list.slice(0, CLIP_HIST_MAX))) }
+
+	/** 记一条 ✓（去重后放最前 ✓ —— 同样的东西连放两次只留一条 ✓）。 */
+	function clipHistAdd(value) {
+		const trimmed = String(value ?? '').trim()
+		if (trimmed === '') return
+		const list = clipHistLoad().filter((item) => item !== trimmed)
+		list.unshift(trimmed)
+		clipHistSave(list)
+		renderClipHist()
+	}
+
+	function renderClipHist() {
+		const box = $('clipHist')
+		if (box === null) return
+		const list = clipHistLoad()
+		if (list.length === 0) {
+			box.innerHTML = '<div class="hint">还没有 —— 你「放进电脑剪贴板」的文字会记在这儿（最多 20 条 ✓，只在这台手机上 ✓）。</div>'
+			return
+		}
+		box.innerHTML = list.map((item, index) =>
+			'<button class="pick" data-cliphist="' + index + '" title="点一下放进输入框">'
+			+ '<span class="txt"><span class="t">' + escapeHtml(item.length > 80 ? item.slice(0, 80) + '…' : item) + '</span></span></button>').join('')
+	}
+
+	/**
+	 * 点一条历史 → **放进输入框** ✓（**不直接发** ✗）。
+	 * 为什么不一键发出去 ✗：历史里全是"上次发过的话" ✓，手一滑就发出去正是**误发源** ✓ ——
+	 * 放进去、用户自己点「发送」，只差一步 ✓（和"新建第一条会先问你一次"同一条纪律 ✓）。
+	 * ⚠️ 这里会 `saveDraftNow()` ✓ —— 那等于**把这条原文写进 `dshm.draft`** ✓（复查第 92 轮点名 ✗：
+	 * 而 `dshm.draft` 在**备份白名单**里 ✓）→ 「清空」必须把它**一起**清掉 ✓（见下面的清空处理 ✓）。
+	 */
+	$('clipHist')?.addEventListener('click', (event) => {
+		const button = event.target?.closest?.('[data-cliphist]')
+		if (button === null || button === undefined) return
+		const item = clipHistLoad()[Number(button.getAttribute('data-cliphist'))]
+		if (typeof item !== 'string') return
+		text.value = item
+		growComposer()
+		saveDraftNow()
+		hide($('clipopen'))
+		switchTab('task')
+		flash('已放进输入框 —— 点「发送」就发出去 ✓', 3600)
+	})
+	$('clipHistClear')?.addEventListener('click', () => {
+		const cleared = clipHistLoad()
+		clipHistSave([])
+		/*
+		 * ⚠️ 复查第 92 轮：**清空必须把"改写过的草稿"也一起清** ✗ ——
+		 * 历史里点过一条之后，那条原文会以"草稿"的身份留在本机 ✓，而草稿在**导出备份**的白名单里 ✓
+		 * → 只清 `dshm.cliphist` 等于"看着清干净了、其实原文还在" ✗（正是本项目最恨的那种假干净 ✓）。
+		 * ⚠️ 两处都要看 ✓：**输入框当前那行** 与 **已经落盘的草稿** —— 用户可能已经手动清空了输入框 ✓，
+		 * 那时原文只活在草稿里 ✓（只盯输入框就会漏 ✗）。
+		 * ⚠️ 判据两侧都要**先截到 `DRAFT_MAX`** ✗（复审第 92 轮点名的窄边界 ✓）：草稿落盘时会被
+		 * `DRAFT_MAX`（4000 ✓）截断 ✓，而历史条目**没有长度上限** ✓ → 一条超长条目点进输入框、再刷新，
+		 * "整条相等"永远不成立 ✓ → 于是提示"清空了 ✓"、其实前 4000 字还在本机 ✗（另一种形状的假干净 ✓）。
+		 * 判据要窄 ✓：只有"确实等于被清掉的某一条（按同一刀截过 ✓）"才清 ✗ —— 免得抹掉用户自己敲的草稿 ✓。
+		 */
+		const live = String($('text')?.value ?? '').trim()
+		const stored = String(readLocal(DRAFT_KEY) ?? '').trim()
+		const hit = (value) => value !== '' && cleared.some((item) => item.slice(0, DRAFT_MAX) === value)
+		const liveIsHistory = hit(live)
+		const storedIsHistory = hit(stored)
+		if (liveIsHistory && $('text') !== null) { $('text').value = ''; growComposer() }
+		if (liveIsHistory || storedIsHistory) writeLocal(DRAFT_KEY, '')
+		renderClipHist()
+		toast('清空了 ✓', 2000)
+	})
+
+	function screenOcr() {
+		const pin = clipPinValue()
+		if (pin === '') { setDelText('screenOcrHint', '先在上面输 PIN —— 「取字」也要 PIN ✓'); return }
+		setDelText('screenOcrHint', '正在截屏、交给它认字…')
+		void (async () => {
+			try {
+				const body = await api('api/screen/ocr', {
+					method: 'POST',
+					headers: clipHeaders({ 'content-type': 'application/json' }),
+					body: '{}',
+				})
+				const where = String(body?.title ?? body?.sessionId ?? '会话')
+				setDelText('screenOcrHint', '已经交给「' + where + '」认字了 ✓ —— 它会把结果存成一份可搜索的笔记 ✓'
+					+ '（去「任务」页看进度 ✓）。')
+				toast('已交给它认字 ✓', 3200)
+			} catch (error) {
+				setDelText('screenOcrHint', '没成：' + error.message)
+			}
+		})()
 	}
 
 	function loadScreen() {
@@ -9469,11 +9585,12 @@
 		})()
 	}
 
-	$('clipBtn').addEventListener('click', () => { show($('clipopen')); void loadClipboard() })
+	$('clipBtn').addEventListener('click', () => { show($('clipopen')); void loadClipboard(); renderClipHist() })
 	$('clipBack').addEventListener('click', () => hide($('clipopen')))
 	$('clipRefresh').addEventListener('click', () => { void loadClipboard() })
 	$('clipSend').addEventListener('click', () => { void sendClipboard() })
 	$('screenBtn').addEventListener('click', () => { loadScreen() })
+	$('screenOcrBtn').addEventListener('click', () => { screenOcr() })
 	// 点小图 → 看大图（全屏）；点全屏 → 关掉 ✓（长按存相册交给系统 ✓）
 	$('screenImg').addEventListener('click', () => {
 		const big = $('shotBig')
@@ -10280,7 +10397,9 @@
 	// 只在这里和 🩺 自检里出现 ✓，正是用户采纳的架构规矩 ✓）；服务端 `WELCOME_VERSION` 一起 +1 ✓。
 	// 22（3.7.0）：补**一键 OCR / 扫码**（同一条短链 + `"task":"ocr"` / `"task":"scan"` ✓ ——
 	// 仍然**一个键都没加** ✓）；服务端 `WELCOME_VERSION` 一起 +1 ✓。
-	const WELCOME_VERSION = '22'
+	// 23（3.8.0）：补**剪贴板历史 + 屏幕取字**（都在**已有的 📋 纸**上 ✓ —— 还是不加新键 ✓）；
+	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
+	const WELCOME_VERSION = '23'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

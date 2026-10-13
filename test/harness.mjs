@@ -2384,6 +2384,31 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		String(screen.headers.get('cache-control') ?? '').includes('no-store'), String(screen.headers.get('cache-control')))
 	check('没登录截不到屏', (await fetch(`${base}/api/screen`)).status === 401)
 
+	/*
+	 * 3.8.0「屏幕取字」✓：截当前屏 → 连同**那句 OCR 指令**交给 agent ✓（与 `task:"ocr"` 同一句常量 ✓）。
+	 * 三条底线：**没登录 401** ✓、**没带 PIN 403** ✓、带对了就真的走 prompt（内容有序 + 有图 ✓）。
+	 */
+	const ocrNoAuth = await fetch(`${base}/api/screen/ocr`, { method: 'POST' })
+	check('「屏幕取字」没登录 → 401 ✓（整屏不能白给 ✗）', ocrNoAuth.status === 401, String(ocrNoAuth.status))
+	const ocrNoPin = await fetch(`${base}/api/screen/ocr`, { method: 'POST', headers: { cookie } })
+	check('🔴「屏幕取字」没带 PIN → 403 + needPin ✓（它会把整屏交给 agent ✓ —— 和截屏同一道门 ✓）',
+		ocrNoPin.status === 403 && (await ocrNoPin.json().catch(() => ({}))).needPin === true, String(ocrNoPin.status))
+	const beforeScreenOcr = STATE.prompts.length
+	const ocrShot = await fetch(`${base}/api/screen/ocr`, { method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin } })
+	const ocrShotBody = await ocrShot.json().catch(() => ({}))
+	const ocrPrompt = STATE.prompts[beforeScreenOcr]
+	const ocrContent = (ocrPrompt?.content ?? []).map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
+	check('🔴 带对 PIN → 真的交给 agent 了 ✓：`mode:queue` + **OCR 指令**（与 `task:"ocr"` 同一句 ✓）+ 一张 PNG 图 ✓',
+		ocrShot.status === 200 && ocrShotBody.ok === true && ocrPrompt?.mode === 'queue'
+		&& ocrContent[0] === '【分享到桥】' && String(ocrContent[1]).includes('【任务：OCR】')
+		&& String(ocrContent[1]).includes('原样认出来')
+		&& (ocrPrompt?.content ?? []).some((part) => part.type === 'image' && part.mediaType === 'image/png')
+		&& String(ocrContent[2]).includes('电脑当前的屏幕'),
+		JSON.stringify({ http: ocrShot.status, session: ocrShotBody.sessionId, parts: ocrContent.map((x) => String(x).slice(0, 16)) }))
+	check('「屏幕取字」回包里给"进了哪个会话" ✓（用户在手机上要能确认它落对了地方 ✓）且**不带 PIN** ✓',
+		String(ocrShotBody.sessionId ?? '') !== '' && JSON.stringify(ocrShotBody).includes(config.pin) === false,
+		JSON.stringify(ocrShotBody).slice(0, 90))
+
 	// 还原用户原来的剪贴板 ✓
 	if (typeof original.text === 'string') await clipboardSet(original.text)
 	const restored = await clipboardGet()

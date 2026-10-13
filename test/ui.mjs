@@ -299,6 +299,9 @@ let voiceStub = {
 /** 3.5.0：页面发给 `/api/voice` 的 **POST** 都记在这儿 ✓（bug 就在"没发"上 ✗）。 */
 const voicePosts = []
 
+/** 3.8.0「屏幕取字」：页面发给 `/api/screen/ocr` 的 POST（含 PIN 头）都记在这儿 ✓。 */
+const screenOcrPosts = []
+
 /**
  * 3.5.x「解锁」：页面发给 `/api/power` 的 **POST** 都记在这儿 ✓ ——
  * 断言"点了「解锁电脑」到底发没发那条请求"✓ 就靠它 ✓（和 `voicePosts` 同款思路 ✓：
@@ -597,6 +600,16 @@ async function stubFetch(input, options = {}) {
 			return jsonResponse({ ok: true, bytes: String(body.text ?? '').length, message: '已经放进电脑剪贴板了' })
 		}
 		return jsonResponse({ text: '电脑上复制的那段文字', length: 11 })
+	}
+	if (path === '/api/screen/ocr') {
+		/*
+		 * 3.8.0「屏幕取字」：记下**页面到底发没发这条** ✓（这类 bug 全都在"没发"上 ✗ ——
+		 * 和 `voicePosts` / `powerPosts` 同一个思路 ✓）。
+		 */
+		let sent = {}
+		try { sent = JSON.parse(String(options.body ?? '{}')) } catch { sent = {} }
+		screenOcrPosts.push({ ...sent, pin: String(options?.headers?.['x-dsh-pin'] ?? '') })
+		return jsonResponse({ ok: true, sessionId: SESSION, title: '手机界面测试', requestId: 'screen-ocr-1', accepted: true })
 	}
 	if (path === '/api/screen') {
 		// 1×1 的 PNG（内容不重要，页面只把它塞进 <img> ✓）
@@ -2610,6 +2623,13 @@ check('说明指向了下拉框或读取状态',
 		&& $('welcome').textContent.includes('搜一搜')
 		&& $('welcome').textContent.includes('挂了会话检索') && $('welcome').textContent.includes('搜不了'),
 		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 140))
+	// 3.8.0：剪贴板历史 + 屏幕取字（都加在**已有的 📋 纸**上 ✓ —— 仍然没有新键 ✓，
+	// 所以说明页那段就是它们的门 ✓；判据挑**只有它有**的词 ✓，并带上"不替你按发送 / 不记读回来的"两条纪律 ✓）。
+	check('说明页讲了「最近放进去的」与「取字」+ 两条纪律（3.8.0 ✓）',
+		$('welcome').textContent.includes('最近放进去的') && $('welcome').textContent.includes('取字')
+		&& $('welcome').textContent.includes('放进输入框')
+		&& $('welcome').textContent.includes('从电脑读回来的不进历史'),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 140))
 
 	click($('welcomeGo'))
 	await wait(60)
@@ -4311,6 +4331,75 @@ await wait(40)
 		clipboardWrites.length === 1 && clipboardWrites[0].text === '手机这边写的字' && clipboardWrites[0].pin === CORRECT_PIN,
 		JSON.stringify(clipboardWrites[0] ?? null))
 	check('发完清空输入框（免得下次误发一遍）', $('clipPhoneText').value === '')
+	/*
+	 * 3.8.0「剪贴板历史」（最近 20 条 ✓，**只在这台手机上** ✓）：这一段的判据都挑**只有它才有**的东西 ✗ ——
+	 * 「历史」两个字别处也出现过 ✓，拿它当判据会假绿 ✓。
+	 */
+	check('放进剪贴板之后：历史里记了一条 ✓（就在这张纸上，不用点新键 ✓）',
+		$('clipHist').querySelectorAll('[data-cliphist]').length === 1
+		&& String($('clipHist').textContent).includes('手机这边写的字'),
+		String($('clipHist').textContent).replace(/\s+/g, ' ').slice(0, 60))
+	check('🔴 **从电脑读回来的**那些**不进历史** ✗（那边可能是密码/验证码 ✓ —— 读完只活在屏幕上 ✓）',
+		String(window.localStorage.getItem('dshm.cliphist') ?? '').includes('电脑上复制的那段文字') === false,
+		String(window.localStorage.getItem('dshm.cliphist') ?? '').slice(0, 60))
+	// 点一条：**只放进输入框** ✓（不直接发 ✗ —— 历史全是"上次发过的话" ✓，一滑就发出去是误发源 ✓）。
+	const promptsBeforeHist = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	$('text').value = ''
+	click($('clipHist').querySelector('[data-cliphist="0"]'))
+	await wait(80)
+	check('🔴 点一条历史：**放进输入框** ✓，而且**绝不直接发出去** ✗（prompt 数不变 ✓ —— 这条会咬 ✓）',
+		$('text').value === '手机这边写的字'
+		&& requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === promptsBeforeHist
+		&& String($('banner').textContent).includes('放进输入框'),
+		JSON.stringify({ text: $('text').value, prompts: requests.filter((e) => e.path.startsWith('/api/prompt')).length - promptsBeforeHist }))
+	$('text').value = ''
+	// 「取字」：复用 📷 那张纸上的一个动作 ✓（不加新键 ✓），后端拿 PIN 头 ✓。
+	click($('clipBtn'))
+	await wait(80)
+	const ocrBefore = screenOcrPosts.length
+	click($('screenOcrBtn'))
+	await wait(160)
+	check('🔴 「取字」真的发了 `POST api/screen/ocr` ✓，而且**带 PIN 头** ✓（不带就是白给整屏 ✗）',
+		screenOcrPosts.length === ocrBefore + 1 && screenOcrPosts.at(-1)?.pin === CORRECT_PIN,
+		JSON.stringify(screenOcrPosts.at(-1) ?? null))
+	check('取字之后如实说"交给谁了"（不假装自己认完了 ✗ —— 认字是电脑那边的事 ✓）',
+		String($('screenOcrHint').textContent).includes('交给') && String($('screenOcrHint').textContent).includes('笔记'),
+		String($('screenOcrHint').textContent).slice(0, 70))
+	// 清空历史：一条都不留 ✓（历史里有可能是敏感文字 ✓ —— 必须能清干净 ✓）。
+	click($('clipHistClear'))
+	await wait(60)
+	check('「清空」之后历史一条都不剩 ✓（本地上也不留 ✓）',
+		$('clipHist').querySelectorAll('[data-cliphist]').length === 0
+		&& String(window.localStorage.getItem('dshm.cliphist') ?? '[]').includes('手机这边写的字') === false,
+		String(window.localStorage.getItem('dshm.cliphist') ?? '').slice(0, 40))
+	/*
+	 * 🔴 复查第 92 轮点名的**真问题** ✗：点过历史之后，那条原文会以**草稿**的身份留在本机 ✓，
+	 * 而草稿在**导出备份**的白名单里 ✓ —— 只清历史 = "看着清干净了、其实原文还在" ✗。
+	 * 这条断言就是钉它 ✓（把清空改回"只清 cliphist"，这里当场红 ✓）。
+	 */
+	check('🔴 「清空」把**由它填出来的草稿**也一起清了 ✓（不然原文还在本机、还会随导出备份出门 ✗）',
+		String(window.localStorage.getItem('dshm.draft') ?? '').includes('手机这边写的字') === false
+		&& $('text').value === '',
+		JSON.stringify({ draft: String(window.localStorage.getItem('dshm.draft') ?? '').slice(0, 40), text: $('text').value }))
+	/*
+	 * 🔴 复审第 92 轮点名的**窄边界** ✗：草稿落盘时会被 `DRAFT_MAX`（4000）截断 ✓，
+	 * 而历史条目**没有长度上限** ✓ → 超长条目点进输入框、再刷新之后，"整条相等"永远不成立 ✓
+	 * → 提示"清空了 ✓"、**其实前 4000 字还在本机** ✗（另一种形状的假干净 ✓，同一条纪律 ✓）。
+	 */
+	$('text').value = ''
+	window.localStorage.setItem('dshm.cliphist', JSON.stringify(['长'.repeat(4500)]))
+	window.localStorage.setItem('dshm.draft', '长'.repeat(4000))
+	click($('clipBtn'))
+	await wait(80)
+	click($('clipHistClear'))
+	await wait(80)
+	check('🔴 超长条目（落盘时被草稿上限截断）也能**真清干净** ✓（不许提示"清空了"却没清 ✗）',
+		String(window.localStorage.getItem('dshm.draft') ?? '').includes('长') === false
+		&& String(window.localStorage.getItem('dshm.cliphist') ?? '') === '[]',
+		JSON.stringify({
+			draft: String(window.localStorage.getItem('dshm.draft') ?? '').length,
+			hist: String(window.localStorage.getItem('dshm.cliphist') ?? '').slice(0, 20),
+		}))
 
 	click($('screenBtn'))
 	await wait(80)
