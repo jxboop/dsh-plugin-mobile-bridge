@@ -1000,6 +1000,9 @@
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
 					<button id="bgBtn" title="换手机界面的背景（图片 / 动图 / 视频）">背景</button>
 					<button id="permBtn" title="这个会话允许 agent 做到哪一步（改权限要重新输 PIN）">🔐</button>
+					<!-- 3.5.0：这条会话的**目标**（做什么 / 什么阶段 / 第几轮 ✓）——
+					     用户 2026-10-13：「我手机桥上看不到目标」✗。只读 ✓，改目标仍在电脑上做 ✓。 -->
+					<button id="goalBtn" title="这条会话的目标（DSH 目标：做什么 / 什么阶段 / 第几轮）">🎯</button>
 					<button id="sysBtn" title="电脑状态（CPU / 内存 / 磁盘 / 网速）+ 结束卡住的 node 进程">📊</button>
 					<button id="clipBtn" title="电脑剪贴板（看 / 发）与截屏（电脑屏幕 → 手机）">📋</button>
 					<button id="expBtn" title="把这份对话导出成 Markdown（下载 / 复制全文 / 分享 → 发微信）">📤</button>
@@ -1150,6 +1153,13 @@
 					<select class="plain" id="modelPick"><option value="">（用预设/宿主的默认）</option></select>
 					<div class="hint" id="modelHint"></div>
 				</div>
+				<!-- 3.5.0：**创建时**就把权限定下来 ✓（用户 2026-10-13：「新建任务时没有权限选择」✗）——
+				     和输入框上面那排的 🔐 是同一套档位、同一个接口 ✓，只是这里能在"这条任务跑起来之前"选 ✓。 -->
+				<div class="field">
+					<label>权限（这条任务允许 agent 做到哪一步）</label>
+					<div id="createPerm"></div>
+					<div class="hint" id="createPermHint">正在读这台电脑上的档位…</div>
+				</div>
 				<div class="field">
 					<label>第一条任务（可留空）</label>
 					<textarea class="plain" id="firstText" placeholder="想让它先做什么？"></textarea>
@@ -1190,7 +1200,7 @@
 					</ul>
 					<p>输入框上面那排按键，从左到右：</p>
 					<ul>
-						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。</li>
+						<li><strong>图片</strong> —— 拍照或从相册选图发给它（**一次可以多选**：会自动压好、打包成一批发出去，不会让你干等）。<strong>大图切片上传时，屏幕上写着"正在上传 … 传到第几片"</strong>（不会让你对着一个不动的界面猜）。</li>
 						<li><strong>录音</strong>（<strong>最底下那一栏的 🎤</strong>）—— <strong>直接在网页里录</strong>，不用去系统录音 App 里找文件：录完能先听一遍再发，电脑会自动转成文字给模型。录的是压缩格式（opus），一节课约 10 MB，比系统录音小三分之二。<strong>要用 https 地址打开</strong>浏览器才给麦克风，录的时候别锁屏、别切走。</li>
 						<li><strong>视频</strong> —— 选视频也走这个键：传到电脑后<strong>自动抽 6 帧</strong>给模型看（"视频里讲了什么"能直接答），**视频里的语音还会转成文字**；原片也留在电脑上，要看细节/听声音随时让它处理。</li>
 						<li><strong>语音 / 录音</strong> —— 语音备忘录、录音也走这个键：电脑会做<strong>语音转文字</strong>，模型直接"读"到内容（中文识别很准，一分钟约六分钱）。<strong>一节课的录音也行</strong>（上限 3 小时），只是要先传一会儿 —— 想快就先用「压缩」音质录，或者把文件拷到电脑上让我直接处理。</li>
@@ -1198,7 +1208,7 @@
 						<li><strong>原图</strong> —— 点亮后按原始画质发，不压缩（大图会慢一些，费流量）。</li>
 						<li><strong>生图</strong> —— 用一句话让它画一张图<strong>或出一段视频</strong>（面板上有 🖼 图片 / 🎬 视频 切换）。两者都靠<strong>电脑上的生图插件</strong>：电脑没装、或者没配好 key，它只会回「没有生图模型」。提示词越具体越准（主体 / 动作 / 风格 / 光线 / 镜头）；<strong>视频是分钟级的</strong>（免费模型约 1 分钟），出好会直接变成能播的视频。</li>
 						<li><strong>背景</strong> —— 给这个手机界面换一张图 / 动图（GIF）/ 视频当壁纸。背景是配在<strong>电脑</strong>上的，连上来的手机看到的都一样。</li>
-						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。</li>
+						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。<strong>新建任务时也能先选好</strong>：在「新建」那张纸里选一档，<strong>建好的那一刻就按它跑</strong>（选「跟随默认」就什么都不改）。</li>
 					</ul>
 					<p>连不上时屏幕顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了 —— 照着上面写的做就行。<strong>彻底连不上时会有一整屏提示</strong>（不会只留个黑屏/白屏）：上面写着是哪一类故障、10 秒后自动重试，还有「立即重试」「先看上次的对话（离线能读）」「换个地址」。</p>
 					<p><strong>工具键那一排还有这些</strong>（在输入框下面，可以左右滑、也能收起）：</p>
@@ -1237,6 +1247,61 @@
 			</div>
 		</section>
 
+		<!-- 3.5.0：这条会话的「目标」—— **只读** ✓（用户 2026-10-13：「我手机桥上看不到目标」✗）。
+		     读的是宿主 `goals` 服务 ✓（`agents.get(sessionId)` → `goals.get(agent)` ✓，**不唤醒 agent** ✓）；
+		     读不到就照实说（"这条会话现在没在跑" / "宿主没有 goals 服务" ✓）—— 绝不说成"没有目标" ✗。 -->
+		<section class="sheet" id="goalopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="goalBack">← 返回</button>
+				<span class="title">这条会话的目标</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="goalRefresh">刷新</button>
+			</div>
+			<div class="scroll pad" id="goalBody"></div>
+		</section>
+		<style>
+			/* 3.5.0「目标」：目标卡（只读 ✓）。 */
+			.goalcard { border: 1px solid #2b3557; border-radius: 10px; padding: 12px 14px; background: #161d33 }
+			.goalphase { color: #8ce0a0; font-weight: 700; font-size: 13px; margin-bottom: 6px }
+			.goaltext { color: #e6ebff; font-size: 15px; line-height: 1.75; white-space: pre-wrap; word-break: break-word }
+			.goalmeta { color: #7f93ad; font-size: 12px; margin-top: 8px }
+			.goalblocked { color: #ffd7d7; margin: 8px 0 0 }
+			#goalNote { color: #9fb3d0 }
+			#goalBtn.hasgoal { color: #8ce0a0 }
+			/* 3.5.0「免手对话」：状态行要说人话、并且**看得见**（不许"开了没开不知道" ✗）。 */
+			.voiceline { display: block; margin: 8px 0; color: #e6ebff; font-size: 15px; line-height: 1.75; white-space: pre-wrap }
+			#voiceNote { color: #9fb3d0 }
+		</style>
+
+		<!-- 3.5.0：**免手对话**（语音环）—— 一直听 → 转成文字 → （勾了就）自动发 → 继续听 ✓。
+		     ⚠️ 三道闸 ✓：默认关（`voiceMode` ✓）、开要现输 PIN ✓、有倒计时（到点自己停 ✓）。
+		     ⚠️ 宿主没有流式识别 ✗（上游查实 ✓）→ 手机切 4 秒一片 + 0.4 秒重叠 ✓、
+		     逐片发 `POST /api/transcribe`（要 **16k 单声道 WAV** 的 base64 ✓）、按重叠去重拼一句 ✓。 -->
+		<section class="sheet" id="voiceopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="voiceBack">← 返回</button>
+				<span class="title">免手对话</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="voiceToggle">开始听</button>
+			</div>
+			<div class="scroll pad">
+				<div id="voiceLine" class="voiceline">关着 ✓</div>
+				<!-- ⚠️ 2026-10-13 真机日志追出来的（用户：「输完 pin 没反应」✗ + 日志里 `PIN accepted` 之后**紧跟 403** ✗）：
+				     上游 `requirePinOr403` 要的是 **PIN 在这次请求里**（`body.pin` ✓），
+				     **"登录过一次"并不满足它** ✗ —— 所以要把 PIN 填在这儿一起发出去 ✓
+				     （页面别的 PIN 动作就是这么干的 ✓）。**只用于这一次请求 ✓、不落盘 ✗**。 -->
+				<label class="voiceline">开的时候要现输一次 PIN：<input id="voicePin" type="password" inputmode="numeric"
+					autocomplete="off" maxlength="12" placeholder="电脑上的 6 位 PIN" style="width:9em;margin-left:6px"></label>
+				<!-- 念回答：复用页面上那套「🔊」✓（同一个实现 ✓ —— 上限 1200 字、截断了会说明白 ✓、再点一下停 ✓）。
+				     ⚠️ 不摆"自动念"的开关 ✗ —— 那要挂到"一轮跑完"那个点上 ✓，还没做 ✓（不摆一个按了没用的开关 ✗）。 -->
+				<button class="iconbtn" id="voiceSpeakNow">念最新回答</button>
+				<label class="voiceline"><input type="checkbox" id="voiceAuto"> 我说完就自动发（不勾就只把听到的填进输入框，你自己按发送）</label>
+				<div class="hint" id="voiceNote"></div>
+				<div class="hint">切片 4 秒 / 重叠 0.4 秒 ✓ —— 宿主没有流式识别 ✓，所以是"手机切、逐段转、重叠去重" ✓。
+				说一句「停」就停 ✓。要 https 地址浏览器才给麦克风 ✓（Tailscale 那条外网地址就是 ✓）。</div>
+			</div>
+		</section>
+
 		<!-- 文档预览（2.1.0）：点会话里出现的文档条目打开。
 		     范围按用户选的 C 方案：**只服务会话里给你的文件**，不做目录浏览。 -->
 		<section class="sheet" id="docopen" data-display="flex" style="display:none">
@@ -1267,6 +1332,8 @@
 				<button class="iconbtn" id="recBack">← 返回</button>
 				<span class="title">录音</span>
 				<span class="spacer"></span>
+				<!-- 3.5.0：**免手对话**的入口放在录音纸里 ✓（不新增工具键 ✗ —— 那一排已经 15 个了 ✓）。 -->
+				<button class="iconbtn" id="voiceOpen" title="免手对话：一直听，说完就发给它（默认关，开要输 PIN）">免手对话 ›</button>
 			</div>
 			<div class="scroll pad">
 				<div class="rectop">
@@ -1446,6 +1513,17 @@
 					<div class="hint" id="powerError"></div>
 				</div>
 				<button class="primary" id="powerGo">继续</button>
+				<!-- 3.5.0「解锁」：**手机上的入口这一版没有** ✗（如实说 ✓ —— 见 CHANGELOG / USERNEWS ✓）。
+				     服务端那半边是**完成态** ✓（`POST /api/power {action:'unlock',pin}` ✓，默认关 + PIN 随请求 +
+				     3 秒闸 + 单飞 + 三种结论照实回 ✓，见 lib/platform.js 顶部 ✓）。
+				     为什么撤掉 ✗：入口试了 5 种接法（绑按钮自身 / 绑 document / 绑这张纸 / 放进 openPower /
+				     内联进面板委派 ✓），根因是「**作用域 + 📊 面板在数据流里会重渲染**」两层 ✓；
+				     2026-10-13 红队复查又抓到：**同时留着两份接法**会让一次点击发两条 POST ✗
+				     （3 秒闸把第二条回成 429 ✓ = 纸上先闪一句"刚试过"✗）。
+				     按铁律：**不摆一个按了没反应的按钮** ✗ → 入口**真撤掉** ✓（`test/ui.mjs` 钉住
+				     `#powerUnlock` 与 `[data-unlock]` **都不存在** ✓）。
+				     ⚠️ 重做入口时（下一版）照这三条走 ✓：事件挂**稳定祖先** ✓（`#poweropen` 是静态节点 ✓）、
+				     目标节点**每次重新查** ✓、**只留一份**接法 ✗（两份就是两条请求 ✓）、别跨作用域调函数 ✗。 -->
 				<div class="hint">要点**两次**才会执行 ✓ —— 第一次是"我选它"，第二次是"真的执行"。
 					执行后有 20 秒可以点「取消关机」✓。</div>
 			</div>
@@ -2574,6 +2652,9 @@
 		show(sheet)
 		loadWorkspaces()
 		void loadModels()
+		// 3.5.0：权限档位是"这台电脑上有什么"✓ —— 和会话无关 ✓，所以每次打开都读一次
+		//（用户可能在电脑上加了新预设 ✓；读不到也照样能新建 ✓，只是那一栏会如实说读不到 ✓）。
+		void loadCreatePerm()
 	}
 
 	function closeSheet() {
@@ -2850,7 +2931,20 @@
 	 * 已知限制：路径里带**空格**时只能认到空格前那截（所以匹配不上扩展名 → 不显示）。
 	 * 这是有意的取舍 —— 宁可少认，也不要把半条路径当成文件去请求 ✓。
 	 */
-	const PATH_RE = /[A-Za-z]:\\[^\s"'<>|?*]+?\.(?:png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v|md|markdown|txt|log|csv|tsv|json|ya?ml|xml|ini|sql|py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|pdf|docx?|xlsx?|pptx?|zip)/gi
+	/*
+	 * 路径识别 ✓ —— **Windows 盘符** 与 **POSIX 绝对路径**都要认 ✓。
+	 *
+	 * 2026-10-13 修（macOS 适配勘察点名的一处 ✗）：以前只写 `[A-Za-z]:\\` ✓，
+	 * 于是 mac 上 agent 产出的 `/Users/kim/notes.md` **永远出不来缩略图和「打开 ›」** ✗ ——
+	 * 功能其实都在（`api/file` 那条路是通的 ✓），只是**一眼没认出来** ✓，用户只会说"手机上看不到文件"✗。
+	 * POSIX 那一支要求 `/(Users|home|tmp|var|opt|private|Volumes|mnt|media)/` 开头 ✓ ——
+	 * 不用裸的 `/…` ✗（那会把 "and/or.txt"、"1/2.png" 这种句子里的片段也吃进来 ✗）。
+	 */
+	const PATH_EXT = 'png|jpe?g|webp|gif|bmp|mp4|mov|webm|m4v|md|markdown|txt|log|csv|tsv|json|ya?ml|xml|ini|sql|py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|pdf|docx?|xlsx?|pptx?|zip'
+	const PATH_RE = new RegExp(
+		'[A-Za-z]:\\\\[^\\s"\'<>|?*]+?\\.(?:' + PATH_EXT + ')'
+		+ '|/(?:Users|home|tmp|var|opt|private|Volumes|mnt|media)/[^\\s"\'<>|?*]+?\\.(?:' + PATH_EXT + ')',
+		'gi')
 	/**
 	 * 路径图的**占位比例**：真实尺寸要问一次内桥（`api/size`，服务端只读文件头）。
 	 * 在答复之前先按这个比例占住位置 —— 不然图到货的瞬间会把下面的内容顶下去（错位）。
@@ -4778,7 +4872,9 @@
 					mediaType: file.type === '' ? 'application/octet-stream' : file.type,
 					data: await readBase64(file),
 				}
-				const ref = await uploadInChunks(entry, entry.name, 1, 1)
+				// 3.5.0：**单条也要看得见进度** ✓（2026-10-13 用户报「单张图片没有进度」✓）——
+				// 和附件那条路用同一个 ticker ✓（这里以前没传 onProgress ✗，屏幕上一直不动 ✗）。
+				const ref = await uploadInChunks(entry, entry.name, 1, 1, uploadProgressOne('背景'))
 				const body = await api('api/background', {
 					method: 'POST',
 					headers: { 'content-type': 'application/json' },
@@ -5512,14 +5608,20 @@
 				flash('这张图内联发送被网络掐断了，正在改用切片上传重发…', 7000)
 				const again = []
 				for (let index = 0; index < inlineNow.length; index += 1) {
+					// 3.5.0：这条**单张**的路以前也没传 onProgress ✗ —— 内联被掐断、改成切片重发之后
+					// 屏幕上从「正在改用切片上传重发…」直接停住不动 ✓（用户看到的就是"卡住了"✗）。
 					again.push(await uploadInChunks(
 						{ name: inlineNow[index].name || 'image', mediaType: inlineNow[index].mediaType, data: inlineNow[index].data },
-						inlineNow[index].name || 'image', index + 1, inlineNow.length))
+						inlineNow[index].name || 'image', index + 1, inlineNow.length,
+						uploadProgressOne(inlineNow[index].name || 'image')))
 				}
 				return post([], fileRefs.concat(again))
 			})
 		}).then((result) => {
 			clearFlashIf('📡 正在发送…')
+			// 3.5.0：切片重发那条路的进度是**后弹**的 ✓（见 `clearUploadProgress` 的说明 ✓）——
+			// 发成功了就把它收掉 ✗，别让屏幕上永远停着"正在上传…"✓。
+			clearUploadProgress()
 			// ★11：`sendNote`（弱网模式留下的附件 / 存不下改一起发）**现在**才弹 ✓ ——
 			// 发送前弹会被「正在发送…」盖掉 ✓。
 			if (sendNote !== '') flash(sendNote, 8000)
@@ -5591,6 +5693,26 @@
 	 */
 	function clearFlashIf(message) {		if (banner === null || banner === undefined) return
 		if (String(banner.textContent ?? '').trim() !== String(message).trim()) return
+		if (flashAction !== null) return
+		if (flashTimer !== 0) { clearTimeout(flashTimer); flashTimer = 0 }
+		hide(banner)
+	}
+
+	/**
+	 * 3.5.0：把**单条上传的进度**那句从横幅上收掉 ✓（`uploadProgressOne` 用的是 `flash(…, 0)` = 永不自动收起 ✓）。
+	 *
+	 * 为什么必须单独收 ✗（红队复查抓到的回归 ✓）：内联失败改切片重发那条路的顺序是
+	 * 「先 flash『📡 正在发送…』✓ → 失败 → flash 进度 ✓ → 再 post ✓」，于是发送成功时
+	 * `clearFlashIf('📡 正在发送…')` **匹配不上**（横幅上此刻是进度那句 ✓）→ 屏幕上永远停着
+	 * 「正在上传 X … 1/1 片」✗（图早发出去了，界面却像还在传 ✓）。
+	 * 只收"正在上传…"开头的那句 ✓ —— 别把别人刚弹的提示一起吞掉 ✗（同 `clearFlashIf` 的教训 ✓）。
+	 * ⚠️ 已知取舍（复审报备 ✓，可接受）：换背景那条路的文案也是"正在上传背景…"开头 ✓ ——
+	 * 若**同时**在传背景又发了一条消息 ✓，发送成功会把背景那句一起收掉 ✓（下一片 tick 会重弹 ✓，
+	 * 而背景自己的"换好了 / 换背景失败"紧跟其后 ✓ —— **不会留下一句假话** ✓，只是中途闪一下 ✓）。
+	 */
+	function clearUploadProgress() {
+		if (banner === null || banner === undefined) return
+		if (String(banner.textContent ?? '').trim().startsWith('正在上传') === false) return
 		if (flashAction !== null) return
 		if (flashTimer !== 0) { clearTimeout(flashTimer); flashTimer = 0 }
 		hide(banner)
@@ -6239,6 +6361,27 @@
 	}
 
 	/**
+	 * 3.5.0：**单条**上传的进度提示（"正在上传 X … 3/7 片" ✓）。
+	 *
+	 * 为什么要有它（2026-10-13 用户报「单张图片没有进度」✓）：`uploadInChunks` 有三个调用点 ——
+	 * 附件那条（`prepareRefs` ✓）本来就传了 tick ✓，而**换背景**与**内联失败改切片**这两条没传 ✗，
+	 * 于是单张图/单条背景上传时屏幕上**什么都不动** ✓：用户按了发送，只看到一句"正在改用切片上传
+	 * 重发…"，然后就没有下文了 ✗（真机日志那边也一样，只有开头一行 ✗ —— 见 `uploadInChunks` 里的三类日志 ✓）。
+	 *
+	 * 总数**从回调里现学** ✓（`onProgress(done, total)` 自己带着 ✓）—— 调用方不用去算 base64 解出来多大 ✓。
+	 * 限流到 ~6 次/秒（别让 flash 变成抖动源 ✓），但**最后一片一定说** ✓。
+	 */
+	function uploadProgressOne(label) {
+		let shownAt = 0
+		return (done, total) => {
+			const now = Date.now()
+			if (now - shownAt < 160 && done < total) return
+			shownAt = now
+			flash(`正在上传 ${label} … ${done}/${total} 片`, 0)
+		}
+	}
+
+	/**
 	 * 把一个附件分片传上去，返回 { name, mediaType, path }。
 	 *
 	 * 并发要点：**第 0 片先单独发**（服务端用它建文件并定下大小），剩下 1..n-1 片
@@ -6277,23 +6420,52 @@
 			}
 			throw lastError ?? new Error('分片上传失败')
 		}
-		let done = 1
-		let last = await sendChunk(0)
-		if (onProgress) onProgress(done, total)
-		let next = 1
-		const worker = async () => {
-			while (next < total) {
-				const index = next
-				next += 1
-				const result = await sendChunk(index)
-				done += 1
-				if (onProgress) onProgress(done, total)
-				if (result?.done === true) last = result
-			}
+		/*
+		 * 3.5.0：**上传过程的三类日志** ✓（2026-10-13 用户报「上传日志只有开头」✗ ——
+		 * 现场那一行只有 `send-inline-failed…改走切片上传` ✓，之后"到底传完没有"在电脑那边
+		 * 一行都看不到 ✗，断网那次只能靠猜 ✓）：
+		 *   · **上传中 x/y** ✓（限流 ≥1 秒/条 —— 100 MB 的录音会切 200 片，别把日志刷成瀑布 ✗）；
+		 *   · **完成** ✓（片数 + 字节 + 电脑上的落点 ✓）；
+		 *   · **客户端断了** ✓（最值钱的一条 ✓）。⚠️ 照实说：真断网时这条上报**本身**也可能发不出去 ✓
+		 *     （`reportToBridge` 是 best-effort ✓）—— 但"入口掐断 / 服务端 5xx / 重试三次全失败"
+		 *     这类**连接还在**的失败一定留得下 ✓，而它们正是以前完全看不见的那一类 ✓。
+		 */
+		let done = 0
+		let loggedAt = 0
+		const noteProgress = () => {
+			const now = Date.now()
+			if (now - loggedAt < 1000 && done < total) return
+			loggedAt = now
+			reportToBridge('upload-progress', `${label}（第 ${position}/${count} 条）${done}/${total} 片`, bytes.length)
 		}
-		await Promise.all(Array.from({ length: Math.min(CHUNK_PARALLEL, Math.max(0, total - 1)) }, worker))
-		if (total === 1) { /* 单片：上面已经发完 */ }
-		return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
+		try {
+			let last = await sendChunk(0)
+			// ⚠️ `done = 1` 必须在**第 0 片真的成功之后** ✓ —— 放在 `await` 之前的话，
+			// 第一片就断时日志会写"传到 1/N 片断了"✗（实际**一片都没成** ✓，复查点名过 ✓）。
+			done = 1
+			noteProgress()
+			if (onProgress) onProgress(done, total)
+			let next = 1
+			const worker = async () => {
+				while (next < total) {
+					const index = next
+					next += 1
+					const result = await sendChunk(index)
+					done += 1
+					noteProgress()
+					if (onProgress) onProgress(done, total)
+					if (result?.done === true) last = result
+				}
+			}
+			await Promise.all(Array.from({ length: Math.min(CHUNK_PARALLEL, Math.max(0, total - 1)) }, worker))
+			reportToBridge('upload-done',
+				`${label}（第 ${position}/${count} 条）${total} 片全传完 → ${last?.path ?? '(服务端没回路径)'}`, bytes.length)
+			return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
+		} catch (error) {
+			reportToBridge('upload-aborted',
+				`${label}（第 ${position}/${count} 条）传到 ${done}/${total} 片断了：${String(error?.message ?? error)}`, bytes.length)
+			throw error
+		}
 	}
 
 	/**
@@ -6700,28 +6872,38 @@
 	/** 面板打开时的现场：现在哪档 / 可选项 / 用户点了哪档。 */
 	const perm = { current: '', options: [], picked: '' }
 
+	/**
+	 * 3.5.0：把一档权限画成一张卡片 ✓ —— **两处共用** ✓（🔐 面板 ✓ 与「新建任务」那张纸 ✓）。
+	 *
+	 * 抽出来的理由：新建面板要摆**同一套**档位 ✓（同一套外观、同一套 emoji 前缀 ✓、同一个接口 ✓）；
+	 * 抄一份出来 = 以后改一处忘一处 ✗（这类"两处长得像"最容易烂 ✓）。
+	 */
+	function permCardOf(option, picked, onPick) {
+		// 服务端给的是纯数据，这里用 DOM API 建节点：预设名将来若有中文也不怕。
+		const card = document.createElement('button')
+		card.className = 'permopt' + (option.value === picked ? ' on' : '')
+		card.dataset.perm = option.value
+		const mark = document.createElement('span')
+		mark.className = 'mark'
+		const txt = document.createElement('span')
+		txt.className = 'txt'
+		const title = document.createElement('span')
+		title.className = 't'
+		title.textContent = option.label
+		const desc = document.createElement('span')
+		desc.className = 'd'
+		desc.textContent = option.detail
+		txt.append(title, desc)
+		card.append(mark, txt)
+		card.addEventListener('click', () => onPick(option.value))
+		return card
+	}
+
 	function renderPerm() {
 		const box = $('permOptions')
 		box.innerHTML = ''
 		for (const option of perm.options) {
-			// 服务端给的是纯数据，这里用 DOM API 建节点：预设名将来若有中文也不怕。
-			const card = document.createElement('button')
-			card.className = 'permopt' + (option.value === perm.picked ? ' on' : '')
-			card.dataset.perm = option.value
-			const mark = document.createElement('span')
-			mark.className = 'mark'
-			const txt = document.createElement('span')
-			txt.className = 'txt'
-			const title = document.createElement('span')
-			title.className = 't'
-			title.textContent = option.label
-			const desc = document.createElement('span')
-			desc.className = 'd'
-			desc.textContent = option.detail
-			txt.append(title, desc)
-			card.append(mark, txt)
-			card.addEventListener('click', () => { perm.picked = option.value; renderPerm() })
-			box.append(card)
+			box.append(permCardOf(option, perm.picked, (value) => { perm.picked = value; renderPerm() }))
 		}
 		const now = perm.options.find((option) => option.value === perm.current)
 		$('permNow').textContent = now === undefined ? '当前：' + perm.current : '当前：' + now.label
@@ -6775,6 +6957,99 @@
 			button.disabled = false
 		})
 	})
+
+	/* ------------------------------------- 新建时的权限（3.5.0） */
+	/*
+	 * 用户 2026-10-13：「新建任务时没有权限选择」✓ —— 以前只能在**建完之后**去 🔐 改 ✓，
+	 * 于是"这条任务按什么权限跑"是建完才知道的 ✗；而权限恰恰是"它这一轮能动到哪一步"的前提 ✓。
+	 * 现在**创建时**就定下来 ✓：先建会话拿 sessionId ✓ → 立刻 `POST /api/permission` ✓ →
+	 * 再发第一条任务 ✓（顺序反了就变成"先按默认跑起来再改" ✗ —— 那正是用户抱怨的那件事 ✓）。
+	 *
+	 * 选项来自 `GET /api/permission/catalog` ✓（新建时会话还不存在 ✓，所以服务端回的是宿主的
+	 * `permissionPresets.catalog()`：默认档 + 可选档 ✓）。`''` = 「跟随默认，不改」✓ ——
+	 * 选它、或者选中的正好就是默认档 → **一个写请求都不发** ✗（宿主 `set()` 对同一档本来就是
+	 * 空操作 ✓，少一次 PIN 门 = 少一次打扰 ✓，行为一模一样 ✓）。
+	 */
+	const createPerm = { options: [], defaultPreset: '', picked: '', loaded: false }
+
+	function renderCreatePerm() {
+		const box = $('createPerm')
+		if (box === null) return
+		box.innerHTML = ''
+		const fallback = createPerm.options.find((option) => option.value === createPerm.defaultPreset)
+		const follow = {
+			value: '',
+			label: '跟随默认',
+			detail: createPerm.defaultPreset === ''
+				? '不改它：这次新建的会话按这台电脑当前的默认档走。'
+				: '不改它：这次新建的会话按默认档「'
+					+ (fallback === undefined ? createPerm.defaultPreset : fallback.label) + '」走。',
+		}
+		for (const option of [follow].concat(createPerm.options)) {
+			box.append(permCardOf(option, createPerm.picked, (value) => {
+				createPerm.picked = value
+				renderCreatePerm()
+			}))
+		}
+		renderCreatePermHint()
+	}
+
+	function renderCreatePermHint() {
+		const node = $('createPermHint')
+		if (node === null) return
+		if (createPerm.loaded !== true) { node.textContent = '正在读这台电脑上的档位…'; return }
+		if (createPerm.options.length === 0) {
+			node.textContent = '这台电脑上的权限档读不到 —— 这次按默认走；建好之后在 🔐 里还能改。'
+			return
+		}
+		if (createPerm.picked === '') {
+			node.textContent = '不改：按默认档走。想让这条任务一上来就按某一档跑，就点上面那张卡。'
+			return
+		}
+		if (createPerm.picked === createPerm.defaultPreset) {
+			node.textContent = '这一档**就是**默认档 —— 等于什么都没改（不会多要一次 PIN）。'
+			return
+		}
+		const picked = createPerm.options.find((option) => option.value === createPerm.picked)
+		node.textContent = '创建时就把权限改成「' + (picked === undefined ? createPerm.picked : picked.label)
+			+ '」—— 放开档要现输一次 PIN（和 🔐 一样）。'
+	}
+
+	function createPermLabel(value) {
+		const found = createPerm.options.find((option) => option.value === value)
+		return found === undefined ? value : found.label
+	}
+
+	async function loadCreatePerm() {
+		/*
+		 * ⚠️ 先**当场清干净** ✗（复查点名）：读目录是异步的 ✓ —— 在它回来之前，纸上还留着上一轮
+		 * 那张 `.on` 卡和那句"创建时就把权限改成「完全放开」…"✓，而这时 `wantedPerm` 已经是 '' ✓
+		 * → 用户看到"选了"、实际按默认跑 ✗。所以：先复位 + 摆"正在读…"✓，读到再画 ✓。
+		 */
+		createPerm.loaded = false
+		createPerm.picked = ''
+		renderCreatePerm()
+		try {
+			const body = await api('api/permission/catalog')
+			createPerm.options = (Array.isArray(body?.options) ? body.options : [])
+				.map((option) => ({
+					value: String(option?.value ?? ''),
+					label: String(option?.label ?? option?.value ?? ''),
+					detail: String(option?.detail ?? ''),
+				}))
+				.filter((option) => option.value !== '')
+			createPerm.defaultPreset = String(body?.defaultPreset ?? '')
+		} catch {
+			// 读不到就**如实说** ✓（`renderCreatePermHint()` 会摆出那句"读不到"✓），绝不编一档出来 ✗。
+			createPerm.options = []
+			createPerm.defaultPreset = ''
+		}
+		createPerm.loaded = true
+		// 每次都从「跟随默认」开始 ✓ —— 上一轮选过的重权限**不许**悄悄跟到下一次 ✗
+		//（这和"预设用完就复位"是同一个教训：用户报过"手机新建明显变贵"✓）。
+		createPerm.picked = ''
+		renderCreatePerm()
+	}
 
 	/* -------------------------------------------------------------- 新建 */
 
@@ -7021,6 +7296,27 @@
 		renderWorkspaces()
 	})
 
+	/**
+	 * 预设**用完就复位**（用户报"手机新建明显变贵"：以前某次手选过的重预设会一直留在
+	 * 下拉里，后面每次新建都悄悄带上它 ✗）。复位后回到「（用默认）」，并且把提示同步。
+	 */
+	function resetCreateForm() {
+		$('firstText').value = ''
+		$('cwd').value = ''
+		$('preset').value = ''
+		renderPresetHint()
+		$('modelPick').value = ''
+		renderModelHint()
+		// 权限也复位到「跟随默认」✓ —— 同一条教训（重权限不许悄悄跟到下一次 ✓）。
+		createPerm.picked = ''
+		// ⚠️ 必须**当场重画** ✗（复查点名）：只清 `picked` 不重画的话，下一次打开新建纸时
+		// 上面还留着上一轮那张 `.on` 卡、hint 还写着"改成「完全放开」…"✓，而 `wantedPerm` 已经是 '' ✗
+		// → 用户看到"选了"、实际按默认跑 ✗（"选了但静默没生效"正是这个项目最恨的那类 ✓）。
+		renderCreatePerm()
+	}
+
+	const CREATE_HINT = '创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。'
+
 	function createTask() {
 		const cwd = $('cwd').value.trim()
 		const request = {}
@@ -7037,6 +7333,14 @@
 			$('createHint').textContent = '已取消创建。'
 			return
 		}
+		/*
+		 * 3.5.0：新建时选的权限 ✓ —— **只有"选了、而且和默认档不同"才去写** ✓：
+		 * 选「跟随默认」= 什么都不做 ✓；选的正好是默认档 = 宿主那边同样是空操作 ✓，
+		 * 白弹一次 PIN 门没有意义 ✗。
+		 */
+		const wantedPerm = (createPerm.picked !== '' && createPerm.picked !== createPerm.defaultPreset)
+			? createPerm.picked
+			: ''
 
 		const button = $('createBtn')
 		button.disabled = true
@@ -7064,6 +7368,56 @@
 					$('createHint').textContent = '会话建好了，但切模型没成功：' + error.message
 				}
 			}
+			/*
+			 * 3.5.0：权限落在**建会话之后、发第一条之前** ✓（`POST /api/session` 本身就要提权 ✓，
+			 * 所以这一步通常不会再要一次 PIN ✓）。
+			 */
+			if (wantedPerm !== '') {
+				try {
+					await api('api/permission', {
+						method: 'POST',
+						headers: { 'content-type': 'application/json' },
+						body: JSON.stringify({ sessionId: created.sessionId, preset: wantedPerm }),
+					})
+				} catch (error) {
+					/*
+					 * ⚠️ 权限没落下去时**不发第一条** ✗：会话是便宜且可逆的 ✓（建了就建了 ✓），
+					 * 而"按一个你没选的权限跑起来"不是 ✗ —— 用户选的就是"它这一轮能动到哪一步"✓。
+					 * 第一句**放回输入框** ✓（内容不丢 ✓），并把现在到底是什么状态说清 ✓。
+					 */
+					rememberSession(state.sessionId)
+					state.sessionId = created.sessionId
+					writeLocal('dshm.session', created.sessionId)
+					if (first !== '') {
+						/*
+						 * 第一句**放回输入框** ✓ —— 但输入框里可能已经有用户没写完的草稿 ✗：
+						 * 那是**用户打过的字**，绝不能被这一句覆盖掉 ✗（悄悄吃掉用户的话 = 这个项目最恨的事 ✓）。
+						 * 所以：空着才写进去 ✓；有草稿就接在后面 ✓，并且立刻存一次草稿 ✓（刷新也不丢 ✓）。
+						 */
+						const typing = String(text.value ?? '')
+						text.value = typing.trim() === '' ? first : (first + '\n' + typing)
+						growComposer()
+						saveDraftNow()
+					}
+					resetCreateForm()
+					$('createHint').textContent = CREATE_HINT
+					closeSheet()
+					switchTab('task')
+					/*
+					 * ⚠️ 复查点名的另一条路 ✗：`loadSessions()` 在"宿主列表还差一拍"时会**自动改选**会话 ✓
+					 * （找不到刚建的那个就退到最近一个非空的 ✗）—— 而输入框里那句话是给**新会话**的 ✓。
+					 * 所以把提示放在**它跑完之后** ✓：真被改选了就明说 ✓（别让用户把这条发给别的会话 ✗）。
+					 */
+					return loadSessions().then(() => {
+						const landed = state.sessionId === created.sessionId
+						flash('会话建好了' + (landed === true ? '' : '（但手机上没能停在它上面 —— 先在列表里点开刚建的那个 ✓）')
+							+ '，但权限没改成「' + createPermLabel(wantedPerm) + '」：' + error.message
+							+ (first === ''
+								? '。这条会话按默认档跑 —— 想改可以点 🔐（要输一次 PIN）。'
+								: ' —— 你那条任务**没有**发出去，已经放回输入框：改好权限（🔐）再点「发送」。'), 12000)
+					})
+				}
+			}
 			// 跳到新会话之前，把现在这个的现场存下来（切回来时秒开）。
 			rememberSession(state.sessionId)
 			state.sessionId = created.sessionId
@@ -7074,15 +7428,8 @@
 				body: JSON.stringify({ sessionId: created.sessionId, text: first, images: [] }),
 			})
 			return after.then(() => {
-				$('firstText').value = ''
-				$('cwd').value = ''
-				// 预设**用完就复位**（用户报"手机新建明显变贵"：以前某次手选过的重预设会一直留在
-				// 下拉里，后面每次新建都悄悄带上它 ✗）。复位后回到「（用默认）」，并且把提示同步。
-				$('preset').value = ''
-				renderPresetHint()
-				$('modelPick').value = ''
-				renderModelHint()
-				$('createHint').textContent = '创建后会跳到「任务」页；填了第一条内容会先问你一次再发出去。'
+				resetCreateForm()
+				$('createHint').textContent = CREATE_HINT
 				closeSheet()
 				switchTab('task')
 				return loadSessions()
@@ -9225,6 +9572,13 @@
 		if (power === null || power === undefined) return ''
 		const html = ['<div class="syscard">', '<div class="sessgroup">电脑端一键动作</div>']
 		html.push('<div class="actions"><button class="go" data-lock="1">🔒 锁屏（一键，不用 PIN）</button></div>')
+		/*
+		 * 3.5.0「解锁」：**手机入口这一版没有** ✗（如实说 ✓）。这里曾经摆过一个 `data-unlock` 的行 ✓，
+		 * 但那条线连做 5 轮都没接通 ✓（根因"作用域 + 面板重渲染"两层 ✓）→ 按铁律
+		 * **不摆一个按了没反应的按钮** ✗，撤掉 ✓（服务端那半边是完成态 ✓，见 `#poweropen` 里那段说明 ✓）。
+		 * 下一版重做时**别复用 `data-power`** ✗ —— 那条路只认 shutdown / restart ✓，
+		 * 别的值会落到关机的默认支上 ✓ → 「点解锁变成关机」✗（当时是被一条会咬的断言抓住的 ✓）。
+		 */
 		if (power.powerEnabled === true) {
 			html.push('<div class="actions"><button data-power="shutdown">⏻ 关机…</button><button data-power="restart">↻ 重启…</button></div>')
 		} else {
@@ -9297,6 +9651,13 @@
 
 	function openPower(kind) {
 		powerPanel.kind = kind
+		/*
+		 * ⚠️ 3.5.0 的红队复查在这儿抓到过真 bug ✗（留着当下一版的教训 ✓）：这里**曾经**给
+		 * `#powerUnlock` 挂过一份委派 ✓，而模块尾部还给同一个按钮挂过另一份 ✓（两个守卫在**两个
+		 * 不同元素**上 → 都生效 ✓）→ 一次点击发**两条** POST ✓，第二条被 3 秒闸回成 429 ✓，
+		 * 纸上先闪一句"刚试过 —— 隔 3 秒再试" ✗，1.5 秒后才被真实结论覆盖 ✓。
+		 * 结论：入口撤掉之后，**同一个目标只能有一份接法** ✗（要么全在，要么全不在 ✓）。
+		 */
 		powerPanel.armed = false
 		powerPanel.power = sysPanel.power
 		setDelText('powerTitle', kind === 'shutdown' ? '关机' : '重启')
@@ -9310,6 +9671,15 @@
 		hide($('sysopen'))
 		show($('poweropen'))
 	}
+	/*
+	 * 3.5.0「解锁」的那三条纪律（**入口撤掉了** ✗，但下一版重做时必须照做 ✓）：
+	 *   ① **PIN 随这次请求发** ✓（`body.pin` ✓）—— 2026-10-13 真机日志证明"登录一次"不算 ✓；
+	 *   ② **不走 `api()`** ✗ —— 它见到 `needPin` 会弹那句「登录已过期」的门 ✗（我们没掉线 ✓），
+	 *      要自己发请求 ✓、自己把话说清 ✓；
+	 *   ③ **不代输密码** ✗（系统安全桌面不允许 ✓）：只发一次无害唤醒输入 ✓，
+	 *      然后按三种结论**原话**说 ✓（已解锁 ✓ / 还锁着要密码 ✗ / **读不到状态** ✓）。
+	 * 还有一条是复查补的 ✗：**只留一份接法**（两份 = 一次点击两条请求 ✓）。
+	 */
 
 	async function confirmPower() {
 		if (powerPanel.kind === '') return
@@ -9397,6 +9767,14 @@
 		if (kill !== null) { openKill(Number(kill.getAttribute('data-kill'))); return }
 		const power = target.closest('[data-power]')
 		if (power !== null) { openPower(String(power.getAttribute('data-power'))); return }
+		/*
+		 * 3.5.0「解锁」的入口：**这一版撤掉了** ✗（见 `#poweropen` 里那段说明 ✓）。
+		 * 这里原来有一条 `[data-unlock]` 的委派 ✓（就地内联发请求 ✓）—— 入口一撤，它就是**死代码** ✓，
+		 * 而且留着会让人以为"入口还在"✗（2026-10-13 复查就是这么发现"说撤了、其实按钮还在"的 ✓）。
+		 * 另一条教训留着（下一版重做时用 ✓）：**别复用 `data-power`** ✗ ——
+		 * `data-power` 那条只认 shutdown / restart ✓，别的值会落到关机的默认支上 ✓ →
+		 * 「点解锁变成关机」✗（当时是被一条"必须发 POST {action:'unlock'}"的断言当场抓住的 ✓）。
+		 */
 		if (target.closest('[data-lock]') !== null) { void runLock(); return }
 		if (target.closest('[data-power-cancel]') !== null) { void cancelPower() }
 	})
@@ -9883,7 +10261,9 @@
 	// 19（3.4.2）：说明页补上"工具键那一排还有这些"（🔍 搜一搜 / 📅 这周 / 📤 导出 / 📋 剪贴板 /
 	// 📊 状态盘 / 📅 定时 / ⏰ 工作流 / 🧩 面板 / 🩺 自检 / 🛡 安全审计 / 🔓 只看不发 / 🔗 只读链接 ✓）
 	// + **出门在外必须能连**（Tailscale + 隧道 + 验收办法）✓ + 开放接口（webhook，默认关）✓。
-	const WELCOME_VERSION = '19'
+	// 20（3.5.0）：补两条"功能有了但说明里没提"的 ✓ —— **新建任务时也能先选权限**（🔐 那一行 ✓）
+	// 与**大图切片上传时屏幕上写着传到第几片**（图片那一行 ✓）。服务端 `WELCOME_VERSION` 一起 +1 ✓。
+	const WELCOME_VERSION = '20'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -10011,6 +10391,395 @@
 	}
 
 	$('docBack').addEventListener('click', () => { hide($('docopen')); $('docBody').textContent = '' })
+
+	/* ------------------------------------------------- 3.5.0：这条会话的「目标」（只读） */
+	/**
+	 * 用户 2026-10-13：「我手机桥上看不到目标」✗ —— 把宿主的**目标**摆上来 ✓：
+	 * 做什么（objective）✓、什么阶段（active / paused / blocked / complete ✓）、
+	 * 第几轮（roundsStarted / maxGoalRounds ✓）、以及有没有在自动继续（armed ✓）。
+	 *
+	 * ⚠️ **只读** ✓：读的是 `agents.get(sessionId)`（**活着的** agent ✓，不唤醒 ✓）→ `goals.get(agent)` ✓；
+	 * 会动目标的动作（暂停 / 继续 / 改 / 清）**不在这一版** ✗ —— 那些要现输 PIN ✓，等单独一轮做 ✓。
+	 * ⚠️ 读不到就**照实说** ✓，并且**分清楚**两件事 ✗："这条会话现在没在跑" ✓ ≠ "这条会话没有目标" ✓。
+	 */
+	const GOAL_PHASE_TEXT = {
+		active: '进行中 ✓', paused: '已暂停 ⏸', blocked: '被挡住了 ✗', complete: '已完成 ✓',
+	}
+
+	async function openGoal() {
+		show($('goalopen'))
+		renderGoal(undefined, '正在读…')
+		try {
+			const response = await fetch('api/goal?sessionId=' + encodeURIComponent(String(state.sessionId ?? '')))
+			const body = await response.json()
+			renderGoal(body?.goal ?? null, String(body?.message ?? ''))
+		} catch (error) {
+			// 读不到就写"读不到 + 为什么" ✓ —— 绝不写成"没有目标" ✗（那是另一件事 ✓）。
+			renderGoal(null, '读不到（' + String(error?.message ?? error) + '）—— 这不等于"没有目标" ✗')
+		}
+	}
+
+	function renderGoal(goal, note) {
+		const box = $('goalBody')
+		if (box === null) return
+		// 顺手给工具键点个小标记 ✓（有目标时看得见 ✓ —— "看得到"是这一条的全部意义 ✓）。
+		$('goalBtn')?.classList.toggle('hasgoal', goal !== null && goal !== undefined)
+		if (goal === null || goal === undefined) {
+			box.innerHTML = '<div id="goalNote">'
+				+ escapeHtml(note === '' || note === undefined ? '这条会话现在**没有**目标 ✓' : note) + '</div>'
+			return
+		}
+		const rounds = goal.maxGoalRounds > 0
+			? `${goal.roundsStarted} / ${goal.maxGoalRounds} 轮`
+			: `${goal.roundsStarted} 轮`
+		const blocked = goal.blockedReason === undefined
+			? ''
+			: '<p class="goalblocked">挡在这儿的原因：'
+				+ escapeHtml(String(goal.blockedReason.message ?? '') === '' ? String(goal.blockedReason.code ?? '') : String(goal.blockedReason.message)) + '</p>'
+		box.innerHTML = '<div class="goalcard">'
+			+ '<div class="goalphase">' + escapeHtml(GOAL_PHASE_TEXT[goal.phase] ?? String(goal.phase ?? ''))
+			+ (goal.activation === 'disarmed' ? '（已解除自动继续）' : '') + '</div>'
+			+ '<div class="goaltext">' + escapeHtml(String(goal.objective ?? '')) + '</div>'
+			+ '<div class="goalmeta">' + escapeHtml(rounds)
+			+ (Number(goal.updatedAt) > 0 ? ' · 更新于 ' + escapeHtml(new Date(Number(goal.updatedAt)).toLocaleString()) : '') + '</div>'
+			+ blocked
+			+ '<p class="hint">这里**只看不改** ✓ —— 要暂停 / 继续 / 改目标，在电脑上的 DSH 里做 ✓。</p>'
+			+ '</div>'
+	}
+
+	$('goalBtn').addEventListener('click', () => { void openGoal() })
+	$('goalBack').addEventListener('click', () => hide($('goalopen')))
+	$('goalRefresh').addEventListener('click', () => { void openGoal() })
+
+	/* ------------------------------------------------- 3.5.0：免手对话（语音环） */
+	/**
+	 * 用户 2026-10-13 的主题：**语音优先** ✓ —— 免手动对话。
+	 * 状态机 / 重叠拼接 / "停"的识别都在 `lib/voice.js` ✓（**一份实现两边共用** ✓ —— 不在这页里抄第二份 ✗）。
+	 *
+	 * ⚠️ 宿主**没有流式识别** ✗（上游查实 ✓）→ 手机切 **4 秒**一片 + **0.4 秒**重叠 ✓，
+	 * 逐片发 `POST /api/transcribe`（它要 **16k 单声道 WAV** 的 base64 ✓，见 index.js 那条 400 提示 ✓），
+	 * 回来按重叠去重拼成一句 ✓。**说一句「停」就停** ✓。
+	 * ⚠️ 三道闸 ✓：默认关 ✓、开要**现输 PIN** ✓（`api()` 见到 `needPin` 会自己弹门 ✓）、
+	 * **倒计时到点自己停** ✓（服务端给 `remainingMs` ✓）—— 不许"开着麦克风没人知道"✗。
+	 * ⚠️ 读不到 / 没麦克风 / 浏览器不支持：一律**照实说** ✓（不装作在听 ✗）。
+	 */
+	const VOICE_SLICE_MS = 4000
+	const VOICE_OVERLAP_MS = 400
+	const VOICE_SILENCE_RMS = 0.012
+	const VOICE_STATE_TEXT = {
+		off: '关着 ✓', listening: '在听 ✓（直接说话）', transcribing: '正在转写…',
+		running: '已经发出去了 ✓（agent 在跑）', speaking: '正在念回答 ✓',
+	}
+	const voice = {
+		core: null, state: 'off', remaining: 0, tick: 0, stream: null, ctx: null, node: null,
+		samples: [], heard: '', auto: false, busy: false, sent: false, note: '',
+	}
+
+	async function voiceCore() {
+		if (voice.core !== null) return voice.core
+		try {
+			voice.core = await import('api/voice/core.js')
+			return voice.core
+		} catch (error) {
+			/*
+			 * 拿不到核心就**说清** ✓（不装作在用 ✓）—— 有些环境不支持动态 import ✓
+			 *（老一点的 Safari ✓、以及测试用的 jsdom ✓ —— 2026-10-13 ui 套件就是这么抓到的 ✓）。
+			 */
+			throw new Error('读不到语音核心（' + String(error?.message ?? error) + '）')
+		}
+	}
+
+	function voiceRender() {
+		const line = $('voiceLine')
+		if (line === null) return
+		const left = voice.remaining > 0 ? ` · 还有 ${Math.max(1, Math.ceil(voice.remaining / 60000))} 分钟` : ''
+		line.textContent = (VOICE_STATE_TEXT[voice.state] ?? voice.state) + left
+			+ (voice.heard === '' ? '' : '\n听到的：' + voice.heard)
+		if ($('voiceNote') !== null) $('voiceNote').textContent = voice.note
+		if ($('voiceToggle') !== null) $('voiceToggle').textContent = voice.state === 'off' ? '开始听' : '停止'
+	}
+
+	/** 走一步状态机 ✓（非法迁移**照实说** ✓ —— 不静默、也不硬改 ✗）。 */
+	async function voiceStep(event) {
+		const core = await voiceCore()
+		const step = core.nextVoiceState(voice.state, event)
+		if (step.ok === true) voice.state = step.state
+		else if (step.reason !== '') voice.note = step.reason
+		voiceRender()
+	}
+
+	async function voiceStatus() {
+		try {
+			const body = await api('api/voice')
+			voice.remaining = body.listening === true ? Number(body.remainingMs ?? 0) : 0
+			if ($('voiceToggle') !== null) $('voiceToggle').disabled = body.enabled !== true
+			if ($('voiceAuto') !== null) $('voiceAuto').disabled = body.enabled !== true
+			voice.note = String(body.message ?? '')
+			voiceRender()
+			return body
+		} catch (error) {
+			// 读不到就**说读不到** ✓ —— 不写成"关着" ✗（那是两件事 ✓）。
+			voice.note = '读不到语音状态：' + String(error?.message ?? error) + '（这不等于"关着" ✗）'
+			voiceRender()
+			return null
+		}
+	}
+
+	/*
+	 * ⚠️ WAV 编码 / 切片 / 静音判定**都不在这页里实现** ✓ —— 它们在 `lib/voice.js` ✓，
+	 * 由 `api/voice/core.js` 发给这一页 ✓（**一份实现两边共用** ✓，抄第二份迟早对不上 ✗）。
+	 * 而且那一段是**逐字段单测过**的 ✓（`test/voice.mjs`：RIFF/16k/单声道/16bit/长度/重采样 ✓）——
+	 * 头里写错一个字段，识别器要么 400、要么"听不见你说话"✗，那是最难查的一类 ✓。
+	 */
+
+	/** 把攒下的一整片发去转写 ✓，回来**重叠去重**拼进 `voice.heard` ✓。 */
+	async function voiceFlush() {
+		const slice = Math.floor(16000 * VOICE_SLICE_MS / 1000)
+		const keep = Math.floor(16000 * VOICE_OVERLAP_MS / 1000)
+		if (voice.samples.length < slice || voice.busy === true || voice.state === 'off') return
+		const core = await voiceCore()
+		const cut = core.sliceWithOverlap(voice.samples, slice, keep)
+		if (cut.ready !== true) return
+		voice.samples = Array.from(cut.rest)          // 尾巴留 0.4 秒 ✓（切在词中间也不丢字 ✓）
+		const piece = cut.piece
+		if (core.rms(piece) < VOICE_SILENCE_RMS) { voice.sent = false; return }   // 没人声：不送 ✓（省钱 ✓）
+		voice.busy = true
+		try {
+			await voiceStep('speech')
+			const body = await api('api/transcribe', {
+				method: 'POST', headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ audioBase64: core.bytesToBase64(core.encodeWav16k(piece, voice.ctx?.sampleRate ?? 16000)) }),
+			})
+			const text = String(body?.text ?? '').trim()
+			if (text !== '') {
+				// **能打断** ✓：我这边一听到人声，就把正在念的回答停掉 ✓
+				//（用户说"打断"要的就是这个 ✓ —— 不用去点那个 ⏹ ✓）。
+				if (typeof stopSpeak === 'function') stopSpeak()
+				const decided = core.shouldTranscribeChunk(text)
+				if (decided.send === true) {
+					if (core.isStopCommand(text) === true) {
+						// 说"停"就停 ✓（**这一句不发给 agent** ✗ —— 那是命令，不是内容 ✓）。
+						voice.note = '听到「' + text + '」—— 停了 ✓'
+						await voiceStop()
+						return
+					}
+					voice.heard = core.mergeTranscriptSegments(voice.heard, text)
+					voice.sent = false
+					if (voice.auto === true) {
+						// 「说完就发」：这一片**没有新内容**时说明说完了 ✓ → 交给页面自己的发送键 ✓
+						//（它带着"只看不发"等所有规矩 ✓ —— 不绕过去 ✗）。
+					}
+				} else voice.note = decided.reason
+			} else if (voice.auto === true && voice.heard !== '' && voice.sent === false) {
+				// 静音的一片 = 说完了 ✓ → 发出去 ✓。
+				voice.sent = true
+				const outgoing = voice.heard
+				voice.heard = ''
+				if ($('text') !== null) $('text').value = outgoing
+				if ($('send') !== null) $('send').click()
+				voice.note = '发出去了 ✓'
+			}
+			await voiceStep('transcribed')
+		} catch (error) {
+			voice.note = '这一片没转成：' + String(error?.message ?? error) + '（继续听 ✓）'
+			await voiceStep('fail')
+		} finally {
+			voice.busy = false
+			voiceRender()
+		}
+	}
+
+	async function voiceStart() {
+		const status = await voiceStatus()
+		if (status === null) return
+		if (status.enabled !== true) { toast(voice.note, 4200); return }
+		/*
+		 * ⚠️ 2026-10-13 真机试出来的 bug（用户原话：「开始听后无输出」✗）：
+		 * 这里以前**只读了状态、没让服务端开门** ✗ —— 于是 `remaining` 一直是 0 ✓，
+		 * 一秒后滴答就判定"到点了"→ 立刻自己停掉 ✓ → 手机上看着就是"按了什么都没发生"✗。
+		 * 修法：**先 POST `action: 'start'`** ✓（这一步才会要**现输 PIN** ✓ —— `api()` 见到 needPin 会自己弹门 ✓），
+		 * 拿到服务端给的 `remainingMs` 之后再开麦克风 ✓；开不成（没输 PIN / 被拒）就**照实说** ✓。
+		 */
+		let opened
+		try {
+			/*
+			 * ⚠️ 这里**故意不走 `api()`** ✓ —— 两个真机反馈追出来的原因 ✗：
+			 *   ① `api()` 见到 `403 needPin` 会弹那句「**登录已过期**」✗ —— 可用户并没掉线 ✓，
+			 *      只是这一步要**提权一次** ✓（开麦克风 ✓）；那句话会让人以为账号出了问题 ✗；
+			 *   ② `api()` **不会自己重试** ✗（页面其它 PIN 动作的老规矩是"验完再点一次"✓），
+			 *      而 `showGate` 之后页面很可能**整个刷新** ✓ → "点了开始听"这件事就丢了 ✗ →
+			 *      表现就是用户说的「输了 PIN 还是没输出」✗。
+			 * 所以：自己弹门（用**自己的话**说清 ✓）+ 自己记一个标记 ✓，页面再起来时**自动接着开** ✓。
+			 */
+			const response = await fetch('api/voice', {
+				method: 'POST', credentials: 'same-origin',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'start', pin: String($('voicePin')?.value ?? '') }),
+			})
+			opened = await response.json().catch(() => ({}))
+			if (response.status === 403 && opened?.needPin === true) {
+				/*
+				 * ⚠️ 这里**不再弹登录门** ✗ —— 2026-10-13 真机日志证明"登录一次"并不满足上游 ✓
+				 *（`PIN accepted` 紧跟 `POST /api/voice -> 403` ✓）：它要的是 **PIN 在这次请求里** ✓。
+				 * 所以：把话说清 ✓（PIN 填在纸上的输入框里 ✓），让用户**再点一次「开始听」** ✓。
+				 */
+				voice.note = String(opened?.error ?? '这一项要 PIN ✓')
+					+ ' —— 把电脑上的 6 位 PIN 填在**上面那个框**里 ✓，再点一次「开始听」✓'
+				voiceRender(); toast(voice.note, 5200); return
+			}
+			if (response.ok !== true) throw new Error(String(opened?.error ?? ('HTTP ' + response.status)))
+			writeLocal('dshm.voicePending', '0')
+			if ($('voicePin') !== null) $('voicePin').value = ''   // 用完就抹掉 ✓（不留在屏幕上 ✗）
+		} catch (error) {
+			voice.note = '没开成：' + String(error?.message ?? error) + '（再点一次「开始听」试试 ✓）'
+			voiceRender(); toast(voice.note, 5200); return
+		}
+		const remaining = Number(opened?.remainingMs ?? 0)
+		if (remaining <= 0) {
+			// 服务端说开了、却没给时间 —— 这种"看起来开了其实没开"要**当场说出来** ✗。
+			voice.note = '服务端没给出可用时长（返回 ' + String(opened?.message ?? '') + '）—— 没开成 ✗'
+			voiceRender(); toast(voice.note, 5200); return
+		}
+		voice.remaining = remaining
+		if (typeof navigator.mediaDevices?.getUserMedia !== 'function') {
+			voice.note = '这个浏览器不给麦克风（要 https 地址才有 ✓）'
+			voiceRender(); toast(voice.note, 4200); return
+		}
+		try {
+			voice.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+			const Ctor = window.AudioContext ?? window.webkitAudioContext
+			voice.ctx = new Ctor({ sampleRate: 16000 })
+			/*
+			 * ⚠️ iOS/Safari：`AudioContext` 起来时是 **suspended** 的 ✗ —— 不 `resume()` 的话
+			 * 麦克风拿到了、但**一个采样都不会来** ✓（表现：状态行"在听"却永远没有"正在转写"✗）。
+			 * 2026-10-13 补 ✓（真机日志追到"开启成功后 2 秒被停"这一层 ✓）。
+			 */
+			try { await voice.ctx.resume?.() } catch { /* 有的浏览器不给 resume ✓ —— 下面照常试 ✓ */ }
+			const source = voice.ctx.createMediaStreamSource(voice.stream)
+			voice.node = voice.ctx.createScriptProcessor(4096, 1, 1)
+			voice.samples = []
+			voice.heard = ''
+			voice.sent = false
+			voice.node.onaudioprocess = (event) => {
+				if (voice.state === 'off') return
+				const channel = event.inputBuffer.getChannelData(0)
+				for (let index = 0; index < channel.length; index += 1) voice.samples.push(channel[index])
+				// 攒够一片就送 ✓（不等定时器 ✓ —— 声音是连续的 ✓）。
+				if (voice.samples.length >= Math.floor(16000 * VOICE_SLICE_MS / 1000)) void voiceFlush()
+			}
+			source.connect(voice.node)
+			voice.node.connect(voice.ctx.destination)   // 某些浏览器不接就不回调 ✓（音量是 0 ✓ 不会啸叫 ✓）
+			voice.tick = setInterval(() => {
+				voice.remaining = Math.max(0, voice.remaining - 1000)
+				if (voice.remaining <= 0) { void voiceStop('到点了，麦克风已经关掉 ✓（要接着用就再开一次 ✓）') ; return }
+				voiceRender()
+			}, 1000)
+			await voiceStep('start')
+			voice.note = '在听了 ✓ 说一句「停」就停 ✓'
+			voiceRender()
+		} catch (error) {
+			// 拿不到麦克风就**说清原因** ✓ 并把状态退回关着 ✓（不留一个假的"在听"✗）。
+			// ⚠️ 原因要放在**停完之后**再写 ✓ —— 否则会被 `voiceStop` 那句话盖掉 ✗
+			//（用户看到"已停"却不知道为什么停 ✓ = 等于没说 ✓）。
+			const why = '打不开麦克风：' + String(error?.name ?? '') + ' ' + String(error?.message ?? error)
+				+ '（没给权限 ✗ / 不是 https ✗ / 这个浏览器不让网页采集 ✗ —— 微信里打开的内置浏览器就是这样 ✗，'
+				+ '换成 Safari 或 Chrome 打开 ✓）'
+			await voiceStop()
+			voice.note = why + ' —— 已经停下 ✓'
+			voiceRender()
+			toast(voice.note, 5200)
+		}
+	}
+
+	async function voiceStop(note) {
+		if (voice.tick !== 0) { clearInterval(voice.tick); voice.tick = 0 }
+		try { voice.node?.disconnect() } catch { /* 已经断了 ✓ */ }
+		try { voice.ctx?.close() } catch { /* 已经关了 ✓ */ }
+		for (const track of voice.stream?.getTracks?.() ?? []) { try { track.stop() } catch { /* 已经停了 ✓ */ } }
+		voice.node = null; voice.ctx = null; voice.stream = null; voice.samples = []
+		voice.remaining = 0
+		if (note !== undefined) voice.note = note
+		try {
+			const core = await voiceCore()
+			voice.state = core.nextVoiceState(voice.state, 'stop').state
+		} catch (error) {
+			/*
+			 * 核心读不到**也必须能停下来** ✓ —— "把麦克风关掉"永远是第一优先 ✓。
+			 * 状态机这一步退回 `off` ✓，并**把原因写上** ✓（不静默 ✗）。
+			 */
+			voice.state = 'off'
+			voice.note = '已停 ✓（' + String(error?.message ?? error) + ' —— 状态机退回"关着" ✓）'
+		}
+		// 服务端也要一起停 ✓（**「停」不用 PIN** ✓ —— 往安全方向走不设门 ✓）。
+		try {
+			await api('api/voice', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'stop' }) })
+		} catch (error) {
+			/*
+			 * ⚠️ **绝不许静默** ✗（红队复查第 89 轮点名）：原来这里只有一句注释说"下面会说出来"✓，
+			 * 而下面只有 `voiceRender()` ✓ —— 屏幕上照旧写着"已停 ✓"，服务端那扇门却可能还开着 ✗
+			 * （`GET /api/voice` 仍报 `listening:true / remainingMs>0` ✓，最长 30 分钟 ✓）。
+			 *
+			 * ⚠️ 第 90 轮复审又抓到这条**改法本身**的错指引 ✗：原文案叫用户"再点一次「停止」"✓ ——
+			 * 可那一刻面板上**没有「停止」这个键** ✗（`voiceStop()` 早在上面就把 `voice.state` 落成 `off` ✓，
+			 * `voiceRender()` 按状态渲染 → 按钮文案是「开始听」✓）→ 用户照着点，走的是**反方向** ✗✗
+			 * （`#voiceToggle` 是 `state === 'off' ? voiceStart() : voiceStop()` ✓，最坏把刚说"没关掉"的
+			 * 那扇门再开一遍 ✓）。所以：
+			 *   ① **绝不指一个不存在的键** ✗ —— 只留"在电脑上关掉"这个一定存在的出口 ✓；
+			 *   ② 另给一个**真能再停一次**的键 ✓（横幅上的「再停一次」直接调 `voiceStop()` ✓ ——
+			 *      它只发 stop ✓，不会开麦克风 ✓）；
+			 *   ③ **别吃掉调用方传进来的 note** ✗（"到点了""听到停""离开这一页"都是"为什么停的" ✓，
+			 *      丢了它就等于把原因抹掉 ✓ —— 这正是上面 `voiceStart` 那段注释交代过要避免的坑 ✓）。
+			 */
+			const why = note === undefined || note === '' ? '' : note + '；'
+			voice.note = why + '手机这边已经停了 ✓（麦克风真的关掉了 ✓）；但**电脑那扇门没关掉** ✗：'
+				+ String(error?.message ?? error) + ' —— 在电脑上把语音模式关掉 ✓，或点这条提示里的「再停一次」✓。'
+			flash(voice.note, 0, { label: '再停一次', run: () => { void voiceStop('又停了一次 ✓') } })
+		}
+		voiceRender()
+	}
+
+	$('voiceOpen').addEventListener('click', () => { show($('voiceopen')); void voiceStatus() })
+	$('voiceBack').addEventListener('click', () => { hide($('voiceopen')); if (voice.state !== 'off') void voiceStop('离开这一页就停了 ✓') })
+	$('voiceToggle').addEventListener('click', () => { void (voice.state === 'off' ? voiceStart() : voiceStop()) })
+	$('voiceAuto').addEventListener('change', () => { voice.auto = $('voiceAuto').checked === true })
+
+	/**
+	 * 念**最新一条回答** ✓ —— 复用页面上那套「🔊」✓（`speakAt` ✓：上限 1200 字 ✓、
+	 * 截断了会说明白 ✓、再点一下停 ✓、浏览器不支持时会说清 ✓）—— 不另写一份 ✗。
+	 */
+	function voiceLatestAnswer() {
+		const items = state.items ?? []
+		for (let index = items.length - 1; index >= 0; index -= 1) {
+			if (items[index]?.kind === 'assistant') return index
+		}
+		return -1
+	}
+
+	function voiceSpeakLatest() {
+		const index = voiceLatestAnswer()
+		if (index < 0) { toast('这一段还没有可念的回答 ✓', 2600); return }
+		speakAt(index)
+	}
+
+	$('voiceSpeakNow').addEventListener('click', voiceSpeakLatest)
+
+	/*
+	 * 3.5.0「解锁」：**这一版手机上没有入口** ✗ —— 这里原来有 `unlockNow()`（整段发 `POST /api/power`）
+	 * 和一份挂在 `#poweropen` 上的委派 ✓，2026-10-13 红队复查发现**同一个按钮被绑了两份** ✗
+	 * （一次点击两条请求 ✓，第二条被 3 秒闸回 429 ✓），而且那个按钮**从来没被真撤掉** ✗ ——
+	 * 与 CHANGELOG / USERNEWS 写的"入口这一版没有"直接矛盾 ✓。
+	 * 现在：入口、两份接法、这条死分支**一起删掉** ✓（`test/ui.mjs` 钉住 `#powerUnlock` 不存在 ✓）。
+	 * 下一版重做入口时，服务端那半边已经就绪 ✓（`POST /api/power {action:'unlock',pin}` ✓），
+	 * 照 `#poweropen` 里那三条纪律写 ✓（PIN 随请求 ✓ / 不走 `api()` ✓ / 不代输密码 ✓ / 只留一份接法 ✓）。
+	 */
+
+	/*
+	 * ⚠️ 这里原来还有一段"PIN 门之后自动接着开"（靠 `dshm.voicePending` 标记 + 页面刷新 ✓）——
+	 * 2026-10-13 真机日志把它**证伪了** ✗：`PIN accepted` 之后紧接着就是 `POST /api/voice -> 403` ✓，
+	 * 说明"登录一次"根本不满足上游 ✓（它要的是 **PIN 在这次请求里** ✓）。
+	 * 所以那段已经删掉 ✓：现在 PIN 就填在纸上的框里 ✓、跟着请求一起发 ✓（页面别的 PIN 动作同款 ✓）——
+	 * **不留死代码** ✗（留着会让人以为真有"自动接着开"✓，而它永远不会发生 ✗）。
+	 */
 
 	/**
 	 * 3.4.3：把当前这份文档**分享到微信 / 别的 App** ✓（用户 2026-10-13 要求 ✓）。

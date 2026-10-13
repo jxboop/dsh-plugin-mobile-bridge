@@ -313,6 +313,27 @@ const services = {
 	/** 记录"切模型"的请求（2.4.0）。 */
 	selectedModels: [],
 	/*
+	 * 3.5.0「目标」：上游查实（**活契约** ✓，`cordis_inspect_query` ✓）——
+	 *   · `agents.get(sessionId)` → **活着的** agent（`{ id }` ✓）—— 是"查"不是"唤醒" ✓；
+	 *   · `goals.get(agent)` → `GoalView | undefined` ✓
+	 *     （字段照契约 ✓：objective / phase / roundsStarted / maxGoalRounds / activation / revision / updatedAt ✓）。
+	 * 桩里一条"在跑且带目标" ✓、一条"没在跑" ✓ —— 桥必须**分别**说清 ✓，
+	 * 尤其**不许**把"没在跑"说成"这条会话没有目标" ✗（那是编 ✗）。
+	 */
+	agents: {
+		get(id) { return String(id) === 'session-test' ? { id: 'session-test' } : undefined },
+	},
+	goals: {
+		get(agent) {
+			if (agent?.id !== 'session-test') return undefined
+			return {
+				id: 'goal-1', revision: 3, objective: '把手机桥按总路线推进到 v4.0.0',
+				phase: 'active', maxGoalRounds: 12, roundsStarted: 7,
+				createdAt: 1791800000000, updatedAt: 1791840000000, activation: 'armed',
+			}
+		},
+	},
+	/*
 	 * 2.7.0 ★6：定时任务栏的桩。
 	 *
 	 * 真上游是 `@deepseek-ai/dsh-schedule` 注册的 **`schedule`** 服务（`super(ctx, "schedule")` ✓），
@@ -415,6 +436,19 @@ const services = {
 			const spec = this.presets[name]
 			if (spec === undefined) throw new Error(`permission: unknown preset "${name}"`)
 			return spec
+		},
+		/**
+		 * 3.5.0：真实契约里的 `@Remote('catalog')` ✓（`{options, defaultOptions, defaultPreset}` ✓）——
+		 * 手机「新建任务」那张纸在**会话还不存在**时要靠它列出"这台电脑的默认档 + 可选档" ✓。
+		 * 这里按真实形状摆一份 ✓（`PresetOption = {value, name, description?}` ✓）。
+		 */
+		catalog() {
+			const options = this.names.map((value) => ({ value, name: value, description: `沙箱 ${this.presets[value].sandbox}` }))
+			return {
+				options,
+				defaultOptions: options.filter((option) => option.value === 'workspace-write'),
+				defaultPreset: 'workspace-write',
+			}
 		},
 		current(session) { return this.currentPreset },
 		set(session, name) {
@@ -1888,6 +1922,29 @@ check('a hand-typed path is forwarded as cwd',
 
 	const missing = await fetch(`${base}/api/permission`, authed)
 	check('没带 sessionId 回 400', missing.status === 400, String(missing.status))
+
+	/*
+	 * 3.5.0：新建任务时挑权限（用户 2026-10-13：「新建任务时没有权限选择」✓）——
+	 * 那一刻**会话还不存在** ✗，所以拿不到"某个会话的当前档" ✓；手机需要的是
+	 * "这台电脑上默认是哪档 + 有哪些档可选" ✓（宿主 `permissionPresets.catalog()` ✓）。
+	 */
+	const catalogNoAuth = await fetch(`${base}/api/permission/catalog`)
+	check('权限目录也要登录（无 cookie → 401）', catalogNoAuth.status === 401, String(catalogNoAuth.status))
+
+	const catalogRes = await fetch(`${base}/api/permission/catalog`, authed)
+	const permCatalog = await catalogRes.json()
+	check('权限目录读得到（新建时会话还没有，也要能提前挑 ✓）',
+		catalogRes.status === 200 && permCatalog.defaultPreset === 'workspace-write',
+		`HTTP ${catalogRes.status} default=${permCatalog.defaultPreset}`)
+	check('目录里给全了可选档，而且默认档**在列表里**（前端拿它做「跟随默认」的对照 ✓）',
+		permCatalog.options?.length === 3 && permCatalog.options.some((entry) => entry.value === 'workspace-write')
+		&& permCatalog.options.map((entry) => entry.label).join('/') === '只读/可写工作区/完全放开',
+		JSON.stringify(permCatalog.options?.map((entry) => entry.label)))
+	check('目录是"这台电脑的档位"，所以**没有**"当前档"（current 是空的 ← 没有会话 ✓）',
+		permCatalog.current === '', JSON.stringify(permCatalog.current))
+	check('目录每档也带人话说明（手机不摆英文预设名 ✓）',
+		permCatalog.options?.every((entry) => typeof entry.detail === 'string' && entry.detail.length > 8),
+		permCatalog.options?.[0]?.detail)
 
 	// 缺 sessionId 的写请求照样不许落地（400，而不是"改了个空会话"）。
 	const blank = await fetch(`${base}/api/permission`, {
@@ -4183,6 +4240,166 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 
 	await writeConfig332({ deviceApproval: false })
 }
+/*
+ * --- 3.5.0「目标」：把 DSH 的目标摆到手机上（**只读** ✓）-------------------------
+ * 上游查实 ✓：`agents.get(sessionId)`（**活着的** agent ✓，不唤醒 ✓）→ `goals.get(agent)` ✓。
+ * 这一组钉的是**语义**：在跑的会话读得到 ✓；**没在跑**的会话要如实说"没在跑" ✓
+ *（不许说成"没有目标" ✗，那是两件事 ✗）；宿主缺服务时也要说清是哪一环 ✓。
+ */
+{
+	const login = await fetch(`${base}/api/login`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
+	})
+	const jar = { cookie: (login.headers.get('set-cookie') ?? '').split(';')[0] }
+	const goalOf = async (sessionId) => (await (await fetch(`${base}/api/goal?sessionId=${encodeURIComponent(sessionId)}`, { headers: jar })).json())
+
+	const live = await goalOf('session-test')
+	check('🔴 在跑的会话：读得到目标（原文 + 阶段 + 轮次 + armed ✓，字段名照上游契约 ✓）',
+		live.ok === true && String(live.goal?.objective ?? '').includes('4.0.0') && live.goal?.phase === 'active'
+		&& live.goal?.roundsStarted === 7 && live.goal?.maxGoalRounds === 12 && live.goal?.activation === 'armed',
+		JSON.stringify(live).slice(0, 150))
+	const idle = await goalOf('session-blank')
+	check('🔴 没在跑的会话：**如实说"没在跑"** ✓ —— 不许说成"这条会话没有目标"✗',
+		idle.ok === false && String(idle.message ?? '').includes('没在跑'), JSON.stringify(idle).slice(0, 130))
+	check('不带 sessionId：400 + 说清 ✓（不是 500、也不是空目标 ✗）',
+		(await fetch(`${base}/api/goal`, { headers: jar })).status === 400)
+	check('没登录：401 ✓', (await fetch(`${base}/api/goal?sessionId=session-test`)).status === 401)
+	const savedGoals = services.goals
+	delete services.goals
+	const noService = await goalOf('session-test')
+	services.goals = savedGoals
+	check('宿主没有 goals 服务：**说清是哪一环缺** ✓（不假装"没有目标"✗）',
+		noService.ok === false && String(noService.message ?? '').includes('goals'), JSON.stringify(noService).slice(0, 120))
+}
+
+/*
+ * --- 3.5.0 语音优先：麦克风那扇门 ------------------------------------------
+ * 纪律（和 `processControl` / `powerControl` 同一条 ✓）：**默认关** ✓、开要**现输 PIN** ✓、
+ * 有**超时上限** ✓（两边都不许"开着麦克风没人知道"✗）、**「停」不设门** ✓（往安全方向走 ✓）。
+ */
+{
+	const readConfig = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeConfig = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'),
+		JSON.stringify({ ...await readConfig(), ...patch }, null, 2), 'utf8')
+	// 跑到文件末尾时 `authed` 那枚 cookie 早被前面的登出用例作废了 ✗ → 重新登录一次 ✓。
+	const login = await fetch(`${base}/api/login`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
+	})
+	const jar = { cookie: (login.headers.get('set-cookie') ?? '').split(';')[0] }
+	const post = (payload) => fetch(`${base}/api/voice`, {
+		method: 'POST', headers: { ...jar, 'content-type': 'application/json' }, body: JSON.stringify(payload),
+	})
+	const get = async () => (await (await fetch(`${base}/api/voice`, { headers: jar })).json())
+
+	await writeConfig({ voiceMode: false })
+	const off = await get()
+	check('语音模式**默认关** ✓：回 enabled:false + 一句"怎么开" ✓（不是"你没权限"这种让人猜的话 ✗）',
+		off.enabled === false && String(off.message).includes('voiceMode'), JSON.stringify(off).slice(0, 110))
+	check('关着的时候 start 也是 403 + 说清怎么开 ✓', (await post({ action: 'start', pin: config.pin })).status === 403)
+	check('没登录读语音状态：401 ✓', (await fetch(`${base}/api/voice`)).status === 401)
+
+	await writeConfig({ voiceMode: true })   // 现读配置 ✓ 不用重启 ✓
+	const on = await get()
+	check('打开后：enabled:true + 报上限与默认时长 + 把状态机名字发下来 ✓（手机照着画，别两边各写一份 ✗）',
+		on.enabled === true && on.maxMinutes === 30 && on.defaultMinutes === 10
+		&& Array.isArray(on.states) && on.states.includes('listening') && on.states[0] === 'off',
+		JSON.stringify({ enabled: on.enabled, max: on.maxMinutes, default: on.defaultMinutes, states: on.states }).slice(0, 120))
+	const noPin = await post({ action: 'start' })
+	const noPinBody = await noPin.json().catch(() => ({}))
+	check('🔴 开语音模式**必须现输 PIN** ✓（它开的是麦克风 ✓）；缺 PIN → 403 + needPin ✓',
+		noPin.status === 403 && noPinBody.needPin === true, `HTTP ${noPin.status} ${JSON.stringify(noPinBody).slice(0, 70)}`)
+	await post({ action: 'start', pin: '000000' })
+	check('错 PIN → 也开不起来 ✓（`listening` 仍是 false ✓）', (await get()).listening === false)
+	const started = await post({ action: 'start', pin: config.pin, minutes: 5 })
+	const startedBody = await started.json().catch(() => ({}))
+	check('🔴 正确 PIN → 开启，并**给出到期剩余** ✓（超时上限兜住它 ✓）',
+		started.status === 200 && startedBody.listening === true
+		&& startedBody.remainingMs > 0 && startedBody.remainingMs <= 5 * 60 * 1000 + 1500,
+		JSON.stringify(startedBody).slice(0, 120))
+	const clamped = await (await post({ action: 'start', pin: config.pin, minutes: 999 })).json().catch(() => ({}))
+	check('要 999 分钟 → 只给上限 **30** ✓（别让人无意中开一整天 ✗）',
+		clamped.minutes === 30 && clamped.remainingMs <= 30 * 60 * 1000 + 1500, JSON.stringify(clamped).slice(0, 110))
+	const stopped = await post({ action: 'stop' })
+	const stoppedBody = await stopped.json().catch(() => ({}))
+	check('🔴 「停」**不用 PIN** ✓ 且立刻归零 ✓（往安全方向走不设门 ✓）',
+		stopped.status === 200 && stoppedBody.remainingMs === 0 && (await get()).remainingMs === 0,
+		JSON.stringify(stoppedBody).slice(0, 110))
+	await writeConfig({ voiceMode: false })   // 收尾：关回去 ✓（别给后面的用例留一个开着的麦 ✓）
+	await post({ action: 'stop' })
+
+	// 纯核心要能被手机页面拿到 ✓（一份实现两边共用 ✓ —— 别让页面再抄一份 ✗）。
+	const core = await fetch(`${base}/api/voice/core.js`, { headers: jar })
+	const coreText = await core.text()
+	check('🔴 语音**纯核心**发给页面 ✓（`api/voice/core.js`：状态机 + 重叠拼接 + "停"的识别 ✓）',
+		core.status === 200 && String(core.headers.get('content-type') ?? '').includes('javascript')
+		&& coreText.includes('mergeTranscriptSegments') && coreText.includes('nextVoiceState') && coreText.includes('isStopCommand'),
+		`HTTP ${core.status} ${String(core.headers.get('content-type') ?? '')}`)
+	check('没登录拿不到它 ✓（只有登录后的页面能用 ✓）',
+		(await fetch(`${base}/api/voice/core.js`)).status === 401)
+}
+
+/*
+ * --- 3.5.x「解锁」：唤醒 + 看结果再说话（**不收也不存密码** ✗）-------------------
+ * 三条必须钉住 ✓：关着 → 403 + 说清怎么开 ✓；开着但**没带 PIN → 403 + needPin** ✓
+ *（**不许真去执行** ✗ —— 这一条最重要 ✓）；错 PIN → 403 ✓。
+ * ⚠️ **故意不测成功那条路** ✗：那会真的在这台机器上发一次唤醒输入（动鼠标 ✓）——
+ * 没必要为了测试去动用户的机器 ✓。结论（已解锁 / 还锁着 / 读不到）的纯函数
+ * 已经在 `test/platform.mjs` 里逐条验过 ✓。
+ */
+{
+	const readConfig = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeConfig = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'),
+		JSON.stringify({ ...await readConfig(), ...patch }, null, 2), 'utf8')
+	const login = await fetch(`${base}/api/login`, {
+		method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ pin: config.pin }),
+	})
+	const jar = { cookie: (login.headers.get('set-cookie') ?? '').split(';')[0] }
+	const power = (payload) => fetch(`${base}/api/power`, {
+		method: 'POST', headers: { ...jar, 'content-type': 'application/json' }, body: JSON.stringify(payload),
+	})
+
+	await writeConfig({ powerControl: false })
+	const offBody = await (await power({ action: 'unlock' })).json().catch(() => ({}))
+	check('解锁**默认关** ✓：403 + 说清怎么开 ✓（和关机同一套措辞 ✓）',
+		String(offBody.error ?? '').includes('powerControl'), JSON.stringify(offBody).slice(0, 100))
+
+	await writeConfig({ powerControl: true })
+	// ⏱ 用"`runUnlock` 里那 1.5 秒等待"当证据 ✓：PIN 没过就必须**秒回** ✓ —— 见下面那条会咬的断言 ✓。
+	const startedAt = Date.now()
+	const noPin = await power({ action: 'unlock' })
+	const tookMs = Date.now() - startedAt
+	const noPinBody = await noPin.json().catch(() => ({}))
+	check('🔴 开着但**没带 PIN → 403 + needPin** ✓（手机据此弹输入框 ✓ —— 昨天真机就是卡在这儿 ✗）',
+		noPin.status === 403 && noPinBody.needPin === true, `HTTP ${noPin.status} ${JSON.stringify(noPinBody).slice(0, 80)}`)
+	/*
+	 * 🔴 **会咬的那一条** ✓（红队复查点名：原来那两条断言，把 `runUnlock()` 挪到 PIN 校验**前面**
+	 * 照样全绿 ✗ —— 最要紧的性质没被钉住 ✓）。
+	 * 怎么证 ✓：`runUnlock` 里有**一条 1.5 秒的等待**（等屏幕醒过来 ✓）→ 所以"没带 PIN"这次
+	 * 必须在 **1 秒内**回来 ✓；谁把执行挪到校验前面 ✗，这条就会花 ≥1.5 秒 → **当场红** ✓。
+	 */
+	check('🔴 PIN 没过就**绝不许真的去唤醒** ✓（证据：这次必须 <1 秒回来 ✓，而 runUnlock 至少要 1.5 秒 ✓）',
+		tookMs < 1000, `${tookMs} ms`)
+	const wrong = await power({ action: 'unlock', pin: '000000' })
+	const wrongBody = await wrong.json().catch(() => ({}))
+	check('错 PIN → 403 ✓（同样带 needPin ✓，手机能再输一次 ✓）',
+		wrong.status === 403 && wrongBody.needPin === true)
+	/*
+	 * 恒真断言换掉 ✓（红队复查第 1 次点名：后端文案是中文，断言"不含英文 password"零证明力 ✗）。
+	 * 复查第 2 次又点名：原来只查**没带 PIN**那次 403 的响应体 ✓ —— 按构造它不可能含凭据 ✓，
+	 * 把**成功**响应改成回显 pin 也照样绿 ✗。
+	 * 现在：三份响应体**都**过白名单 ✓，而且**发出去的 PIN 一个字节都不许回显** ✓
+	 *（"错 PIN"那次最有用 ✓：真回显的话 `000000` 就会出现在响应里 ✓）。
+	 * ⚠️ 照实说：成功的唤醒那条路**故意不测** ✗（那会真去动用户的鼠标 ✓），它是**真机验**的 ✓。
+	 */
+	const bodies = [offBody, noPinBody, wrongBody]
+	const allowedKeys = ['ok', 'state', 'message', 'error', 'needPin']
+	check('🔴 响应里**不回显任何凭据** ✓（三份响应体的键都在白名单里 ✓，且发出去的 PIN 「000000」不出现 ✓）',
+		bodies.every((body) => Object.keys(body ?? {}).every((key) => allowedKeys.includes(key)))
+		&& bodies.every((body) => JSON.stringify(body ?? {}).includes('000000') === false),
+		JSON.stringify(bodies))
+	await writeConfig({ powerControl: false })   // 收尾：关回去 ✓（别给后面的用例留一个开着的关机开关 ✓）
+}
+
 // 冷启动那个接收器收工 ✓（它在文件头就起着 ✓ —— 进程本来也会退出，这里收干净一点 ✓）。
 coldReceiver.close()
 // 收尾：把所有代（每个 apply 一代）的 effect 都撤掉 ✓ —— 不只是"最后那一代" ✓。
