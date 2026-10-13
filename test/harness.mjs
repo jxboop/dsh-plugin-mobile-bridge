@@ -4555,10 +4555,83 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	check('被截断的那条**照旧发进去了** ✓（不是 413 拒收 —— 收得下就收、收不下的明说 ✓）',
 		cutBody.ok === true && cutPrompt?.sessionId === 'session-test', JSON.stringify({ ok: cutBody.ok }))
 
+	// ⑦ 3.7.0「一键 OCR / 扫码」：短链上多带一个 `task` ✓（**白名单** ✓，不许调用方自己写指令 ✗）
+	const beforeOcr = STATE.prompts.length
+	const ocr = await post({ pin: config.pin, task: 'ocr', text: '这是我的笔记照片', images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'page1.png' }] })
+	const ocrBody = await ocr.json().catch(() => ({}))
+	const ocrPrompt = STATE.prompts[beforeOcr]
+	const ocrParts = (ocrPrompt?.content ?? []).map((part) => (part.type === 'text' ? part.text : `[${part.type}]`))
+	check('🔴 `task:"ocr"` → 内容里**先来源、再固定指令、再用户文本、最后图** ✓（顺序固定 = 模型先知道要干什么 ✓）',
+		ocr.status === 200 && ocrBody.task === 'ocr' && ocrBody.ok === true
+		&& ocrParts[0] === '【分享到桥】' && String(ocrParts[1]).includes('【任务：OCR】')
+		&& String(ocrParts[1]).includes('原样认出来') && ocrParts[2] === '这是我的笔记照片'
+		&& ocrParts[3] === '[image]',
+		JSON.stringify({ http: ocr.status, task: ocrBody.task, parts: ocrParts.map((x) => String(x).slice(0, 18)) }))
+	check('OCR 那条把"可搜索"落到**会话内容**上 ✓（手机上现成的 🔍 搜一搜就能搜到 ✓ —— 不新造搜索 ✗）',
+		String(ocrParts[1]).includes('Markdown 笔记') && String(ocrParts[1]).includes('文件路径'),
+		String(ocrParts[1]).slice(0, 60))
+	const beforeBadTask = STATE.prompts.length
+	const badTask = await post({ pin: config.pin, task: 'rm -rf', text: 'x' })
+	const badTaskBody = await badTask.json().catch(() => ({}))
+	check('🔴 白名单外的 `task` → 400 并**列出能用哪些** ✗，而且一个字都不许进会话 ✗（静默忽略最坏 ✓）',
+		badTask.status === 400 && String(badTaskBody.error).includes('ocr') && String(badTaskBody.error).includes('scan')
+		&& STATE.prompts.length === beforeBadTask,
+		JSON.stringify(badTaskBody))
+	/*
+	 * ⚠️ 复查第 91 轮点名的三处漏网 ✗（都补上断言 ✓）：
+	 *   ① 白名单查表如果被换成 `in` ✓，`constructor` / `__proto__` 会命中原型链 ✓ → 必须红 ✓；
+	 *   ② `task` 带了但**值是空的** ✓ 原来被当成"没带" ✓（202 走 200 + 没有指令，与"名单外→400"矛盾 ✗）；
+	 *   ③ **非字符串**（`["ocr"]` ✓）原来被 `String()` 强转成 ocr 收下了 ✓。
+	 */
+	for (const probe of ['constructor', '__proto__', 'toString', '', '   ', null, ['ocr'], 42, { a: 1 }]) {
+		const beforeProbe = STATE.prompts.length
+		const res = await post({ pin: config.pin, task: probe, text: 'x' })
+		const body = await res.json().catch(() => ({}))
+		const label = JSON.stringify(probe)
+		check(`🔴 敌意/空 task ${label} → 400 + 列出可选，且**一个字都不进会话** ✗（原型链不算成员 ✓、空值不当"没带" ✓）`,
+			res.status === 400 && String(body.error).includes('ocr') && STATE.prompts.length === beforeProbe,
+			`HTTP ${res.status} ${JSON.stringify(body).slice(0, 70)}`)
+	}
+	const scan = await post({ pin: config.pin, task: 'scan', images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'code.png' }] })
+	const scanBody = await scan.json().catch(() => ({}))
+	check('`task:"scan"` 也在白名单里 ✓，而且指令里**如实说"桥自己不做解码"** ✓（解码交给 agent ✓）',
+		scan.status === 200 && scanBody.task === 'scan'
+		&& String(textOf(STATE.prompts[STATE.prompts.length - 1])).includes('不做解码'),
+		JSON.stringify({ http: scan.status, task: scanBody.task }))
+	// 图片名统一过 `safeUploadName` ✓（复查点名：原来只有 rescue 那条过 ✓，两条路不一致 ✗）。
+	const beforeName = STATE.prompts.length
+	await post({ pin: config.pin, images: [{ mediaType: 'image/png', data: 'iVBORw0KGgo=', name: 'evil/../../x\u0000name.png' }] })
+	const namedPart = (STATE.prompts[beforeName]?.content ?? []).find((part) => part.type === 'image')
+	check('🔴 图片名**统一过 `safeUploadName`** ✓（两条路一致 ✓ —— 路径分隔符 / 控制字符不许原样进 prompt ✗）',
+		namedPart !== undefined && String(namedPart.name).includes('/') === false
+		&& String(namedPart.name).includes('..') === false && String(namedPart.name).includes('\u0000') === false,
+		JSON.stringify(namedPart?.name))
+	// task 与"收不下"同时出现：两段信息都要在 ✓（复查点名这条没有用例 ✓）
+	const beforeCutTask = STATE.prompts.length
+	const cutTask = await post({
+		pin: config.pin, task: 'ocr', text: 'y'.repeat(9000),
+		images: Array.from({ length: 5 }, (_, index) => ({ mediaType: 'image/png', data: 'iVBORw0KGgo=', name: `t${index}.png` })),
+	})
+	const cutTaskBody = await cutTask.json().catch(() => ({}))
+	check('🔴 `task` 与截断/丢弃**同时出现**时：指令仍在 ✓、`task` 仍回 ✓、截断也照实说 ✓（两段 spread 不打架 ✓）',
+		cutTask.status === 200 && cutTaskBody.task === 'ocr' && cutTaskBody.truncated === true
+		&& cutTaskBody.dropped?.images === 2
+		&& String(textOf(STATE.prompts[beforeCutTask])).includes('【任务：OCR】'),
+		JSON.stringify({ task: cutTaskBody.task, truncated: cutTaskBody.truncated, dropped: cutTaskBody.dropped }))
+	// task 走 rescue 退路（宿主拒图 → 存文件重发）：重发内容里**指令不许丢** ✗
+	const beforeRescueTask = STATE.prompts.length
+	const rescueTask = await post({ pin: config.pin, task: 'ocr', images: [{ mediaType: 'image/gif', data: 'R0lGODlhAQABAAAAACw=', name: 'note.gif' }] })
+	const rescueTaskBody = await rescueTask.json().catch(() => ({}))
+	check('🔴 `task` 走 rescue 退路时**指令不丢** ✓（重发那条里仍有【任务：OCR】✓ —— rescue 只滤掉 image ✓）',
+		rescueTask.status === 200 && rescueTaskBody.task === 'ocr'
+		&& String(textOf(STATE.prompts[beforeRescueTask + 1])).includes('【任务：OCR】')
+		&& typesOf(STATE.prompts[beforeRescueTask + 1]).includes('image') === false,
+		JSON.stringify({ task: rescueTaskBody.task, 重发: typesOf(STATE.prompts[beforeRescueTask + 1]) }))
+
 	// 收拾：把弄乱列表的那两条撤掉 ✓（别给后面的用例留状态）
 	listItems.splice(listItems.length - noisy.length, noisy.length)
 
-	// ⑦ 手机侧读取面（要 cookie ✓）+ 自检那一行（**开着才出现** ✓ —— 默认关是正常状态，不摆"没开"的红项 ✗）
+	// ⑧ 手机侧读取面（要 cookie ✓）+ 自检那一行（**开着才出现** ✓ —— 默认关是正常状态，不摆"没开"的红项 ✗）
 	const infoAnon = await fetch(`${base}/api/intake`)
 	check('读取面：没登录 → 401 ✓', infoAnon.status === 401, String(infoAnon.status))
 	const info = await (await fetch(`${base}/api/intake`, mine)).json()
@@ -4566,6 +4639,10 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 		info.enabled === true && String(info.url).endsWith('/api/intake') && String(info.url).includes(config.pathSecret)
 		&& info.pinRequired === true && info.sessionId === 'session-test' && String(info.how).includes('快捷指令'),
 		JSON.stringify({ enabled: info.enabled, url: String(info.url).split(config.pathSecret).join('<secret>'), session: info.sessionId }))
+	check('读取面把**能用的任务**列出来 ✓（3.7.0：ocr / scan ✓ —— 快捷指令那边照抄就行 ✓）',
+		Array.isArray(info.tasks) && info.tasks.includes('ocr') && info.tasks.includes('scan')
+		&& String(info.how).includes('"task":"ocr"'),
+		JSON.stringify({ tasks: info.tasks }))
 	const selfOn = await (await fetch(`${base}/api/selfcheck`, mine)).json()
 	check('自检里有「分享到桥」并把短链摆出来 ✓（页面不按键也能看见它的地方 ✓ —— 这是架构规矩的落点 ✓）',
 		(selfOn.checks ?? []).some((item) => item.name === '分享到桥' && String(item.hint).includes('/api/intake')),

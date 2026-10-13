@@ -419,7 +419,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1356 项**（package 18 · harness **512** · qr 12 · ui **686** · security 51 · crashprobe 17 ·
+**九个套件共 1374 项**（package 18 · harness **529** · qr 12 · ui **687** · security 51 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。
@@ -481,6 +481,34 @@ curl -X POST "https://<你的地址>/<密钥段>/api/intake" \
   -d '{"pin":"935881","text":"看到的这段话","url":"https://example.com/a"}'
 # → {"ok":true,"sessionId":"…","title":"…","requestId":"…","accepted":true,"images":0}
 ```
+
+### 一键 OCR / 扫码（3.7.0 起）
+
+同一条短链，多带一个**白名单**里的 `task` 就行 —— 桥会把一句**固定指令**附在内容最前面：
+
+```bash
+# 拍张照 → 让它认字 → 整理成一份可搜索的 Markdown 笔记
+curl -X POST "https://<你的地址>/<密钥段>/api/intake" -H 'content-type: application/json' \
+  -d '{"pin":"935881","task":"ocr","images":[{"mediaType":"image/png","data":"<base64>"}]}'
+
+# 拍二维码 / 条形码 / 书号 → 解出来 + 查一下它是什么
+curl -X POST "https://<你的地址>/<密钥段>/api/intake" -H 'content-type: application/json' \
+  -d '{"pin":"935881","task":"scan","images":[{"mediaType":"image/png","data":"<base64>"}]}'
+```
+
+- **`task` 是白名单**（`ocr` / `scan`，`GET /api/intake` 会列出来）：**`task` 这个字段不接受自由指令** ——
+  这条链虽然是凭证（密钥段 + PIN），但它形状是公开的，让调用方自己写指令等于白送一个"远程指挥 agent"的入口。
+  名单外的值（含**空值**与**非字符串**）→ `400` + 列出能用哪些（**不静默忽略**）。
+  ⚠️ 说清楚：`text` 与图片名仍然是**调用方自己的内容**（它们本来就是"分享进来的东西"），
+  桥不改写它们、也不拿它们当系统指令用。
+- **认出来的字落在会话里** —— 所以**挂了会话检索**（宿主 `dsh-session-query`）的部署上，
+  手机上现成的「🔍 搜一搜」（搜这台电脑上的会话内容、不上云）直接就能搜到 ✓；
+  **没挂的话搜一搜会如实说搜不了**（那是宿主的原话，不是桥坏了）—— 文字照样在会话与那份 Markdown 笔记里，
+  在电脑上搜也一样。
+- **桥自己不做识别、也不做解码**：它只把图和指令交给电脑上的 agent（它本来就会看图）；
+  扫码那条指令里也写着"桥不做解码"，让 agent 自己找工具或写一小段脚本。**零新依赖**。
+- 内容顺序是固定的：`【分享到桥】` → 任务指令 → 你的 text → 图片。收不下的（文本超 8000 字 / 图超 3 张）
+  照旧**明说**（`truncated` / `dropped`）。
 
 ## 开放接口：把事件投给你自己的程序（3.4.0 起）
 

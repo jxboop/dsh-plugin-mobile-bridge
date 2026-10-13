@@ -2602,6 +2602,14 @@ check('说明指向了下拉框或读取状态',
 		$('welcome').textContent.includes('分享到桥') && $('welcome').textContent.includes('快捷指令')
 		&& $('welcome').textContent.includes('shareIntake'),
 		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 120))
+	// 3.7.0：一键 OCR / 扫码 —— 同样**没有页面键** ✓，所以说明页这段是它唯一的门 ✓（删了它当场红 ✓）。
+	// ⚠️ 判据里必须有**前提** ✗（复审第 91 轮点名）：这台部署**可能没挂会话检索** ✓ ——
+	// 只写"能搜到"就是把话说满了 ✓（仓库别处都写着"没挂会如实说搜不了"✓，说明页也得带上 ✓）。
+	check('说明页讲了「一键 OCR / 扫码」+ 它的**前提**（3.7.0 ✓ —— 也一样不加键 ✓）',
+		$('welcome').textContent.includes('一键 OCR') && $('welcome').textContent.includes('task')
+		&& $('welcome').textContent.includes('搜一搜')
+		&& $('welcome').textContent.includes('挂了会话检索') && $('welcome').textContent.includes('搜不了'),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 140))
 
 	click($('welcomeGo'))
 	await wait(60)
