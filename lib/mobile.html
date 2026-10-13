@@ -1250,6 +1250,10 @@
 				     「新标签打开」是给"预览渲染不出来"时的兜底（浏览器自己会按类型处理）。 -->
 				<a class="iconbtn" id="docOpenTab" href="#" target="_blank" rel="noopener">新标签</a>
 				<a class="iconbtn" id="docDownload" href="#" target="_blank" rel="noopener" download>下载</a>
+				<!-- 3.4.3：**分享到微信 / 别的 App** ✓（用户 2026-10-13：「文档显示帮我加一个分享按钮，
+				     可以直接分享到微信其他」✓）。分享的是**文档本身**（`navigator.share({files})` ✓）——
+				     不是 `api/file?…` 那条链接 ✗（它要登录 cookie ✓，发给别人打不开 ✓）。 -->
+				<button class="iconbtn" id="docShare">分享</button>
 			</div>
 			<div class="scroll pad" id="docBody"></div>
 		</section>
@@ -9958,9 +9962,15 @@
 		return html
 	}
 
+	/** 3.4.3：当前打开的是哪一份文档 ✓（「分享」按钮要用 ✓）。 */
+	let docPathNow = ''
+	let docNameNow = ''
+
 	async function openDoc(path, name) {
 		const body = $('docBody')
 		const src = 'api/file?path=' + encodeURIComponent(path)
+		docPathNow = path
+		docNameNow = name
 		$('docTitle').textContent = name === '' ? '文档' : name
 		// 两个链接都指到**新标签**：手机上点「下载」不会再把当前页面顶掉（用户现场：
 		// 「下载之后就没有返回按钮了」✗）；「新标签」是预览渲染不出来时的兜底。
@@ -10001,6 +10011,47 @@
 	}
 
 	$('docBack').addEventListener('click', () => { hide($('docopen')); $('docBody').textContent = '' })
+
+	/**
+	 * 3.4.3：把当前这份文档**分享到微信 / 别的 App** ✓（用户 2026-10-13 要求 ✓）。
+	 *
+	 * 为什么不是"复制一个链接发出去"✗：`api/file?path=…` 是**登录态**的地址 ✓，别人打不开 ✓
+	 *（这也是本项目只给"只读链接"这一种可分享形式的原因 ✓）。所以分享的是**文件本身** ✓：
+	 * 把字节取回来包成 `File` ✓ → `navigator.share({ files })` ✓ → 系统弹出微信 / 相册 / 邮件… ✓。
+	 * 降级**如实说** ✓（不装作分享成功 ✗）：
+	 *   · 没有 `navigator.share`（老浏览器 / http 明文地址 ✓）→ 说明白 + 让它用「下载」✓；
+	 *   · 只能分享文字（少见 ✓）→ 文本类给正文 ✓、二进制给一句人话 ✓；
+	 *   · 用户自己取消（`AbortError`）→ 什么都不弹 ✓（别打扰 ✓）。
+	 */
+	async function shareDoc(path, name) {
+		const label = name === '' ? '这份文档' : name
+		const fileName = name === '' ? 'file' : name
+		try {
+			if (typeof navigator.share !== 'function') {
+				toast('这个浏览器不能直接分享（要用 https 地址才有）—— 点「下载」再从文件里发给微信 ✓', 4600)
+				return
+			}
+			const response = await fetch('api/file?path=' + encodeURIComponent(path))
+			if (response.ok !== true) throw new Error('HTTP ' + response.status)
+			const blob = await response.blob()
+			const file = new File([blob], fileName, { type: blob.type === '' || blob.type === undefined ? 'application/octet-stream' : blob.type })
+			if (typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] }) === true) {
+				await navigator.share({ files: [file], title: label })
+				return
+			}
+			const texty = String(blob.type ?? '').startsWith('text/') || /\.(md|markdown|txt|json|js|mjs|ts|csv|log|html?|yml|yaml)$/i.test(fileName)
+			if (texty === true) {
+				const text = await blob.text()
+				if (String(text).trim() !== '') { await navigator.share({ title: label, text: String(text).slice(0, 8000) }); return }
+			}
+			toast('这个浏览器只能分享文字，分享不了文件 —— 点「下载」再发给微信 ✓', 4600)
+		} catch (error) {
+			if (String(error?.name) === 'AbortError') return
+			toast('分享没成功：' + String(error?.message ?? error) + '（可以试「下载」✓）', 4600)
+		}
+	}
+
+	$('docShare').addEventListener('click', () => { void shareDoc(docPathNow, docNameNow) })
 
 	/* ------------------------------------------------- 开始页的版本说明 */
 	/**

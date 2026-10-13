@@ -262,12 +262,14 @@ function jsonResponse(body, status = 200) {
 }
 
 /** 纯文本响应（文档预览用：`/api/file?path=…md` 要把原文给页面）。 */
-function textResponse(body, status = 200) {
+function textResponse(body, status = 200, type = 'text/markdown') {
 	return Promise.resolve({
 		ok: status >= 200 && status < 300,
 		status,
 		json: () => Promise.resolve({}),
 		text: () => Promise.resolve(body),
+		// 3.4.3：「分享」会把文档取回来包成 File（`navigator.share({files})` ✓）—— 桩里也要有 blob() ✓。
+		blob: () => Promise.resolve(new window.Blob([body], { type })),
 	})
 }
 
@@ -1309,6 +1311,34 @@ check('history image element is present', window.document.querySelectorAll('#log
 		$('docBody').innerHTML.slice(0, 80))
 	check('给了「下载」入口（手机上看不了的也能拿走）',
 		String($('docDownload').getAttribute('href')).startsWith('api/file?path='))
+
+	/*
+	 * 3.4.3：用户 2026-10-13「文档显示帮我加一个分享按钮，可以直接分享到微信其他」✓。
+	 * 分享的必须是**文档本身** ✓（`navigator.share({files})` ✓）—— 而不是 `api/file?…` 那条链接 ✗
+	 * （它要登录 cookie ✓，发给别人打不开 ✓）。这里用桩把系统分享**抓下来**看它交了什么 ✓。
+	 */
+	{
+		const shared = []
+		Object.defineProperty(window.navigator, 'canShare', { value: () => true, configurable: true })
+		Object.defineProperty(window.navigator, 'share', {
+			value: (payload) => { shared.push(payload); return Promise.resolve() },
+			configurable: true,
+		})
+		check('文档面板里有「分享」按钮 ✓', $('docShare') !== null && $('docShare') !== undefined)
+		click($('docShare'))
+		await wait(120)
+		check('🔴 点「分享」把**文档本身**交给系统分享 ✓（带文件名 ✓ —— 不是一条别人打不开的链接 ✗）',
+			shared.length === 1 && Array.isArray(shared[0].files) && shared[0].files.length === 1
+			&& String(shared[0].files[0].name).endsWith('.md'),
+			JSON.stringify(shared.map((item) => ({ title: item.title, name: item.files?.[0]?.name ?? null }))).slice(0, 140))
+		// 老浏览器 / http 明文地址：没有 navigator.share ✓ → 必须**说明白**并给「下载」的出路 ✓（不装作成功 ✗）。
+		Object.defineProperty(window.navigator, 'share', { value: undefined, configurable: true })
+		click($('docShare'))
+		await wait(120)
+		check('没有系统分享时**如实说** ✓（提示里指向「下载」✓，不静默、不假装成功 ✗）',
+			String($('toast').textContent).includes('下载'),
+			String($('toast').textContent).slice(0, 80))
+	}
 	/*
 	 * 🔴 用户现场（2026-10-11）：「下载之后就没有返回按钮了」。
 	 * 手机上 `download` 属性会被忽略（iOS 尤其）→ 点下载会在**当前页**打开文件 → 我们的页面

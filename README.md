@@ -417,7 +417,7 @@ node test/package.mjs && node test/harness.mjs && node test/qr.mjs && node test/
 node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs && node test/offline.mjs
 ```
 
-八个套件共 **1238 项**（package 18 · harness 466 · qr 12 · ui 641 · security 51 · crashprobe 17 ·
+八个套件共 **1241 项**（package 18 · harness 466 · qr 12 · ui 644 · security 51 · crashprobe 17 ·
 addresses 16 · offline 17）。**改完必跑全八个** ✓ —— 只跑某一个会漏掉内容规矩与界面回归
 （2.7.2 就是这么漏了两版的 ✓）。
 
