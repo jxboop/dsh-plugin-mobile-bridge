@@ -3448,10 +3448,16 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	const readConfig = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 	const writeConfig = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...await readConfig(), ...patch }, null, 2), 'utf8')
 	// 用 `x-forwarded-for` 假装"另一台设备" ✓（本机连接才会被采信 ✓，见 clientIp ✓）。
-	const loginAs = async (ip) => {
+	// 3.4.1：`device` 参数 = 页面那枚 **`dshm_device`** cookie ✓（"同一台手机"的稳定指纹 ✓）——
+	// 用户的真实痛点就出在这儿 ✗：设备的身份以前只跟 IP 走 ✓，IPv6 前缀一变就成"新设备" ✗。
+	const loginAs = async (ip, device) => {
 		const response = await fetch(`${base}/api/login`, {
 			method: 'POST',
-			headers: { 'content-type': 'application/json', ...(ip === undefined ? {} : { 'x-forwarded-for': ip }) },
+			headers: {
+				'content-type': 'application/json',
+				...(ip === undefined ? {} : { 'x-forwarded-for': ip }),
+				...(device === undefined ? {} : { cookie: `dshm_device=${device}` }),
+			},
 			body: JSON.stringify({ pin: config.pin }),
 		})
 		const body = await response.json().catch(() => ({}))
@@ -3602,6 +3608,30 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	check('把设备全踢掉之后再登录：**直接放行** ✓（不会出现"谁也进不来"✗ —— 这是这一版最要紧的一条 ✓）',
 		afterWipe.status === 200 && afterWipe.body.pending !== true,
 		JSON.stringify(afterWipe.body))
+
+	/*
+	 * ⑧ **3.4.1：同一台设备换个地址回来，不许再被挡** ✓ —— 用户 2026-10-13 的原话：
+	 * "又被你挡在外面了，不要再挡了" ✓。现场（读代码 + 读他的令牌账本核过 ✓）：
+	 * 放行状态以前是**全局一个开关** ✗（`everApproved` ✓）—— 判据是"曾经放行过**任何**设备"✓，
+	 * 于是**放行过一台之后，之后每一次重新登录都会被当成新设备** ✗（iPhone 的 IPv6 前缀会变 ✓、
+	 * token 12 小时过期后必然重登 ✓）→ **主人自己天天被挡** ✗✗。
+	 * 现在改成**按设备指纹**记（页面本来就有 `dshm_device` ✓）：同一台设备换地址 = 自己人 ✓；
+	 * **陌生设备**（不同指纹）照样要点头 ✓ —— 功能没被削弱 ✓。
+	 */
+	{
+		const ownerDevice = 'owner-phone-harness-abc'
+		const owner = await loginAs('203.0.113.31', ownerDevice)
+		check('（前置）主人手机第一次进来：在等放行 ✓', owner.body.pending === true, JSON.stringify(owner.body).slice(0, 90))
+		const page = await (await fetch(`${base}/approve`)).text()
+		const ownerId = idFor(page, '203.0.113.31', 'approve')
+		await fetch(`${base}/approve?action=approve&id=${ownerId}`)
+		const ownerAgain = await loginAs('203.0.113.77', ownerDevice)
+		check('🔴 同一台设备**换个地址**回来 → 直接放行 ✓（3.4.1 修的就是这个：以前每次重登都当新设备 ✗）',
+			ownerAgain.status === 200 && ownerAgain.body.pending !== true, JSON.stringify(ownerAgain.body).slice(0, 120))
+		const stranger = await loginAs('203.0.113.88', 'someone-else-xyz')
+		check('🔴 陌生设备（不同设备指纹）**仍然**在等放行 ✓（deviceApproval 的本意没被削掉 ✗）',
+			stranger.body.pending === true, JSON.stringify(stranger.body).slice(0, 120))
+	}
 
 	// 收尾：关掉这个开关 ✓（后面的用例按默认行为跑 ✓）。
 	await writeConfig({ deviceApproval: false })

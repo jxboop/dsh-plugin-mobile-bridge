@@ -417,7 +417,7 @@ node test/package.mjs && node test/harness.mjs && node test/qr.mjs && node test/
 node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs && node test/offline.mjs
 ```
 
-八个套件共 **1231 项**（package 16 · harness 463 · qr 12 · ui 639 · security 51 · crashprobe 17 ·
+八个套件共 **1234 项**（package 16 · harness 466 · qr 12 · ui 639 · security 51 · crashprobe 17 ·
 addresses 16 · offline 17）。**改完必跑全八个** ✓ —— 只跑某一个会漏掉内容规矩与界面回归
 （2.7.2 就是这么漏了两版的 ✓）。
 
@@ -876,7 +876,7 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 | **有事通知我** | 用 **https 的网址**打开手机页（`https://…ts.net` ✓）→ 在「🩺 一键自检」里勾上「有事通知我」✓ |
 | **说出来 → 文字** | 同上，**必须是 https**（浏览器只在安全地址给麦克风 ✗）→ 「🎤 录音」纸里点「说一句」✓；电脑上第一次用要先点「准备识别器」✓ |
 | **念出来** | 不用配置 ✓（用手机自带的声音 ✓）；点回答旁边的 **🔊** ✓ |
-| **新设备要你点头** | 在 `~/.dsh/mobile-bridge.json` 里加 `"deviceApproval": true` ✓，然后到**电脑上**打开 `/approve` 放行 ✓（⚠️ 默认关 ✓；一台可信设备都没有时**自动放行** ✓，不会把你锁在外面 ✓） |
+| **新设备要你点头** | 在 `~/.dsh/mobile-bridge.json` 里加 `"deviceApproval": true` ✓，然后到**电脑上**打开 `/approve` 放行 ✓（⚠️ 默认关 ✓；一台可信设备都没有时**自动放行** ✓，不会把你锁在外面 ✓）。**放行是按设备记的** ✓（3.4.1 起 ✓）：同一台手机换网络 / 换地址 / 登录过期后重登，**都直接进** ✓；只有**没见过的设备**才要你点头 ✓ |
 | **弱网模式** | 不用配置 ✓；在「🩺」里勾上，或等它在你发得慢时主动问你要不要开 ✓ |
 
 ⚠️ 两个**环境**前提（不是配置能绕过的 ✗）：**通知**和**麦克风**都要求浏览器认为你在"安全地址"上 ✓
