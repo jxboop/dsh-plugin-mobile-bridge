@@ -2319,6 +2319,20 @@ check('说明指向了下拉框或读取状态',
 	check('说明页点明了"生图靠电脑上的插件"（免得误判成手机桥坏了）',
 		$('welcome').textContent.includes('生图插件') && $('welcome').textContent.includes('没有生图模型'))
 
+	/*
+	 * 3.4.2：用户 2026-10-13 说「现在的说明，里面的内容已经过时了」✗ —— 工具键那一排从 9 个键长到 14 个 ✓
+	 * （📊 📋 📤 📅 🔓 🩺 🛡 ⌨ …），还有 🔍 搜一搜 / ⭐ 这周 / ⏰ 工作流 / 🧩 面板 / 🔗 只读链接 ✓，
+	 * 说明页却一个字都没提 ✗。补完这里钉两条 ✓（以后再加按键、忘了补说明，这两条会红 ✓）。
+	 */
+	check('说明页讲了"工具键那一排还有这些"（🔍 搜一搜 / 📤 导出 / 📊 电脑状态 / 🩺 自检 ✓）',
+		['搜一搜', '导出', '电脑状态', '一键自检'].every((key) => $('welcome').textContent.includes(key)),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 120))
+	check('说明页写清了"出门在外也要能连"（Tailscale / 切 4G-5G 验收 / 外网隧道那一行 ✓）',
+		$('welcome').textContent.includes('Tailscale')
+		&& $('welcome').textContent.includes('4G/5G')
+		&& $('welcome').textContent.includes('外网隧道'),
+		$('welcome').textContent.replace(/\s+/g, ' ').slice(0, 120))
+
 	click($('welcomeGo'))
 	await wait(60)
 	check('点「开始使用」就收起，并记住"看过的是这一版"',

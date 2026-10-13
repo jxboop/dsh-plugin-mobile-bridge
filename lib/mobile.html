@@ -1201,6 +1201,28 @@
 						<li><strong>🔐</strong> —— 这个会话允许它做到哪一步（只读 / 可写工作区 / 完全放开）。改这个要重新输一次 PIN。</li>
 					</ul>
 					<p>连不上时屏幕顶部会弹出一条说明，直接告诉你是电脑睡了、还是地址变了 —— 照着上面写的做就行。<strong>彻底连不上时会有一整屏提示</strong>（不会只留个黑屏/白屏）：上面写着是哪一类故障、10 秒后自动重试，还有「立即重试」「先看上次的对话（离线能读）」「换个地址」。</p>
+					<p><strong>工具键那一排还有这些</strong>（在输入框下面，可以左右滑、也能收起）：</p>
+					<ul>
+						<li><strong>🔍 搜一搜</strong> —— 搜<strong>这台电脑上</strong>的会话内容（<strong>不上云</strong>），点一条直接跳过去。机器上没开会话检索时，它会<strong>如实念出宿主那句话</strong>，不会假装"没搜到"。</li>
+						<li><strong>📅 这周学了什么</strong> —— 最近 7 天有活动的会话列一份；超过 60 条会写明"还有更多"，不让你以为就这些。</li>
+						<li><strong>📤 导出 / 分享</strong> —— 这份对话导成 Markdown 下载、复制全文，或走系统分享发微信。</li>
+						<li><strong>📋 剪贴板 / 截屏</strong> —— 看电脑剪贴板、把手机上的字发到电脑；📸 一键看电脑屏幕（<strong>要现输 PIN</strong>，锁屏时它会如实说"截不到"）。</li>
+						<li><strong>📊 电脑状态</strong> —— CPU / 内存 / 磁盘 / 网速、哪个进程占着端口、哪个 node 卡住（只有真的能结束的才给「结束」，而且<strong>不许杀 DSH 本体</strong>）；底部还有「最近批过什么」。</li>
+						<li><strong>📅 定时任务</strong> —— 到点往这个会话发一句话（"每晚 23:00 整理今天的笔记"）；<strong>⏰ 工作流</strong>可以把"转写 → 出提纲 → 存笔记"这类步骤一行一步串起来跑一遍。</li>
+						<li><strong>🧩 面板</strong> —— 电脑上放一个目录 + <code>panel.json</code>，手机这里就多一个键（自带的便签、计时器就是例子）。</li>
+						<li><strong>🩺 一键自检</strong> —— 七条只读检查（桥在听、桌面端在听、开机自启、外网隧道、写权限、ffmpeg…），每条都带"怎么办"。</li>
+						<li><strong>🛡 安全审计</strong> —— 谁登录过、从哪来、有没有陌生设备；可以一键踢掉其它设备（要输 PIN）。</li>
+						<li><strong>🔓 只看不发</strong> —— 出门看进度时一键锁住发送，不怕误触（再点一下解锁）。<strong>⌨</strong> 是键盘手感：Enter 直接发、↑ 取上一条、长按拖光标。</li>
+						<li><strong>🔗 只读链接</strong> —— 给别人（家人 / 另一台设备）临时看<strong>某一篇</strong>会话：<strong>默认关</strong>，生成要重输 PIN，随时可撤销。</li>
+					</ul>
+					<p><strong>出门在外也要能连 —— 这一步是必需的，不是可选。</strong>电脑和手机各装一次
+					<a href="https://tailscale.com/download" target="_blank" rel="noreferrer" style="color:#8fb4ff">Tailscale</a>、
+					登录同一个账号，然后在电脑上开一次隧道（<code>tools\tunnel-start.ps1</code>；想让开机自动起来跑一次
+					<code>tools\autostart.ps1</code>）。验收办法：把手机切到 <strong>4G/5G</strong>（关掉 WiFi）打开外网地址试一次 ——
+					<strong>🩺 自检里"外网隧道"那一行通不通，就是这一步的答案</strong>。隧道断了，电脑上的角标会标红提示。</p>
+					<p><strong>想让别的程序"听"到</strong>（开放接口）：在电脑上的配置文件里写一个 <code>webhookUrl</code>，会话
+					<strong>开始跑 / 跑完</strong>、agent <strong>出错</strong>、会话<strong>有新活动</strong>时就会往那里 POST 一条小消息
+					（带签名、能验真，<strong>不带对话内容</strong>）。<strong>默认关</strong>：没写网址就一条都不发。</p>
 					<!-- 版本说明：这一页每次发新版都会重新弹一次（服务端把说明内容版本 +1），
 					     所以"这次更新了什么"放在这里最合适 —— 用户看到的就是刚变的那些。 -->
 					<div class="whatsnew" id="welcomeVer">
@@ -9854,7 +9876,10 @@
 	const welcome = $('welcome')
 	// 说明内容的版本：和服务端 WELCOME_VERSION 对应，改内容两边一起 +1。
 	// 存在本地的不是 "1"（看过）而是**版本号**，这样改版后老设备能再看一遍新的。
-	const WELCOME_VERSION = '18'
+	// 19（3.4.2）：说明页补上"工具键那一排还有这些"（🔍 搜一搜 / 📅 这周 / 📤 导出 / 📋 剪贴板 /
+	// 📊 状态盘 / 📅 定时 / ⏰ 工作流 / 🧩 面板 / 🩺 自检 / 🛡 安全审计 / 🔓 只看不发 / 🔗 只读链接 ✓）
+	// + **出门在外必须能连**（Tailscale + 隧道 + 验收办法）✓ + 开放接口（webhook，默认关）✓。
+	const WELCOME_VERSION = '19'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

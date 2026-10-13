@@ -170,5 +170,23 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		bomNotPs1.length === 0, bomNotPs1.join(', ') || `非 .ps1 的 ${targets.length - ps1.length} 个文件都没有 BOM ✓`)
 }
 
+/*
+ * 6) 说明页顶上那份「1.0 → 今 按主题的汇总」**必须跟着版本走**（3.4.2 加 ✓）。
+ *
+ * 现场（用户 2026-10-13 原话）：「说明 1.0 到 3.4.2 内容还是没改啊，都是 2.0 版本及以前的内容」✗ ——
+ * 那份汇总是**手写**的（`lib/index.js` 的 `WHATS_NEW_THEMES` ✓），而维护成本只有一句
+ * "发版时看一眼要不要补一行" ✓ —— 结果 **2.7 → 3.4 一整段都没补** ✗，用户看到的就是过时的说明 ✓。
+ * 现在钉住：主题汇总里**至少一条提到当前 `major.minor`** ✓（发版时不补就红 ✓，逼着看一眼 ✓）。
+ */
+{
+	const entrySource = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const block = /const WHATS_NEW_THEMES = \[([\s\S]*?)\n\]/.exec(entrySource)?.[1] ?? ''
+	const current = String(pkg.version).split('.').slice(0, 2).join('.')
+	check('（自检）主题汇总那段被解析出来了（别把这条测试写成永远通过）',
+		block.length > 200, `${block.length} 字符`)
+	check(`说明页的「1.0 → 今 主题汇总」提到了当前版本（${current}）—— 发版忘了补，这里就红`,
+		block.includes(current), current)
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
