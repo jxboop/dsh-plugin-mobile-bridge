@@ -1217,7 +1217,7 @@
 						<li><strong>📅 这周学了什么</strong> —— 最近 7 天有活动的会话列一份；超过 60 条会写明"还有更多"，不让你以为就这些。</li>
 						<li><strong>📤 导出 / 分享</strong> —— 这份对话导成 Markdown 下载、复制全文，或走系统分享发微信。</li>
 						<li><strong>📋 剪贴板 / 截屏</strong> —— 看电脑剪贴板、把手机上的字发到电脑；📸 一键看电脑屏幕（<strong>要现输 PIN</strong>，锁屏时它会如实说"截不到"）。<strong>3.8.0</strong> 起这张纸上还多了两样：<strong>「最近放进去的」</strong>（你发到电脑剪贴板的文字留最近 20 条，<strong>只在这台手机上</strong> —— 点一条只<strong>放进输入框</strong>，不替你按发送 ✓；⚠️ <strong>从电脑读回来的不进历史</strong>：那可能是密码）与 <strong>🔤 取字</strong>（把这一屏交给电脑上的 agent 认字、存成一份<strong>可搜索的</strong>笔记 —— 桥自己不认字）。</li>
-						<li><strong>📊 电脑状态</strong> —— CPU / 内存 / 磁盘 / 网速、哪个进程占着端口、哪个 node 卡住（只有真的能结束的才给「结束」，而且<strong>不许杀 DSH 本体</strong>）；底部还有「最近批过什么」。</li>
+						<li><strong>📊 电脑状态</strong> —— CPU / 内存 / 磁盘 / 网速、哪个进程占着端口、哪个 node 卡住（只有真的能结束的才给「结束」，而且<strong>不许杀 DSH 本体</strong>）；底部还有「最近批过什么」。<strong>3.9.0</strong> 起这张纸上还多了两样：<strong>💤 我睡了</strong>（一键锁屏 + 明早打开页面提醒你听最新一条 ✓ —— <strong>绝不一键关机</strong> ✗）与 <strong>🎬 专注模式</strong>（一键：网页通知静音 + 「专注中」徽章 + ⏱ 打点把一条带时间的标记发进会话 ✓；⚠️ 录音那一半没做 ✗ —— 网页在后台录音会被 iOS 挂起，做了也是"录到一半没了"）。</li>
 						<li><strong>📅 定时任务</strong> —— 到点往这个会话发一句话（"每晚 23:00 整理今天的笔记"）；<strong>⏰ 工作流</strong>可以把"转写 → 出提纲 → 存笔记"这类步骤一行一步串起来跑一遍。</li>
 						<li><strong>🧩 面板</strong> —— 电脑上放一个目录 + <code>panel.json</code>，手机这里就多一个键（自带的便签、计时器就是例子）。</li>
 						<li><strong>🩺 一键自检</strong> —— 七条只读检查（桥在听、桌面端在听、开机自启、外网隧道、写权限、ffmpeg…），每条都带"怎么办"。</li>
@@ -7976,6 +7976,104 @@
 	function notifyOn() { return readLocal(NOTIFY_KEY) === '1' }
 	function notifyPermission() { return notifySupported() ? String(window.Notification.permission ?? 'default') : 'unsupported' }
 
+	/* ---------------------------------------------- 3.9.0 专注模式 / 我睡了（都在手机上 ✓） */
+	const FOCUS_KEY = 'dshm.focus'
+	const MORNING_KEY = 'dshm.morning'
+
+	/** 专注中？✓（`dshm.focus === '1'` ✓ —— 默认关 ✓）。 */
+	function focusOn() { return readLocal(FOCUS_KEY) === '1' }
+
+	/**
+	 * 「专注中」徽章 + 一栏提示 ✓。
+	 * ⚠️ **没有**在专注时收起工具键 ✗（池子里"只显示进度"那半句 ✗）—— 动布局就要动
+	 * 十几个断言盯着的选择器 ✓，而这一版的重点是"静音 + 有痕迹" ✓；收起来那半留给下一版 ✓（如实记 ✓）。
+	 */
+	function applyFocus() {
+		let badge = document.getElementById('focusBadge')
+		if (focusOn() !== true) {
+			if (badge !== null) badge.remove()
+			return
+		}
+		if (badge === null) {
+			badge = document.createElement('button')
+			badge.id = 'focusBadge'
+			badge.type = 'button'
+			badge.setAttribute('data-focus-exit', '1')
+			badge.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 74px);'
+				+ 'z-index:2147482990;padding:6px 12px;border-radius:999px;border:0;background:#1d4ed8;color:#fff;'
+				+ 'font:12px/1.4 ui-monospace,Menlo,monospace;box-shadow:0 2px 10px rgba(0,0,0,.4)'
+			badge.textContent = '🎬 专注中 · 点这里退出'
+			document.body.appendChild(badge)
+		}
+	}
+
+	/** 开/关专注模式 ✓（一键 ✓ —— 按钮在 📊 电脑状态那张纸上 ✓，**没有新工具键** ✓）。 */
+	function toggleFocus() {
+		const next = focusOn() !== true
+		writeLocal(FOCUS_KEY, next ? '1' : '')
+		applyFocus()
+		toast(next ? '专注中 ✓ —— 网页通知静音了（页面里的提示照旧 ✓）' : '退出专注 ✓', 2600)
+		sysPanel.data = null
+		void loadSystem()
+	}
+
+	/** 打点 ✓：把一条带时间的标记发进当前会话（agent 那边就能对着时间轴找位置 ✓）。 */
+	function focusMark() {
+		/*
+		 * ⚠️ 复查第 93 轮 P2：**输入框里有没发出去的东西时，一个字节都不许动** ✗ ——
+		 * 原来直接覆盖 `text.value` ✓，而"发送没成"（只看不发 ✓ / 没会话 ✓ / 离线进箱 ✓）时
+		 * 用户已经打好的草稿就被吞了、还一声不吭 ✗。
+		 * 现在：非空就**拒绝并说清** ✓（宁可不打这个点，也不吞人家的草稿 ✓）。
+		 */
+		if (String(text.value ?? '').trim() !== '') {
+			flash('输入框里还有没发出去的东西 —— 先发掉或清掉，再点打点 ✓', 4000)
+			return
+		}
+		const now = new Date()
+		const hhmm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0')
+		text.value = '【打点 ' + hhmm + '】'
+		growComposer()
+		void send()
+	}
+
+	/** 「我睡了」✓：**只锁屏** ✗（绝不一键关机 ✗ —— 关机要两次确认 + 20 秒可取消 ✓，那是 `#poweropen` 那条路 ✓）。 */
+	async function runSleep() {
+		const locked = await runLock()
+		if (locked !== true) {
+			// ⚠️ 复查第 93 轮 P1：**锁屏没成就绝不写"明早提醒"** ✗ —— 写了就是假承诺 ✓
+			//（真桥这条确实会失败 ✓：3 秒节流回 429 ✓、锁屏命令失败回 500 ✓、断网/401 同理 ✓）。
+			toast('没锁上 —— 所以**没**记"明早提醒"（记了就是骗你）✗', 3600)
+			return
+		}
+		// 记的是**时刻** ✓（复查第 93 轮 P2：只记 '1' 的话，当晚再打开页面就会说"早上好" ✗）。
+		writeLocal(MORNING_KEY, String(Date.now()))
+		toast('晚安 ✓ 电脑锁上了 —— 明早打开页面会提醒你听最新一条 ✓', 3600)
+		sysPanel.data = null
+		void loadSystem()
+	}
+
+	/**
+	 * 明早第一次打开页面 ✓：**提醒**，不自动出声 ✗。
+	 * 为什么不自作主张念出来 ✗：手机上这可能是地铁/会议室 ✓ —— 突然出声比"少做一步"糟得多 ✓；
+	 * 所以只提示 + 告诉你去点最新那条右边的 🔊（`speakButton` 现成 ✓）。
+	 * ⚠️ 复查第 93 轮 P2：**必须真的是"第二天"才提醒** ✗ —— 原来只认一个 '1' ✓，
+	 * 当晚锁完再打开页面/刷新就会弹「早上好」✓，而真到早上标记早被清掉了 ✗（两头都不对 ✓）。
+	 * 现在存时刻 ✓、**本地日期翻页了才提醒** ✓，提醒完才清 ✓。
+	 */
+	function maybeMorningBriefing() {
+		const stamp = Number(readLocal(MORNING_KEY) ?? '')
+		if (Number.isFinite(stamp) !== true || stamp <= 0) return
+		/*
+		 * ⚠️ 复审那轮点名的窄边：只比"年月日"的话 ✓，23:5x 锁屏、00:0x 再打开页面照样说"早上好" ✗
+		 *（还顺手把标记清了 ✓ → 真到早上反而没提醒 ✓，两头都不对 ✓）。
+		 * 判据改成**时间差** ✓：隔了**至少 4 小时**才算"第二天早上" ✓ —— 跨月/跨年/时区都无所谓 ✓。
+		 */
+		const hours = (Date.now() - stamp) / 3600000
+		if (Number.isFinite(hours) !== true || hours < 4) return
+		writeLocal(MORNING_KEY, '')
+		toast('早上好 ✓ 昨晚说了「我睡了」—— 最新一条右边有 🔊，点它就念给你听 ✓', 5200)
+	}
+
 	function syncNotifyToggle() {
 		const box = $('notifyOn')
 		if (box !== null) box.checked = notifyOn()
@@ -8041,6 +8139,15 @@
 		if (notify.flashTimer !== 0) clearTimeout(notify.flashTimer)
 		notify.flashTimer = setTimeout(() => { restoreTitle() }, 60000)
 		if (notifySupported() !== true || notifyPermission() !== 'granted') return
+		/*
+		 * ⚠️ 3.9.0「专注模式」的静音闸**只许挡这一条系统通知** ✓ —— 上面那句"标题兜底"
+		 * （`document.title` 变「需要你…」✓）**必须照旧执行** ✗：那是页面在后台时唯一的兜底 ✓，
+		 * 也是"agent 在问你"的最后一道防线 ✓，不能拿来静音 ✓。
+		 * ⚠️ 记一笔：第一版我把闸写在函数**最前面** ✗，连标题兜底一起干掉了 ✓；
+		 * 第二版又"加了一道新闸却没删旧那道" ✗（旧闸先 return ✓ → 新闸成了死代码 ✓，行为一点没变 ✗）——
+		 * 是**复审那轮**抓出来的 ✓（`test/ui.mjs` 里那条"专注中 + 后台 + agent 提问 → 标题要变"就是为它补的 ✓）。
+		 */
+		if (focusOn() === true) return
 		try {
 			const note = new window.Notification(title, { body: String(body ?? '').slice(0, 160), tag: 'mobile-bridge' })
 			note.onclick = () => {
@@ -9703,6 +9810,25 @@
 		const html = ['<div class="syscard">', '<div class="sessgroup">电脑端一键动作</div>']
 		html.push('<div class="actions"><button class="go" data-lock="1">🔒 锁屏（一键，不用 PIN）</button></div>')
 		/*
+		 * 3.9.0「我睡了」✓：**一键锁屏** ✓ —— 池子原话"一键：电脑锁屏 ✓；早上念'今天要交什么'给你听 ✓"。
+		 * ⚠️ 两处**故意收着**（照实说 ✓）：
+		 *   ① **绝不一键关机** ✗（关机那条路要两次确认 + 20 秒可取消 ✓ —— 睡前手滑关掉整台机器太贵了 ✓）；
+		 *   ② 早上**只提醒、不自动出声** ✗（手机上可能在地铁/会议室 ✓）→ 提示你去点最新那条右边的 🔊 ✓。
+		 */
+		html.push('<div class="actions"><button class="go" data-sleep="1">💤 我睡了（锁屏 + 明早提醒）</button></div>')
+		/*
+		 * 3.9.0「专注模式」✓（池子原话："一键：静音通知 + 开始录音 + 打点 + 显示'专注中'" ✓）：
+		 * 这一版做**静音通知 ✓ + 专注中徽章 ✓ + 打点 ✓** 三样；
+		 * ⚠️ **录音那一半没做** ✗（它踩在用户明确跳过的语音那条线上 ✓，而且网页在后台录音会被 iOS 挂起 ✓
+		 * —— 做了也是"录到一半没了" ✗，比不做更坏 ✓）；**收起工具键那半也没做** ✗（要动布局 ✓，留给下一版 ✓）。
+		 */
+		html.push('<div class="actions"><button data-focus="1">🎬 专注模式：'
+			+ (focusOn() === true ? '开（点一下退出）' : '关（点一下进入）') + '</button>'
+			+ (focusOn() === true ? '<button data-focus-mark="1">⏱ 打点</button>' : '') + '</div>')
+		if (focusOn() === true) {
+			html.push('<div class="hint">专注中 ✓：网页通知已静音 ✓（页内提示照旧 ✓）；「⏱ 打点」会把一条带时间的标记发进当前会话 ✓。</div>')
+		}
+		/*
 		 * 3.5.0「解锁」：**手机入口这一版没有** ✗（如实说 ✓）。这里曾经摆过一个 `data-unlock` 的行 ✓，
 		 * 但那条线连做 5 轮都没接通 ✓（根因"作用域 + 面板重渲染"两层 ✓）→ 按铁律
 		 * **不摆一个按了没反应的按钮** ✗，撤掉 ✓（服务端那半边是完成态 ✓，见 `#poweropen` 里那段说明 ✓）。
@@ -9855,8 +9981,12 @@
 				body: JSON.stringify({ action: 'lock' }),
 			})
 			toast(String(body.message ?? '已锁屏'), 2200)
+			// ⚠️ 复查第 93 轮 P1：**必须回一个真结果** ✗ —— 原来失败只 toast 一句就正常返回 ✓，
+			// 调用方（我睡了）于是无条件写下"明早提醒" ✓ → 明早提醒了、其实昨晚根本没锁上 ✗（假承诺 ✓）。
+			return true
 		} catch (error) {
 			toast('锁屏失败：' + error.message, 2600)
+			return false
 		}
 	}
 
@@ -9906,7 +10036,23 @@
 		 * 「点解锁变成关机」✗（当时是被一条"必须发 POST {action:'unlock'}"的断言当场抓住的 ✓）。
 		 */
 		if (target.closest('[data-lock]') !== null) { void runLock(); return }
+		// 3.9.0：专注模式 / 我睡了 / 打点 —— 都走**这一条委派** ✓（`#sysBody` 是稳定祖先 ✓，
+		// 面板重渲染不影响它 ✓ —— 这正是 3.5.0 那个入口栽过的地方 ✓，这次一开始就按规矩来 ✓）。
+		if (target.closest('[data-sleep]') !== null) { void runSleep(); return }
+		if (target.closest('[data-focus]') !== null) { toggleFocus(); return }
+		if (target.closest('[data-focus-mark]') !== null) { focusMark(); return }
+		if (target.closest('[data-focus-exit]') !== null) { toggleFocus(); return }
 		if (target.closest('[data-power-cancel]') !== null) { void cancelPower() }
+	})
+
+	/*
+	 * 「专注中」徽章挂在 `document.body` 上 ✓（它不在 `#sysBody` 里 ✓），所以退出那条要**挂在 document** 上 ✓。
+	 * ⚠️ **只留这一份** ✗ —— 3.5.0 那个入口就是"两份接法 = 一次点击两条 POST"栽的 ✓（见 `#poweropen` 那段 ✓）。
+	 */
+	document.addEventListener('click', (event) => {
+		const target = event.target
+		if (target === null || target === undefined || typeof target.closest !== 'function') return
+		if (target.closest('[data-focus-exit]') !== null) toggleFocus()
 	})
 
 	sessBtn.addEventListener('click', () => { renderSessList(); show($('sessopen')) })
@@ -10399,7 +10545,9 @@
 	// 仍然**一个键都没加** ✓）；服务端 `WELCOME_VERSION` 一起 +1 ✓。
 	// 23（3.8.0）：补**剪贴板历史 + 屏幕取字**（都在**已有的 📋 纸**上 ✓ —— 还是不加新键 ✓）；
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
-	const WELCOME_VERSION = '23'
+	// 24（3.9.0）：补**💤 我睡了 + 🎬 专注模式**（都在**已有的 📊 电脑状态纸**上 ✓ —— 仍然不加新工具键 ✓）；
+	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
+	const WELCOME_VERSION = '24'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
@@ -11146,6 +11294,9 @@
 				setLink('down')
 			})
 	}
+	// 3.9.0：开机时把「专注中」徽章摆回去 ✓（刷新/换页面不该把它弄丢 ✓），并处理"昨晚说了我睡了" ✓。
+	applyFocus()
+	maybeMorningBriefing()
 	void bootRun()
 })()
 </script>

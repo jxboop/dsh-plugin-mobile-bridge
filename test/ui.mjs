@@ -302,6 +302,9 @@ const voicePosts = []
 /** 3.8.0「屏幕取字」：页面发给 `/api/screen/ocr` 的 POST（含 PIN 头）都记在这儿 ✓。 */
 const screenOcrPosts = []
 
+/** 3.9.0：下一次 `POST /api/power` 让他失败 ✓（复查第 93 轮点名：桩永远成功 → 假承诺抓不到 ✗）。 */
+let powerFailOnce = false
+
 /**
  * 3.5.x「解锁」：页面发给 `/api/power` 的 **POST** 都记在这儿 ✓ ——
  * 断言"点了「解锁电脑」到底发没发那条请求"✓ 就靠它 ✓（和 `voicePosts` 同款思路 ✓：
@@ -616,9 +619,17 @@ async function stubFetch(input, options = {}) {
 		return { ok: true, status: 200, headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'image/png' : null) }, async json() { return {} } }
 	}
 	if (path === '/api/power') {
+		/*
+		 * 3.9.0 复查第 93 轮补的**故障旋钮** ✓：真桥这条会失败（3 秒节流回 429 ✓、锁屏命令失败回 500 ✓），
+		 * 而桩原来永远回 200 ✓ → "锁屏没成却写下明早提醒"这种**假承诺**抓不到 ✗（复查实测：把 lock 一律改 429，701/701 仍全绿 ✗）。
+		 */
 		if (options.method === 'POST') {
 			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
 			powerRequests.push(body)
+			if (powerFailOnce === true) {
+				powerFailOnce = false
+				return jsonResponse({ error: '锁屏没成（测试里装的故障）' }, 500)
+			}
 			return jsonResponse(body.action === 'lock'
 				? { ok: true, action: 'lock', message: '已锁屏' }
 				: { ok: true, action: body.action, seconds: 20, message: '已排定：20 秒后关机 —— 这期间可以点「取消」' })
@@ -4283,6 +4294,91 @@ await wait(40)
 		&& window.getComputedStyle($('poweropen')).display === 'none',
 		JSON.stringify(powerRequests.at(-1) ?? null))
 
+	/*
+	 * 3.9.0「我睡了」✓：**只锁屏** ✗（绝不一键关机 ✓）+ 记一个"明早提醒"标记 ✓。
+	 * ⚠️ 判据要同时钉**两件事** ✗：请求是 lock ✓、且标记落进本机 ✓ —— 只钉其中一半就会放过另一半 ✓。
+	 */
+	const sleepBefore = powerRequests.length
+	click($('sysBody').querySelector('[data-sleep]'))
+	await wait(140)
+	check('🔴 「我睡了」= 发 `action=lock`（**不许顺手关机** ✗）+ 记下"明早提醒"**时刻** ✓',
+		powerRequests.length === sleepBefore + 1 && powerRequests.at(-1)?.action === 'lock'
+		&& Number(window.localStorage.getItem('dshm.morning') ?? '') > 0
+		&& powerRequests.slice(sleepBefore).every((entry) => entry.action === 'lock'),
+		JSON.stringify({ 请求: powerRequests.slice(sleepBefore), 标记: window.localStorage.getItem('dshm.morning') }))
+	/*
+	 * 🔴 复查第 93 轮 P1：**锁屏没成，就一个字都不许许愿** ✗ —— 真桥这条会失败（429 节流 / 500 / 断网 ✓），
+	 * 而原来失败也照写"明早提醒" ✓ → 明早提醒了、其实昨晚根本没锁上 ✗（假承诺 ✓）。
+	 */
+	window.localStorage.setItem('dshm.morning', '')
+	powerFailOnce = true
+	click($('sysBody').querySelector('[data-sleep]'))
+	await wait(200)
+	check('🔴 锁屏失败时：**不写"明早提醒"** ✓，而且如实说没锁上 ✗（不许说"电脑锁上了"✓）',
+		String(window.localStorage.getItem('dshm.morning') ?? '') === ''
+		&& String($('toast').textContent).includes('没锁上'),
+		JSON.stringify({ 标记: window.localStorage.getItem('dshm.morning'), toast: String($('toast').textContent).slice(0, 40) }))
+
+	/*
+	 * 3.9.0「专注模式」✓：一键开 ✓ → 徽章出现 ✓ + 本机记着 ✓；「打点」发一条带时间的标记 ✓；点徽章退出 ✓。
+	 */
+	check('专注模式默认关 ✓（开封时不该有一个莫名其妙的徽章 ✗）',
+		window.document.getElementById('focusBadge') === null && window.localStorage.getItem('dshm.focus') !== '1',
+		String(window.localStorage.getItem('dshm.focus') ?? 'null'))
+	click($('sysBody').querySelector('[data-focus]'))
+	await wait(140)
+	check('🔴 点一下进入专注：本机记上 ✓ + 「专注中」徽章挂出来 ✓（一键 ✓，没有新工具键 ✓）',
+		window.localStorage.getItem('dshm.focus') === '1'
+		&& window.document.getElementById('focusBadge') !== null
+		&& String(window.document.getElementById('focusBadge').textContent).includes('专注中'),
+		JSON.stringify({ flag: window.localStorage.getItem('dshm.focus'), badge: String(window.document.getElementById('focusBadge')?.textContent ?? '') }))
+	const markBefore = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	click($('sysBody').querySelector('[data-focus-mark]'))
+	await wait(320)
+	// ⚠️ 桩里请求体在 **`entry.options.body`** ✓（不是 `entry.body` ✗ —— 写错了会拿到空串 ✓，
+	// 于是"发出去了 1 条但正文是空的"这种自查说明会把人往错方向带 ✓，记一下 ✓）。
+	const markedRaw = requests.filter((entry) => entry.path.startsWith('/api/prompt')).at(-1)?.options?.body ?? ''
+	let markedPrompt = ''
+	// 桩里 `/api/prompt` 的正文是 `{ text, images }` ✓（**不是** `content` ✗ —— 内容分片是服务端拼的 ✓）。
+	try { markedPrompt = String(JSON.parse(markedRaw).text ?? '') } catch { markedPrompt = '' }
+	check('🔴 「打点」真的把 `【打点 HH:MM】` 发进会话 ✓（专注中要留得下痕迹 ✗ —— 不然这半个功能是摆设 ✓）',
+		requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === markBefore + 1
+		&& /【打点 \d{2}:\d{2}】/.test(markedPrompt),
+		JSON.stringify({
+			发出去几条: requests.filter((entry) => entry.path.startsWith('/api/prompt')).length - markBefore,
+			正文: markedPrompt.slice(0, 40),
+		}))
+	click(window.document.getElementById('focusBadge'))
+	await wait(140)
+	check('🔴 点徽章就退出专注 ✓（一键进、一键出 ✓ —— 徽章消失 + 本机清干净 ✓）',
+		window.document.getElementById('focusBadge') === null && window.localStorage.getItem('dshm.focus') !== '1',
+		JSON.stringify({ badge: window.document.getElementById('focusBadge') !== null, flag: window.localStorage.getItem('dshm.focus') }))
+	/*
+	 * 🔴 复查第 93 轮 P2：**输入框里有没发出去的东西时，打点一个字节都不许动** ✗ ——
+	 * 原来直接覆盖 `text.value` ✓，而"发送没成"（只看不发 / 没会话 / 离线进箱 ✓）时用户的草稿就被吞了 ✗。
+	 */
+	click($('sysBody').querySelector('[data-focus]'))
+	await wait(140)
+	const draftBeforeMark = '我还没写完的一句'
+	$('text').value = draftBeforeMark
+	const promptsBeforeGuard = requests.filter((entry) => entry.path.startsWith('/api/prompt')).length
+	click($('sysBody').querySelector('[data-focus-mark]'))
+	await wait(200)
+	check('🔴 输入框里有草稿时点打点：**拒绝 + 说清 + 一个字节都不动** ✗（绝不吞人家的草稿 ✓）',
+		$('text').value === draftBeforeMark
+		&& requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === promptsBeforeGuard
+		&& String($('banner').textContent).includes('输入框里还有'),
+		JSON.stringify({ 输入框: $('text').value, 条幅: String($('banner').textContent).slice(0, 40) }))
+	$('text').value = ''
+	click(window.document.getElementById('focusBadge'))
+	await wait(140)
+	/*
+	 * 收尾：把我这两条 `action:lock`（成功那条 + 故意失败那条 ✓）从桩里摘掉 —— 后面那几个关机用例
+	 * 是按 `lockBefore` 计数的 ✓。⚠️ 这是**测试卫生** ✗（和 harness 里 `listItems.pop()` 一个道理 ✓）：
+	 * 不改它们的判据 ✗（那是别人的断言 ✓，动它就是拆别人的刹车 ✓），只把自己留下的状态收干净 ✓。
+	 */
+	powerRequests.splice(sleepBefore, 2)
+
 	// 关机：**必须点两次**才真的发请求 ✓（这条最重要）
 	click($('sysBody').querySelector('[data-power="shutdown"]'))
 	await wait(120)
@@ -5096,6 +5192,23 @@ await wait(40)
 	await wait(200)
 	check('人**正在看**的时候：不弹通知 ✓（只有振动和卡片本身 ✓）', notifyStub.made.length === 0,
 		`弹了 ${notifyStub.made.length} 条`)
+
+	/*
+	 * ④ 3.9.0「专注模式」静音的是**系统通知** ✓，**不是标题兜底** ✗ ——
+	 * 复审第 93 轮就是拿这条抓我的 ✓：第一版把闸写在函数最前面 ✓、第二版又"加了新闸没删旧闸" ✗
+	 *（旧闸先 return ✓ → 新闸死代码 ✓，行为一点没变 ✗）。所以这条断言**必须**在专注**开着**的时候跑 ✓。
+	 */
+	window.localStorage.setItem('dshm.focus', '1')
+	setHidden(true)
+	notifyStub.made.length = 0
+	window.document.title = 'DSH 手机端'
+	source.emit({ t: 'interaction', id: 'notify-3', kind: 'question', payload: {} })
+	await wait(240)
+	check('🔴 专注中：系统通知**静音** ✓，但「agent 在问你」的**标题兜底照旧** ✗（那是安全兜底 ✓，不许一起静音 ✓）',
+		notifyStub.made.length === 0 && window.document.title.includes('在问你'),
+		JSON.stringify({ 弹了: notifyStub.made.length, 标题: window.document.title }))
+	window.localStorage.setItem('dshm.focus', '')
+	setHidden(false)
 	check('回到前台时标题还原 ✓（"需要你…"不会挂一小时 ✓）',
 		window.document.title === originalTitle, window.document.title)
 
