@@ -305,6 +305,10 @@ const screenOcrPosts = []
 /** 3.9.0：下一次 `POST /api/power` 让他失败 ✓（复查第 93 轮点名：桩永远成功 → 假承诺抓不到 ✗）。 */
 let powerFailOnce = false
 
+/** 4.0.0「录屏遥控」：页面发给 `/api/record` 的 POST 都记在这儿 ✓；`recordFailOnce` 用来装"默认关" ✓。 */
+const recordRequests = []
+let recordFailOnce = false
+
 /**
  * 3.5.x「解锁」：页面发给 `/api/power` 的 **POST** 都记在这儿 ✓ ——
  * 断言"点了「解锁电脑」到底发没发那条请求"✓ 就靠它 ✓（和 `voicePosts` 同款思路 ✓：
@@ -617,6 +621,17 @@ async function stubFetch(input, options = {}) {
 	if (path === '/api/screen') {
 		// 1×1 的 PNG（内容不重要，页面只把它塞进 <img> ✓）
 		return { ok: true, status: 200, headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'image/png' : null) }, async json() { return {} } }
+	}
+	if (path === '/api/record') {
+		// 4.0.0「录屏遥控」：记下页面到底发了什么 ✓（**绝不真录** ✗ —— 这是桩 ✓）。
+		let sent = {}
+		try { sent = JSON.parse(String(options.body ?? '{}')) } catch { sent = {} }
+		recordRequests.push(sent)
+		if (recordFailOnce === true) {
+			recordFailOnce = false
+			return jsonResponse({ error: '录屏默认关闭 —— 在 mobile-bridge.json 里加 "screenRecord": true 再试' }, 403)
+		}
+		return jsonResponse({ ok: true, file: 'C:\\Users\\Kim\\.dsh\\recordings\\rec-test.mp4', maxSeconds: 600, note: '开始录了 ✓ 最多录 10 分 0 秒就自动停 ✓' })
 	}
 	if (path === '/api/power') {
 		/*
@@ -4378,6 +4393,47 @@ await wait(40)
 	 * 不改它们的判据 ✗（那是别人的断言 ✓，动它就是拆别人的刹车 ✓），只把自己留下的状态收干净 ✓。
 	 */
 	powerRequests.splice(sleepBefore, 2)
+
+	/*
+	 * 4.0.0「录屏遥控」✓：从 📊 纸进**已有的 PIN 纸** ✓ → 两次确认 → 发 `/api/record` ✓。
+	 * ⚠️ 判据里专门盯一条 ✗：它**绝不能**发到 `/api/power` ✓ —— 拿 `record-start` 去那条路会落到
+	 * "关机"的默认支上 ✓（3.5.0 解锁入口就是这么变成"点解锁变成关机"的 ✓）。
+	 */
+	const recordPowerBefore = powerRequests.length
+	click($('sysBody').querySelector('[data-record-open="start"]'))
+	await wait(120)
+	check('🔴 点「录屏开始」：开的是**现有的 PIN 纸** ✓（标题写着"录屏" ✓ —— 没有新工具键 ✓）',
+		window.getComputedStyle($('poweropen')).display !== 'none' && String($('powerTitle').textContent).includes('录屏'),
+		String($('powerTitle').textContent))
+	$('powerPin').value = '935881'
+	click($('powerGo'))
+	await wait(80)
+	/*
+	 * 🔴 复审第 94 轮点名 ✗：录屏那张纸原来**借用**电源纸三句 ✓ —— 其中「执行后有 **20 秒**可以取消」
+	 * 对录屏是**假话** ✓（录屏没有那 20 秒 ✓），而当时那条断言只连点两下、**不判文案** ✗ → 抓不到 ✓。
+	 */
+	check('🔴 录屏纸上说的是**录屏自己的话** ✓（不许借用电源那三句 —— 尤其"执行后有 20 秒可以取消"对录屏是假话 ✗）',
+		String($('powerError').textContent).includes('录屏') && String($('powerError').textContent).includes('自动停')
+		// ⚠️ 判据要挑**那句话本身** ✗ —— 一开始我写的是"不许出现 `20 秒`" ✓，
+		// 但纸上的否定句里正当地引用了它（"**没有**"20 秒可以取消"那回事"✓）→ 反而假红 ✓（这条就是被自己抓的 ✓）。
+		&& String($('powerError').textContent).includes('执行后有 20 秒可以取消') === false
+		&& String($('powerGo').textContent).includes('录屏'),
+		JSON.stringify({ 提示: String($('powerError').textContent).slice(0, 46), 按钮: String($('powerGo').textContent) }))
+	click($('powerGo'))
+	await wait(200)
+	check('🔴 录屏真的发到 `/api/record` + `action:start` ✓（**不是** `/api/power` ✗ —— 那条路会把 `record-start` 当关机 ✓）',
+		recordRequests.length === 1 && recordRequests[0].action === 'start' && recordRequests[0].pin === '935881'
+		&& powerRequests.length === recordPowerBefore,
+		JSON.stringify({ record: recordRequests.at(-1) ?? null, 电源路多了: powerRequests.length - recordPowerBefore }))
+	recordFailOnce = true
+	click($('sysBody').querySelector('[data-record-open="start"]'))
+	await wait(120)
+	$('powerPin').value = '935881'
+	click($('powerGo')); await wait(60); click($('powerGo')); await wait(200)
+	check('🔴 服务端说"默认关"时：纸上显示**原话** ✓、**绝不假装开始了** ✗', String($('powerError').textContent).includes('默认关闭'),
+		String($('powerError').textContent).slice(0, 50))
+	click($('powerBack'))
+	await wait(60)
 
 	// 关机：**必须点两次**才真的发请求 ✓（这条最重要）
 	click($('sysBody').querySelector('[data-power="shutdown"]'))

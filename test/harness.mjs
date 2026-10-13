@@ -2409,6 +2409,44 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		String(ocrShotBody.sessionId ?? '') !== '' && JSON.stringify(ocrShotBody).includes(config.pin) === false,
 		JSON.stringify(ocrShotBody).slice(0, 90))
 
+	// ⚠️ 这一段的 `writeConfig` 是**本块自己的** ✓（`scratch` 那份配置 ✓ —— 上面其它块也是这么各写各的 ✓，
+	// 因为整个套件是一个大文件、各块作用域互不可见 ✓；直接借别块的会 ReferenceError ✓）。
+	const readRecordConfig = async () => JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	const writeRecordConfig = async (patch) => writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...await readRecordConfig(), ...patch }, null, 2), 'utf8')
+
+	/*
+	 * 4.0.0「🎬 录屏遥控」✓ —— ⚠️ **只测拒绝路径** ✗：成功那条会**真的开始录这块屏幕** ✓，
+	 * 测试里绝不能启动录制 ✗（不然跑一次套件就在人家机器上留一段录屏 ✓）。
+	 * 所以这里钉四件"没做成就得说清楚"的事 ✓：默认关 ✓、没 PIN ✓、action 不认识 ✓、没在录时说没在录 ✓。
+	 */
+	const recordOff = await fetch(`${base}/api/record`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'start', pin: config.pin }),
+	})
+	check('🔴 录屏**默认关**：403 + 说清怎么开 ✓（关着时连 PIN 都不问 ✓ —— 先判开关 ✓）',
+		recordOff.status === 403 && String((await recordOff.json().catch(() => ({}))).error).includes('默认关闭'), String(recordOff.status))
+	await writeRecordConfig({ screenRecord: true })
+	const recordNoPin = await fetch(`${base}/api/record`, {
+		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'start' }),
+	})
+	check('🔴 开着但**没带 PIN** → 403 + needPin ✓（它会把整块屏幕录下来 ✓ —— 比截屏更敏感 ✓）',
+		recordNoPin.status === 403 && (await recordNoPin.json().catch(() => ({}))).needPin === true, String(recordNoPin.status))
+	const recordBad = await fetch(`${base}/api/record`, {
+		method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'rm-rf' }),
+	})
+	check('🔴 不认识的 action → 400 + 把能用的列出来 ✓（**绝不**落到某个默认动作上 ✗ —— 3.5.0 解锁入口就栽在这 ✓）',
+		recordBad.status === 400 && String((await recordBad.json().catch(() => ({}))).error).includes('start'), String(recordBad.status))
+	const recordStopIdle = await fetch(`${base}/api/record`, {
+		method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'stop' }),
+	})
+	check('没在录的时候点"停" → 409 + 说"现在没有在录" ✓（不许假装停成功 ✗）',
+		recordStopIdle.status === 409 && String((await recordStopIdle.json().catch(() => ({}))).error).includes('没有在录'), String(recordStopIdle.status))
+	const recordStatus = await fetch(`${base}/api/record`, {
+		method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'status' }),
+	})
+	check('`status` 如实回答"没在录" ✓（读这一下不会启动任何东西 ✓ —— 测试里也就不会留下录屏 ✓）',
+		recordStatus.status === 200 && (await recordStatus.json().catch(() => ({}))).recording === false, String(recordStatus.status))
+	await writeRecordConfig({ screenRecord: false })
+
 	// 还原用户原来的剪贴板 ✓
 	if (typeof original.text === 'string') await clipboardSet(original.text)
 	const restored = await clipboardGet()
@@ -2637,6 +2675,32 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		String(guest.headers.get('cache-control')).includes('no-store') && guest.headers.get('x-frame-options') === 'DENY')
 	check('乱猜令牌：404（不是 403 —— 不告诉对方"这里有个链接" ✓）',
 		(await fetch(`${base}/share?t=${'0'.repeat(32)}`)).status === 404)
+
+	/*
+	 * 4.0.0「一次性分享链接」✓（池子第 5 条 ✓）：**第一次打开就作废** ✓。
+	 * ⚠️ 判据要**两条一起** ✗：第一次必须 200（不能一上来就打不开 ✗）+ 第二次必须 **410** ✓
+	 *（410 = "存在过、已经被看过了" ✓ —— 不是含糊的 404 ✓，用户得知道是"别人先看了"✓）；
+	 * 再加一条对照：**普通链接读两次照样能读** ✓（别把所有人都变成一次性的 ✗）。
+	 */
+	const onceCreated = await (await shareCreate({ sessionId: 'session-test', pin: config.pin, hours: 24, once: true })).json()
+	check('生成时带 `once:true` → 回包里如实标着"一次性" ✓（文案也要说清"看完就作废"✓）',
+		onceCreated.once === true && String(onceCreated.message).includes('一次性')
+		&& String(onceCreated.message).includes('作废'), String(onceCreated.message).slice(0, 60))
+	const onceFirst = await fetch(`${base}/share?t=${onceCreated.token}`)
+	const onceHtml = await onceFirst.text()
+	check('🔴 一次性链接**第一次**打开：200 + 页面上写明"一次性" ✓（不看就白瞎了 ✗）',
+		onceFirst.status === 200 && onceHtml.includes('一次性') && onceHtml.includes('只读快照'),
+		`HTTP ${onceFirst.status}`)
+	const onceSecond = await fetch(`${base}/share?t=${onceCreated.token}`)
+	const onceSecondText = await onceSecond.text()
+	check('🔴 **第二次**打开：410 + 说清"别人看过一次就作废了" ✓（第二次还能看 = 这条功能等于没做 ✗）',
+		onceSecond.status === 410 && onceSecondText.includes('已经用过'), `HTTP ${onceSecond.status} ${onceSecondText.slice(0, 40)}`)
+	const normalCreated = await (await shareCreate({ sessionId: 'session-test', pin: config.pin, hours: 24 })).json()
+	const normalFirst = await fetch(`${base}/share?t=${normalCreated.token}`)
+	const normalSecond = await fetch(`${base}/share?t=${normalCreated.token}`)
+	check('对照：**普通**链接读两次照样能读 ✓（一次性是可选语义，不是把所有人都变成一次性 ✗）',
+		normalCreated.once === false && normalFirst.status === 200 && normalSecond.status === 200,
+		`第一次 ${normalFirst.status} / 第二次 ${normalSecond.status}`)
 
 	const listOn = await (await fetch(`${base}/api/share`, authed)).json()
 	check('列表里的 url 是**能打开的**（带端口 + `?t=` ✓ —— 原来拼错了、等于给个死链 ✗）',
