@@ -2601,6 +2601,49 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		recordStatus.status === 200 && (await recordStatus.json().catch(() => ({}))).recording === false, String(recordStatus.status))
 	await writeRecordConfig({ screenRecord: false })
 
+	/*
+	 * ---------------------------------------------------------------- 4.5.0 控制电脑
+	 *
+	 * 用户 2026-10-14 点名要的七件事（静音 / 音量 / 亮度 / 联网 / 电量 / 蓝牙设备 / 蓝牙开关）✓。
+	 *
+	 * ⚠️ 这里**只测两道闸与"不认识的 action"** ✗ —— **绝不真的去改用户的音量/亮度/蓝牙** ✗：
+	 * 那是在别人机器上动手 ✓，套件不该有这种副作用 ✓（真机那几样由人在发布前手工验一次 ✓）。
+	 * 所以：默认关 → 403 且说清怎么开 ✓；开着但没 PIN → 403 + needPin ✓；
+	 * 带了 PIN 但不认识的 action → 400 ✓（**绝不**落到某个默认动作上 ✗）。
+	 */
+	{
+		const pcOff = await fetch(`${base}/api/pc`, { headers: { cookie } })
+		const pcOffBody = await pcOff.json().catch(() => ({}))
+		check('🔴 电脑控制**默认关** ✓：`GET /api/pc` 回 enabled=false + 说清怎么开 ✓（不是一句 403 了事 ✓）',
+			pcOff.status === 200 && pcOffBody.enabled === false && String(pcOffBody.note ?? '').includes('pcControl'),
+			`HTTP ${pcOff.status} ${JSON.stringify(pcOffBody).slice(0, 80)}`)
+		const pcActOff = await fetch(`${base}/api/pc`, {
+			method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'mute' }),
+		})
+		check('🔴 关着的时候让它动手 → 403 ✓（**而且连 PIN 都不问** ✓ —— 先判开关 ✓，和录屏同一条纪律 ✓）',
+			pcActOff.status === 403 && String((await pcActOff.json().catch(() => ({}))).error).includes('pcControl'), String(pcActOff.status))
+		await writeRecordConfig({ pcControl: true })
+		const pcActNoCookie = await fetch(`${base}/api/pc`, {
+			method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'mute' }),
+		})
+		check('开着但**连登录都没有** → 401 ✓（没门就是没门 ✓）',
+			pcActNoCookie.status === 401, String(pcActNoCookie.status))
+		const pcBad = await fetch(`${base}/api/pc`, {
+			method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'format-c' }),
+		})
+		const pcBadBody = await pcBad.json().catch(() => ({}))
+		check('🔴 不认识的 action → 400 + 把能用的列出来 ✓（绝不落到默认动作 ✗）',
+			pcBad.status === 400 && Array.isArray(pcBadBody.actions) && pcBadBody.actions.includes('mute'), String(pcBad.status))
+		/*
+		 * ⚠️ 这里**故意不测**"开着、登录了、但没提权 → 403 + needPin"那条 ✗ ——
+		 * 提权是**按令牌**记的 ✓（见 index.js 的 `elevated(req)` ✓），而套件里要拿到令牌**必须先输 PIN** ✓
+		 * → 同一个令牌必然已经提权 ✓，从 HTTP 这一层**造不出**"未提权"的会话 ✗。
+		 * 那条改由**源码形状**在 `test/package.mjs` 里钉 ✓（`POST /api/pc` 必须包在 `guardWrite()` 里 ✓），
+		 * 这一条也**不假装测过** ✗ —— 照项目纪律：测不了就说测不了 ✓。
+		 */
+		await writeRecordConfig({ pcControl: false })
+	}
+
 	// 还原用户原来的剪贴板 ✓
 	if (typeof original.text === 'string') await clipboardSet(original.text)
 	const restored = await clipboardGet()

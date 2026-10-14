@@ -209,5 +209,22 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		(readme.match(/\| `elevationMinutes` \| (\d+) \|/) ?? ['(没找到字段表行)'])[0])
 }
 
+/*
+ * 8) **电脑控制那两条路由必须挂在正确的闸上**（4.5.0 加 ✓）。
+ *
+ * 为什么用"读源码"这种形状来钉 ✗：提权是**按令牌**记的 ✓（`elevated(req)` ✓），
+ * 而套件里要拿到令牌必须先输 PIN ✓ → **造不出"登录了但没提权"的会话** ✗，
+ * 那条 `403 + needPin` 从 HTTP 层测不了 ✓（harness 里已注明"不假装测过" ✓）。
+ * 所以这里至少要钉住：**动硬件的那条走 `guardWrite()`** ✓、只读那条走 `guard()` ✓ ——
+ * 谁哪天把它改成 `guard()`，这里就红 ✓（这是这类回归**唯一**能自动拦住的地方 ✓）。
+ */
+{
+	const entrySource = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	check('🔴 `POST /api/pc` 必须走 `guardWrite()` ✓（音量/亮度/蓝牙是"让电脑动手" ✓ —— 改成 guard() 就红 ✓）',
+		/POST \/api\/pc'\)\s*return\s+guardWrite\(\)/.test(entrySource))
+	check('`GET /api/pc` 只走 `guard()` ✓（读状态不改东西 ✓，不该多要一次 PIN ✓）',
+		/GET \/api\/pc'\)\s*return\s+guard\(\)/.test(entrySource))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

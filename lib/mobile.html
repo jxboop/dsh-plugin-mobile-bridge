@@ -833,6 +833,16 @@
 	}
 	.wnnextlead { font-size: 13px; line-height: 1.6; color: var(--text); margin: 2px 0 4px; }
 	.wnnextnote { font-size: 12px; line-height: 1.6; color: var(--muted); margin-top: 6px; }
+	/* 4.5.0「控制电脑」：状态行 + 一排键。键做大一点 —— 这是要用手在手机上按的。 */
+	.pcrow { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; line-height: 1.6; padding: 3px 0; }
+	.pcrowlabel { color: var(--text); font-weight: 600; flex: 0 0 auto; }
+	.pcgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0 6px; }
+	.pcbtn {
+		padding: 11px 6px; font-size: 13px; font-weight: 600; color: var(--text);
+		background: color-mix(in srgb, var(--bg) 55%, transparent); border: 1px solid var(--field-line);
+		border-radius: 10px;
+	}
+	.pcbtn:active { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 	/* 「展开全部更新」：说明页里能看到 0.1 → 今 的完整历史，默认折起来不糊屏。 */
 	.wnmore {
 		margin: 4px 0 2px; padding: 7px 12px; font-size: 12px; font-weight: 600;
@@ -1029,6 +1039,8 @@
 					     用户 2026-10-13：「我手机桥上看不到目标」✗。只读 ✓，改目标仍在电脑上做 ✓。 -->
 					<button id="goalBtn" title="这条会话的目标（DSH 目标：做什么 / 什么阶段 / 第几轮）">🎯</button>
 					<button id="sysBtn" title="电脑状态（CPU / 内存 / 磁盘 / 网速）+ 结束卡住的 node 进程">📊</button>
+					<!-- 4.5.0：手机上控制电脑（用户 2026-10-14 点名要的七件事 ✓）—— 默认关 ✓，见 pcControl。 -->
+					<button id="pcBtn" title="控制电脑：静音 / 音量 / 亮度 / 联网检查 / 电量检查 / 蓝牙设备与开关">🖥</button>
 					<button id="clipBtn" title="电脑剪贴板（看 / 发）与截屏（电脑屏幕 → 手机）">📋</button>
 					<button id="expBtn" title="把这份对话导出成 Markdown（下载 / 复制全文 / 分享 → 发微信）">📤</button>
 					<button id="schBtn" title="定时任务：到点把一句话发进这个会话（每晚 23:00 这类）">📅</button>
@@ -1533,6 +1545,42 @@
 				<button class="iconbtn" id="sysRefresh">刷新</button>
 			</div>
 			<div class="scroll pad" id="sysBody"></div>
+		</section>
+
+		<!-- 4.5.0「控制电脑」（用户 2026-10-14 点名要的七件事 ✓）：
+		     静音 / 音量 ± / 亮度 ± / 联网检查 / 电量检查 / 蓝牙设备 / 蓝牙开关 / 打开蓝牙设置 ✓。
+		     ⚠️ 两条规矩写在这儿：
+		       ① **不做"连接某台蓝牙设备"那个键** ✗ —— Windows 没有可靠的命令行接口 ✓，
+		          摆一个按了没反应的键就是骗人 ✓（4.3.0 撤过同一个形状的"解锁"键 ✓）；
+		          能给的是"打开蓝牙设置" + 在页面上**明说**"连接要在那儿点一下" ✓。
+		       ② 默认关（`pcControl: true` 才开 ✓）、让电脑动手要走 PIN 提权 ✓（`api()` 见到 needPin 会自己弹门 ✓）。 -->
+		<section class="sheet" id="pcopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="pcBack">← 返回</button>
+				<span class="title">控制电脑</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="pcRefresh">刷新</button>
+			</div>
+			<div class="scroll pad">
+				<div class="hint" id="pcNote"></div>
+				<div id="pcState"></div>
+				<div class="pcgrid">
+					<button class="pcbtn" id="pcMute">静音</button>
+					<button class="pcbtn" id="pcVolDown">音量 −</button>
+					<button class="pcbtn" id="pcVolUp">音量 +</button>
+					<button class="pcbtn" id="pcBrightDown">亮度 −</button>
+					<button class="pcbtn" id="pcBrightUp">亮度 +</button>
+					<button class="pcbtn" id="pcNet">联网检查</button>
+					<button class="pcbtn" id="pcBatt">电量检查</button>
+					<button class="pcbtn" id="pcBtDevices">蓝牙设备</button>
+					<button class="pcbtn" id="pcBtSettings">打开蓝牙设置</button>
+				</div>
+				<div class="hint" id="pcMessage"></div>
+				<div id="pcBluetooth"></div>
+				<div class="hint">蓝牙这块**只做做到的事**：设备列表能看 ✓、设置页能打开 ✓。
+					「连接某台设备」和「开 / 关蓝牙」都要在系统设置里点一下 —— Windows 没有可靠的命令行接口，
+					所以这里**不摆**那两个键（摆了就是按了没反应 ✗）。</div>
+			</div>
 		</section>
 
 		<!-- 结束进程：和「删除会话」同一套纪律 —— **现输一次 PIN** ✓（不复用"最近提权过"✓）。 -->
@@ -2853,7 +2901,7 @@
 	 * （冷视角复查抓到 2.8.0 的 `secopen`、2.9.0 的 `backupopen` 都漏在这儿 ✗ —— 顺手补上 ✓）。
 	 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen', 'topsheet']) {
+		for (const id of ['sessopen', 'delopen', 'sysopen', 'pcopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen', 'topsheet']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -10474,6 +10522,114 @@
 	$('powerPin').addEventListener('keydown', (event) => {
 		if (event.key === 'Enter') { event.preventDefault(); void confirmPower() }
 	})
+
+	/*
+	 * ---------------------------------------------------- 4.5.0 控制电脑（用户点名的七件事）
+	 *
+	 * 面板打开时先读**快状态** ✓（音量 / 亮度 / 电量 / 联网 ✓，实测约 3~4 秒 ✓）；
+	 * 蓝牙**设备列表单独点** ✓ —— 那一步要十几秒（Windows 的 PnP 枚举慢 ✓），
+	 * 所以不塞进"打开面板"里让用户干等 ✗（按钮上写了"要十几秒" ✓）。
+	 */
+	const pcPanel = { busy: false, state: null, bluetooth: null }
+	const pcPercent = (value) => (typeof value === 'number' ? value + '%' : '—')
+
+	function renderPc() {
+		const box = $('pcState')
+		if (box === null) return
+		const note = $('pcNote')
+		const state = pcPanel.state
+		if (state === null) { box.innerHTML = '<div class="err-box">读不到电脑状态。</div>'; return }
+		if (state.enabled === false) {
+			if (note !== null) note.textContent = ''
+			box.innerHTML = '<div class="err-box">' + escapeHtml(String(state.note ?? '电脑控制没开')) + '</div>'
+			return
+		}
+		if (note !== null) note.textContent = '这台电脑的当前状态 —— 点下面的键直接改（要 PIN 提权，一小时内不用重复输 ✓）。'
+		const audio = state.audio
+		const bright = state.brightness
+		const batt = state.battery
+		const net = state.network
+		const rows = []
+		rows.push(['🔊 音量', audio === null ? '读不到（这台机器的音频接口没认出来）' : pcPercent(audio.volume) + (audio.muted ? '（已静音）' : '')])
+		rows.push(['☀️ 亮度', bright?.supported === false ? '这台机器没有可调的内置屏幕（台式机 / 只接外接屏）' : pcPercent(bright?.level)])
+		rows.push(['🔋 电量', batt?.supported === false ? '这台机器没有电池（台式机）' : pcPercent(batt?.percent) + (batt?.plugged === true ? '（接着电源）' : (typeof batt?.minutesLeft === 'number' ? '（还能用约 ' + Math.floor(batt.minutesLeft / 60) + ' 小时 ' + (batt.minutesLeft % 60) + ' 分）' : ''))])
+		rows.push(['🌐 联网', (net?.internet === true ? '外网通 ✓' : '外网不通 ✗') + (net !== undefined && net !== null && net.profiles.length > 0 ? ' · ' + net.profiles.map((row) => row.name).join(' / ') : '')])
+		box.innerHTML = rows.map(([label, value]) =>
+			'<div class="pcrow"><span class="pcrowlabel">' + escapeHtml(label) + '</span><span>' + escapeHtml(String(value)) + '</span></div>').join('')
+		// 静音键的文案跟着真实状态走 ✓（不然"静音/取消静音"到底是哪个，用户只能猜 ✗）。
+		$('pcMute').textContent = audio !== null && audio.muted === true ? '取消静音' : '静音'
+	}
+
+	function renderPcBluetooth() {
+		const box = $('pcBluetooth')
+		if (box === null) return
+		const data = pcPanel.bluetooth
+		if (data === null) { box.innerHTML = ''; return }
+		if (Array.isArray(data.devices) === false || data.devices.length === 0) {
+			box.innerHTML = '<div class="hint">没读到已配对的蓝牙设备（也可能这台机器没有蓝牙）。</div>'
+			return
+		}
+		box.innerHTML = '<div class="hint">已配对的蓝牙设备 ' + data.devices.length + ' 台：</div>'
+			+ data.devices.map((row) => '<div class="pcrow"><span>' + escapeHtml(row.name) + '</span><span>' + (row.ok ? '在' : '不在线') + '</span></div>').join('')
+	}
+
+	async function loadPc() {
+		if (pcPanel.busy) return
+		pcPanel.busy = true
+		const box = $('pcState')
+		if (box !== null && pcPanel.state === null) box.innerHTML = '<div class="hint">正在读电脑状态（约几秒）…</div>'
+		try {
+			pcPanel.state = await api('api/pc')
+		} catch (error) {
+			if (box !== null) box.innerHTML = '<div class="err-box">读不到电脑状态：' + escapeHtml(error.message) + '</div>'
+			pcPanel.busy = false
+			return
+		}
+		renderPc()
+		pcPanel.busy = false
+	}
+
+	/** 让电脑做一件事 ✓ —— 失败时**照实说** ✓（不写"已调低"这种没验过的话 ✗）。 */
+	async function pcAction(action, extra) {
+		const message = $('pcMessage')
+		if (message !== null) message.textContent = '正在做…'
+		try {
+			const result = await api('api/pc', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action, ...(extra ?? {}) }),
+			})
+			if (result.audio !== undefined && result.audio !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), audio: result.audio }
+			if (result.brightness !== undefined && result.brightness !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), brightness: result.brightness }
+			if (result.bluetooth !== undefined && result.bluetooth !== null) pcPanel.bluetooth = result.bluetooth
+			if (result.network !== undefined && result.network !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), network: result.network }
+			if (result.battery !== undefined && result.battery !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), battery: result.battery }
+			renderPc()
+			renderPcBluetooth()
+			if (message !== null) {
+				const failed = result.ok === false
+				const text = String(result.message ?? '')
+				message.textContent = failed ? (text === '' ? '这一步没成功' : text)
+					: (text === '' ? '做好了 ✓' : text)
+			}
+		} catch (error) {
+			// 403 + needPin 时 api() 已经自己弹 PIN 门 ✓ —— 这里只把话说清 ✓。
+			if (message !== null) message.textContent = '没做成：' + error.message
+		}
+	}
+
+	$('pcBtn').addEventListener('click', () => { show($('pcopen')); void loadPc() })
+	$('pcBack').addEventListener('click', () => hide($('pcopen')))
+	$('pcRefresh').addEventListener('click', () => { pcPanel.state = null; void loadPc() })
+	$('pcMute').addEventListener('click', () => { void pcAction($('pcMute').textContent === '取消静音' ? 'unmute' : 'mute') })
+	$('pcVolDown').addEventListener('click', () => { void pcAction('volumeDown', { step: 5 }) })
+	$('pcVolUp').addEventListener('click', () => { void pcAction('volumeUp', { step: 5 }) })
+	$('pcBrightDown').addEventListener('click', () => { void pcAction('brightnessDown', { step: 10 }) })
+	$('pcBrightUp').addEventListener('click', () => { void pcAction('brightnessUp', { step: 10 }) })
+	$('pcNet').addEventListener('click', () => { void pcAction('refresh') })
+	$('pcBatt').addEventListener('click', () => { void pcAction('refresh') })
+	$('pcBtDevices').addEventListener('click', () => { void pcAction('bluetoothDevices') })
+	$('pcBtSettings').addEventListener('click', () => { void pcAction('bluetoothSettings') })
 
 	$('sysBtn').addEventListener('click', () => { show($('sysopen')); void loadSystem() })
 	$('sysBack').addEventListener('click', () => hide($('sysopen')))

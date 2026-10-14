@@ -336,6 +336,17 @@ const voicePosts = []
 const screenOcrPosts = []
 
 /** 3.9.0：下一次 `POST /api/power` 让他失败 ✓（复查第 93 轮点名：桩永远成功 → 假承诺抓不到 ✗）。 */
+/*
+ * 4.5.0「控制电脑」那套桩的状态 ✓：
+ *   · `pcRequests`：页面发给 `/api/pc` 的每个动作（断言"点哪个键发了哪个 action" ✓）；
+ *   · `pcStubOff`：让 `GET /api/pc` 回"默认关" ✓（页面必须**把怎么开写出来** ✓）；
+ *   · `pcStubBrightnessUnsupported`：回"这台机器没有可调的内置屏幕" ✓
+ *     （台式机 / 只接外接屏那条分支 ✓ —— 页面必须**如实说**，不许假装调成功 ✗）。
+ */
+const pcRequests = []
+let pcStubOff = false
+let pcStubBrightnessUnsupported = false
+/** 3.9.0：下一次 `POST /api/power` 让他失败 ✓（复查第 93 轮点名：桩永远成功 → 假承诺抓不到 ✗）。 */
 let powerFailOnce = false
 
 /** 4.0.0「录屏遥控」：页面发给 `/api/record` 的 POST 都记在这儿 ✓；`recordFailOnce` 用来装"默认关" ✓。 */
@@ -589,6 +600,32 @@ async function stubFetch(input, options = {}) {
 	if (path === '/api/system/kill') {
 		killRequests.push(JSON.parse(String(options.body ?? '{}')))
 		return jsonResponse({ killed: true, pid: 7777, name: 'node.exe', alive: false })
+	}
+	/*
+	 * 4.5.0「控制电脑」✓：桩回一份**像个真机器**的快状态 ✓（含"亮度不支持"这条分支用的开关 ✓），
+	 * POST 的动作都记进 `pcRequests` ✓ —— 断言"点哪个键发了哪个 action" ✓（不靠猜 ✓）。
+	 * ⚠️ 桩**永远不会真的动硬件** ✓（它只是回 JSON ✓）—— 套件里不许改用户的音量/亮度/蓝牙 ✗。
+	 */
+	if (path === '/api/pc' && String(options?.method ?? 'GET').toUpperCase() === 'POST') {
+		const body = JSON.parse(String(options?.body ?? '{}'))
+		pcRequests.push(body)
+		if (body.action === 'bluetoothDevices') return jsonResponse({ ok: true, action: body.action, bluetooth: { devices: [{ name: '杰的AirPods', ok: true }, { name: 'WI-C200', ok: false }] } })
+		if (body.action === 'mute' || body.action === 'unmute') return jsonResponse({ ok: true, action: body.action, audio: { volume: 37, muted: body.action === 'mute' } })
+		if (body.action === 'volumeUp' || body.action === 'volumeDown') return jsonResponse({ ok: true, action: body.action, audio: { volume: body.action === 'volumeUp' ? 42 : 32, muted: false } })
+		if (body.action === 'brightnessUp' || body.action === 'brightnessDown') return jsonResponse({ ok: true, action: body.action, brightness: { supported: true, level: body.action === 'brightnessUp' ? 90 : 70 } })
+		if (body.action === 'bluetoothSettings') return jsonResponse({ ok: true, action: body.action, message: '已经在电脑上打开蓝牙设置 —— 连接 / 配对新设备在那儿点一下 ✓' })
+		return jsonResponse({ ok: true, action: body.action, audio: { volume: 37, muted: false }, brightness: { supported: true, level: 80 } })
+	}
+	if (path === '/api/pc') {
+		return jsonResponse(pcStubOff === true
+			? { enabled: false, note: '电脑控制默认关闭 —— 在 mobile-bridge.json 里加 "pcControl": true 再试（改完立刻生效，不用重启）✓' }
+			: {
+				enabled: true,
+				audio: { volume: 37, muted: false },
+				brightness: { supported: pcStubBrightnessUnsupported !== true, level: 80 },
+				battery: { supported: true, percent: 89, plugged: true, minutesLeft: null },
+				network: { internet: true, profiles: [{ name: 'ChinaTelecom-EDU5.8G', connectivity: '4' }], adapters: [{ name: 'WLAN', speed: '650 Mbps' }] },
+			})
 	}
 	if (path === '/api/system') {
 		return jsonResponse({
@@ -4546,6 +4583,101 @@ check('说明指向了下拉框或读取状态',
 	permState.elevated = true
 	$('composer').dataset.perm = 'danger-full-access'
 	await nextFrame()
+}
+
+/* --- 4.5.0：手机上控制电脑（用户点名的七件事）--------------------------------- */
+/*
+ * 用户 2026-10-14：「做一键给电脑静音，调低亮度，调低调高音量，调高亮度，联网检查，
+ * 电量检查，蓝牙连接，蓝牙设备显示的功能的功能」✓。
+ * 这一块钉四件事 ✓：① 面板能开、状态画得对 ✓；② 每个键发的 action 对 ✓；
+ * ③ **默认关时把"怎么开"写出来** ✓（不是一句"读不到"✗）；④ 亮度不支持时**如实说** ✓。
+ * 另外钉一条设计决定 ✓：**没有"连接某台蓝牙设备"那个键** ✗（Windows 没有可靠接口 ✓，
+ * 摆一个按了没反应的键就是骗人 ✓）—— 页面必须写明"连接在设置里点" ✓。
+ */
+{
+	click(tabButton('task'))
+	await wait(40)
+	click($('pcBtn'))
+	await wait(160)
+	check('🖥 控制电脑面板能打开，电量 / 联网 / 音量 / 亮度都画出来了',
+		window.getComputedStyle($('pcopen')).display !== 'none'
+		&& $('pcState').textContent.includes('89%')
+		&& $('pcState').textContent.includes('37%')
+		&& $('pcState').textContent.includes('ChinaTelecom-EDU5.8G')
+		&& $('pcState').textContent.includes('外网通'),
+		$('pcState').textContent.replace(/\s+/g, ' ').slice(0, 90))
+	check('九个键都在（静音 / 音量± / 亮度± / 联网 / 电量 / 蓝牙设备 / 打开蓝牙设置）',
+		['pcMute', 'pcVolDown', 'pcVolUp', 'pcBrightDown', 'pcBrightUp', 'pcNet', 'pcBatt', 'pcBtDevices', 'pcBtSettings']
+			.every((id) => $(id) !== null))
+	/*
+	 * ⚠️ 判据要看**按钮文字** ✓，不是整块文字 ✗ —— 说明里本来就写着"连接要在设置里点一下" ✓，
+	 * 拿 `pcopen.textContent.includes('连接')` 去判会**永远为真** ✗（我第一版就是这么写歪的 ✓）。
+	 */
+	const pcButtonTexts = [...$('pcopen').querySelectorAll('button')].map((node) => String(node.textContent ?? ''))
+	check('🔴 **没有**「连接某台设备」也**没有**「开 / 关蓝牙」这两个键 ✗（Windows 没有可靠接口 ✓ —— 真机验过调不动 ✓，摆了就是骗人 ✗）',
+		pcButtonTexts.some((text) => text.includes('连接')) === false
+		// ⚠️ 必须**整字比对** ✗：「打开蓝牙设置」里也含"开蓝牙" ✓（我第一版就是这么误判的 ✓）。
+		&& pcButtonTexts.some((text) => text.trim() === '开蓝牙' || text.trim() === '关蓝牙') === false
+		&& pcButtonTexts.length >= 9,
+		`按钮：${pcButtonTexts.join(' / ')}`)
+	check('面板上写明"连接 / 开关都要去系统设置里点" ✓（做不到就如实说 ✓）',
+		$('pcopen').textContent.includes('打开蓝牙设置') && $('pcopen').textContent.includes('系统设置'))
+
+	// ② 点键 → 发对 action ✓
+	pcRequests.length = 0
+	click($('pcVolUp'))
+	await wait(120)
+	click($('pcBrightDown'))
+	await wait(120)
+	click($('pcBtDevices'))
+	await wait(120)
+	check('🔴 点「音量 + / 亮度 − / 蓝牙设备」分别发出 volumeUp / brightnessDown / bluetoothDevices ✓',
+		pcRequests.map((row) => row.action).join(',') === 'volumeUp,brightnessDown,bluetoothDevices',
+		pcRequests.map((row) => row.action).join(','))
+	check('音量/亮度按键带上了步长（5 / 10 ✓ —— 不然一下调太狠 ✓）',
+		pcRequests[0]?.step === 5 && pcRequests[1]?.step === 10,
+		JSON.stringify(pcRequests.map((row) => row.step)))
+	check('蓝牙设备列表真画出来了（名字 + 在/不在线 ✓）',
+		$('pcBluetooth').textContent.includes('杰的AirPods') && $('pcBluetooth').textContent.includes('WI-C200'),
+		$('pcBluetooth').textContent.replace(/\s+/g, ' ').slice(0, 60))
+	check('调完音量/亮度后，状态行显示的是**返回的真实值** ✓（不是"已调低"这种糊话 ✓）',
+		$('pcState').textContent.includes('70%'), $('pcState').textContent.replace(/\s+/g, ' ').slice(0, 60))
+	click($('pcBack'))
+	await wait(60)
+
+	// ③ 默认关：必须把"怎么开"写出来 ✓
+	pcStubOff = true
+	click($('pcBtn'))
+	await wait(140)
+	check('🔴 电脑控制默认关时，面板上写着怎么开（pcControl）✓ —— 不是一句"读不到" ✗',
+		$('pcState').textContent.includes('pcControl') || $('pcNote').textContent.includes('pcControl'),
+		$('pcState').textContent.replace(/\s+/g, ' ').slice(0, 80))
+	click($('pcBack'))
+	await wait(60)
+	pcStubOff = false
+
+	// ④ 亮度不支持（台式机 / 外接屏）→ 如实说 ✓
+	pcStubBrightnessUnsupported = true
+	click($('pcBtn'))
+	await wait(140)
+	check('🔴 这台机器没有可调的内屏时，亮度那一行**如实说** ✓（不许假装调成功 ✗）',
+		$('pcState').textContent.includes('没有可调的内置屏幕'),
+		$('pcState').textContent.replace(/\s+/g, ' ').slice(0, 80))
+	click($('pcBack'))
+	await wait(60)
+	pcStubBrightnessUnsupported = false
+
+	// ⑤ 抽屉登记（4.3.0 那条教训 ✓）：面板开着时**审批卡片一来必须让位** ✓
+	click($('pcBtn'))
+	await wait(140)
+	check('（前置）控制电脑面板开着 ✓', window.getComputedStyle($('pcopen')).display !== 'none')
+	source.emit({ t: 'interaction', kind: 'approval', id: 'ask-pcopen', payload: { toolName: 'pwsh', reason: '要跑一条命令' } })
+	await wait(140)
+	check('🔴 面板开着时来了审批卡片：它**让位** ✓（没登记进 openToolPanel() 的话卡片会被盖住 ✗ —— 2.5.1 / 4.3.0 同款病 ✓）',
+		window.getComputedStyle($('pcopen')).display === 'none' && window.getComputedStyle($('ask')).display !== 'none',
+		`pcopen=${window.getComputedStyle($('pcopen')).display} ask=${window.getComputedStyle($('ask')).display}`)
+	source.emit({ t: 'interaction-end', id: 'ask-pcopen' })
+	await wait(120)
 }
 
 /* --- 2.7.0 ★3/★4：状态盘 + 一键动作（"点两次"这条一定要钉住 ✓）------------- */
