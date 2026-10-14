@@ -188,5 +188,26 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		block.includes(current), current)
 }
 
+/*
+ * 7) **文档里的默认值必须等于代码里的默认值**（4.3.0 加 ✓）。
+ *
+ * 现场（用户 2026-10-14）：「提权默认只保持 15 分钟改成一个小时」✓ —— 这类"改一个默认值"最容易漏的是
+ * **文档里那两处** ✗（README 的 JSON 示例 + 字段表 ✓），而漏了没人看得出来 ✓（代码对、文档旧 ✓）。
+ * 所以钉住：`DEFAULT_ELEVATION_MINUTES` 那个数字，必须**同时**出现在 README 的字段表行里 ✓。
+ * ⚠️ 另一件必须写下来的事 ✗：这条默认值**只在配置里没写时生效** ✓ —— 老机器的
+ * `mobile-bridge.json` 里那份显式值会被原样沿用 ✓（改默认救不了老机器 ✓，得改配置 ✓，
+ * 4.3.0 就是这么做的 ✓ —— 见 CHANGELOG ✓）。
+ */
+{
+	const entrySource = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const readme = await readFile(join(ROOT, 'README.md'), 'utf8')
+	const minutes = (/(?:^|\n)const DEFAULT_ELEVATION_MINUTES = (\d+)/.exec(entrySource) ?? [])[1] ?? ''
+	check('（自检）从代码里读到了 DEFAULT_ELEVATION_MINUTES（别把这条写成永远通过）',
+		/^\d+$/.test(minutes), minutes === '' ? '(没读到)' : `${minutes} 分钟`)
+	check(`README 的字段表写的就是代码里的默认值（${minutes} 分钟）—— 改默认值忘了改文档，这里就红`,
+		minutes !== '' && new RegExp('\\| `elevationMinutes` \\| ' + minutes + ' \\|').test(readme),
+		(readme.match(/\| `elevationMinutes` \| (\d+) \|/) ?? ['(没找到字段表行)'])[0])
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

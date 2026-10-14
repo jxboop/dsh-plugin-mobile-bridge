@@ -151,7 +151,7 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
   "pathSecret": "ab12cd34ef56ab78",
   "tokenTtlHours": 12,
   "bindTokenToIp": false,
-  "elevationMinutes": 15
+  "elevationMinutes": 60
 }
 ```
 
@@ -164,7 +164,7 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 | `pathSecret` | 随机 16 位十六进制 | **所有路由都藏在这个随机段后面**，没有它一律 404 |
 | `tokenTtlHours` | 12 | 登录令牌有效期（上限 14 天） |
 | `bindTokenToIp` | false | 是否**严格**绑定令牌的来源 IP。默认 `false`：地址变化只**记录告警**（在 `/api/bootstrap` 的 `foreignUses` 里可见），不吊销登录。设 `true` 则换地址即吊销 —— **移动网络下不可用**（运营商 NAT、IPv6 隐私扩展会不停换地址，手机会被反复踢下线），只适合固定网络 |
-| `elevationMinutes` | 15 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
+| `elevationMinutes` | 60 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
 | `crashProbe` | false | **排查用，平时别开。** 设为 `true` 会把宿主的 uncaughtException / exit 事件写进 `~/.dsh/dsh-crash.log`（含每 30 秒一条内存心跳）。它跑在宿主进程里、会注册全局处理器并持续写盘，所以默认关闭。 |
 | `answerOnPhone` | false | 让**手机**回答 agent 的提问（`ask_user_question`）和工具审批。默认关：开着时"正在看这个会话的手机"会抢在桌面前面拿到提问，桌面要等 120 秒才轮到。没有手机在看这个会话时，无论开关如何都是桌面先拿到。 |
 
@@ -175,7 +175,7 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 - **已登录**（有 cookie）：能看会话列表和聊天记录。令牌默认 12 小时有效，所以**重启电脑、重启 DSH 都不会把你踢出去**。
 - **已提权**（最近输过一次 PIN）：才能让这台电脑干活 —— 下发任务、取消、新建会话。
 
-**提权默认只保持 15 分钟**（`elevationMinutes`），过期后第一次动手会重新弹出 PIN 门；宿主重启后恢复的会话同样不带提权。觉得输得太勤就把它调大，上限 240 分钟：
+**提权默认保持一个小时**（`elevationMinutes` —— 2026-10-14 用户要求：从 15 分钟改成 60 分钟），过期后第一次动手会重新弹出 PIN 门；宿主重启后恢复的会话同样不带提权。觉得还不够就把它调大，上限 240 分钟：
 
 ```json
 { "elevationMinutes": 240 }
@@ -365,7 +365,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\tunnel-start.ps1
 | **限速的钥匙不可伪造** | 只在 socket 对端是 loopback（即自家 cloudflared）时才读转发头；`cf-connecting-ip` 优先，`x-forwarded-for` 取**最后一段**（自家代理追加的），**绝不取第一段**（那是调用方可控的） |
 | **两级登录限速** | 每地址 12 次/10 分钟 + **所有人合计** 60 次/10 分钟 |
 | **令牌绑定来源 IP** | 偷走的 cookie 换一台机器就是废纸 |
-| **写操作需要再验 PIN** | cookie 只能**读**；下发指令/取消/新建会话需要 15 分钟内输过一次 PIN |
+| **写操作需要再验 PIN** | cookie 只能**读**；下发指令/取消/新建会话需要一小时内输过一次 PIN |
 | **Cookie `Secure` 条件化** | HTTPS 下带 `Secure`，明文 HTTP 下不带（否则局域网登录会静默失效） |
 | **令牌 12 小时过期** | 上限 14 天，`/api/logout` 立即吊销 |
 | **SSE 连接上限** | `MAX_LIVE_STREAMS = 6`，超限 503 |
@@ -421,7 +421,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1426 项**（package 18 · harness **548** · qr 12 · ui **720** · security 51 · crashprobe 17 ·
+**九个套件共 1477 项**（package **20** · harness **549** · qr 12 · ui **765** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。

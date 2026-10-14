@@ -61,7 +61,21 @@ const FIXTURE_WHATSNEW = JSON.stringify([
 	{ version: '9.9.7', date: '2026-10-08', lines: ['加（第三版）'] },
 	{ version: '1.0.0', date: '2026-10-08', lines: ['加（最早那一版）'] },
 ])
-const html = (await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8'))
+/*
+ * ⚠️ 4.3.0 检修（冷视角复查点过"还有没有裸 await"✓）：这一处是**硬前置** ✓ ——
+ * 连页面本体都读不到，后面一条断言都跑不了 ✓。所以不是"吞掉继续跑" ✗，
+ * 而是**把话说清再退出** ✓（免得陌生人看到一段没头没尾的栈 ✓）。
+ */
+let htmlSource = ''
+try {
+	htmlSource = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+} catch (error) {
+	console.error('读不到 lib/mobile.html —— 这套测试是拿真页面在 jsdom 里跑的，没有它就无从测起。\n')
+	console.error('  期望位置：' + join(HERE, '..', 'lib', 'mobile.html'))
+	console.error('  实际错误：' + String(error?.message ?? error) + '\n')
+	process.exit(2)
+}
+const html = htmlSource
 	// 服务端用的是 replaceAll（标记在页面里出现不止一次），测试也得一样。
 	.replaceAll('__DSH_PAGE_TAG__', PAGE_TAG)
 	.replaceAll('__DSH_BRIDGE_VERSION__', FIXTURE_VERSION)
@@ -1824,12 +1838,120 @@ check('the preview is cleared after sending', $('thumbs').querySelectorAll('img'
 	check('清空后没有残留附件', $('thumbs').querySelectorAll('.chip').length === 0)
 }
 
+/*
+ * 4.3.0 ②「停止」防误触（用户 2026-10-14 亲口：「信息发送出去后容易手点到停止」✓）。
+ * 验收清单就是下面这几条（一条不落 ✓）：① 第一下**零请求** ✓ + 文案说了"再点一次" ✓；
+ * ② 3 秒内第二下发**恰好一条** `POST /api/cancel` ✓；③ 窗口内连点也不许多发 ✓；
+ * ④ 窗口过了，第一下**仍然零请求** ✓；⑤ 文案不忽悠（除非真发出去，不许写"已停止" ✗）；
+ * ⑥ 会话停了要**自动解除上膛** ✓（别留个"再来一下"的错觉 ✗）。
+ */
+{
+	const cancelCount = () => requests.filter((entry) => entry.path.startsWith('/api/cancel')).length
+	/*
+	 * ⚠️ 自己把"正在跑"这一幕摆出来 ✓ —— 上面那些用例（插话 / 附件 / 上传）之间已经发过
+	 * `turn/end` ✓，跑到这里会话**不一定还在跑** ✓（实测就是 false ✗）。依赖"上面留下的状态"
+	 * 就是一条会随时序漂的断言 ✗ —— 所以这里自己造场景 ✓（跑完再收干净 ✓）。
+	 */
+	source.emit({ t: 'event', event: { type: 'turn/start', seq: 60, time: Date.now(), data: { turn: 1 } } })
+	await wait(160)
+	const wasVisible = window.getComputedStyle($('stop')).display !== 'none'
+	check('（前置）会话跑起来时「停止」就在屏幕上 ✓（不在屏幕上就谈不上手滑 ✓）',
+		wasVisible && $('send').textContent === '插话',
+		`stop=${window.getComputedStyle($('stop')).display} send=${$('send').textContent}`)
+
+	// ① 第一下：零请求 + 说清"再点一次"。
+	const beforeArm = cancelCount()
+	click($('stop'))
+	await wait(120)
+	check('第一下点「停止」：**一个请求都不发** ✓（用户被咬的就是这一下 ✗）',
+		cancelCount() === beforeArm, `cancel 请求 ${beforeArm} → ${cancelCount()}`)
+	check('第一下之后按钮改口成"再点一次" ✓（用户得知道还差一下 ✓）',
+		$('stop').textContent.includes('再点一次'), `按钮=${$('stop').textContent}`)
+	check('第一下有话说（toast 讲清 3 秒内有效 ✓ —— 不是静默上膛 ✓）',
+		String($('toast')?.textContent ?? '').includes('再点一次'), String($('toast')?.textContent ?? '').slice(0, 40))
+	check('文案不忽悠：还没发出去就**不许**写"已停止" ✗',
+		!String($('toast')?.textContent ?? '').includes('已停止') && !$('stop').textContent.includes('已停止'),
+		`toast=${String($('toast')?.textContent ?? '').slice(0, 30)} 按钮=${$('stop').textContent}`)
+
+	// ② 窗口内第二下：恰好一条。
+	const beforeSecond = cancelCount()
+	click($('stop'))
+	await wait(160)
+	check('3 秒内再点一下：发出**恰好一条** `POST /api/cancel` ✓（不多不少 ✓）',
+		cancelCount() === beforeSecond + 1, `${beforeSecond} → ${cancelCount()}`)
+	{
+		const last = requests.filter((entry) => entry.path.startsWith('/api/cancel')).pop()
+		check('那条 cancel 带的是**当前会话** ✓（不是空 sessionId ✗）',
+			last !== undefined && JSON.parse(last.options.body).sessionId === SESSION,
+			String(last?.options?.body ?? '(没有这条请求)'))
+	}
+	check('发出去之后按钮回到「停止」✓（下次手滑的第一下又是"上膛"，防误触才一直有效 ✓）',
+		$('stop').textContent === '停止', `按钮=${$('stop').textContent}`)
+
+	// ③ 第三下：又只上膛，仍不许多发 —— 正好是窗口过了的第 ④ 条。
+	await wait(3300)
+	const beforeLate = cancelCount()
+	click($('stop'))
+	await wait(120)
+	check('窗口（3 秒）过了之后再点：**仍然零请求** ✓（第一下永远只是上膛 ✓）',
+		cancelCount() === beforeLate, `cancel 请求 ${beforeLate} → ${cancelCount()}`)
+	check('窗口过了之后那一下，按钮同样改口 ✓（上膛状态没被漏掉 ✓）',
+		$('stop').textContent.includes('再点一次'), `按钮=${$('stop').textContent}`)
+
+	// ⑥ 会话停了 → 自动解除上膛。
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 99, time: Date.now(), data: { turn: 2, reason: { kind: 'cancelled' } } } })
+	await wait(160)
+	check('会话停了：自动解除上膛 ✓ + 按钮回到「停止」✓（不留"再来一下"的错觉 ✗）',
+		$('stop').textContent === '停止', `按钮=${$('stop').textContent}`)
+	/*
+	 * ⑦ 🔴 冷视角复查抓到的橙 ✓：**上膛状态必须跟会话走** ✗ ——
+	 * 在 A 上点一下（只上膛、零请求 ✓）→ 3 秒内切到**正在跑**的 B（B 的停止键亮着 ✓）→ 再点一下，
+	 * 要是还留着 A 的上膛 ✓，那一下就直接 `POST /api/cancel` **打 B** ✗ —— 而它本该只是"第一下"✓。
+	 */
+	{
+		// 先把会话摆成"正在跑"（B 的停止键亮着 ✓），再在它上面上膛。
+		source.emit({ t: 'event', event: { type: 'turn/start', seq: 102, time: Date.now(), data: { turn: 4 } } })
+		await wait(140)
+		click($('stop'))
+		await wait(120)
+		check('（前置）在本会话上点了一下：已上膛 ✓', $('stop').textContent.includes('再点一次'), `按钮=${$('stop').textContent}`)
+		const beforeSwitch = requests.filter((entry) => entry.path.startsWith('/api/cancel')).length
+		/*
+		 * 切到另一个会话（bootstrap 里 `session-older` 是"没在跑"的那条 ✓）—— 换会话就该解除上膛 ✓。
+		 * ⚠️ 用现成的 `switchTo()` ✓ —— `sessionRows()` 返回的是**字符串数组**（不是 DOM 节点 ✗），
+		 * 我第一版拿它当节点调 `.getAttribute` ✓ → 套件在这个文件里**当场 TypeError 崩掉** ✗、
+		 * 连汇总都打不出来 ✓（`node --check` 查不出这种 ✗ —— 是冷视角复查逐行读出来的 ✓）。
+		 */
+		await switchTo('session-older')
+		check('（前置）已经切到另一个会话 ✓（`session-older` 不在跑 ✓）',
+			$('stop').textContent === '停止' || window.getComputedStyle($('stop')).display === 'none',
+			`按钮=${$('stop').textContent} 显示=${window.getComputedStyle($('stop')).display}`)
+		check('🔴 换会话之后**上膛被解除** ✓（按钮回到「停止」，不是还挂着"再点一次" ✗）',
+			$('stop').textContent === '停止', `按钮=${$('stop').textContent}`)
+		// 再点一下：必须**零请求** ✓（要是上膛还留着，这一下就会打出去 ✗）。
+		click($('stop'))
+		await wait(160)
+		check('🔴 换会话后那一下**一个请求都不发** ✓（留着旧会话的上膛 = 这一下直接取消新会话 ✗ —— 复查抓到的橙 ✓）',
+			requests.filter((entry) => entry.path.startsWith('/api/cancel')).length === beforeSwitch,
+			`cancel 请求 ${beforeSwitch} → ${requests.filter((entry) => entry.path.startsWith('/api/cancel')).length}`)
+		// 收拾：切回原会话 ✓（`switchTo` 找不到会抛 ✓ —— 不做静默 no-op ✗）。
+		await switchTo(SESSION)
+		check('（收拾）切回原会话 ✓', true, `当前 SESSION=${SESSION}`)
+	}
+	// 收拾干净：这一块开头自己摆的"正在跑"由这里收掉 ✓，后面的用例看到的状态和进来时一致 ✓。
+	source.emit({ t: 'event', event: { type: 'turn/end', seq: 100, time: Date.now(), data: { turn: 3, reason: { kind: 'completed' } } } })
+	await wait(140)
+	check('（收尾）会话停了之后「停止」也收起来了 ✓（不留一个能再点的键 ✗）',
+		window.getComputedStyle($('stop')).display === 'none' && $('send').textContent === '发送',
+		`stop=${window.getComputedStyle($('stop')).display} send=${$('send').textContent}`)
+}
+
 /* --- cancel -------------------------------------------------------------- */
 
-$('stop').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-await wait(60)
+// 上面那一块已经把"两下才停"从头到尾走完了 ✓；这里只把 cancel 请求本身再钉一次 ✓
+// （老断言的**意思变了** ✗：原来是"点一下就发"✓，现在第一下**零请求** ✓ → 只留"payload 里的 sessionId 是对的"这一半 ✓）。
 const cancelCall = requests.find((entry) => entry.path.startsWith('/api/cancel'))
-check('stop cancels the running session',
+check('stop cancels the running session（payload 里的 sessionId 要对 ✓ —— 现在要点两下才发 ✓）',
 	cancelCall !== undefined && JSON.parse(cancelCall.options.body).sessionId === SESSION)
 
 /* --- the new-task panel -------------------------------------------------- */
@@ -3855,10 +3977,26 @@ check('说明指向了下拉框或读取状态',
 	// 翻页会带一下进场动画（"确实翻了"的即时反馈）。
 	click(tabButton('task'))
 	await wait(40)
+	/*
+	 * ⚠️ 这一条原来是**时序敏感**的 ✗：类名由 `mobile.html` 里一个 `setTimeout(..., 260)` 摘掉 ✓
+	 *（**不是** animationend ✓ —— 冷视角复查逐行读出来的 ✓），而检查发生在"类加完之后" ✓；
+	 * 机器一忙（这一步与检查之间被别的活挤掉几百毫秒 ✓），定时器先到 → 类名已经没了 ✗ → 偶发红 ✓。
+	 * ✅ 正确修法（测试侧 ✓）：**装一个 MutationObserver 记录"这个类出现过没有"** ✓ ——
+	 * 它不看"检查那一刻还在不在" ✓，所以不受调度影响 ✓；查完 disconnect ✓。
+	 * ❌ 我第一版改法是去拉长 `animation-duration` ✗ —— 那**动不了**那个 260ms 定时器 ✓，等于没修 ✓。
+	 */
+	let sawPageIn = false
+	const pageInObserver = new window.MutationObserver(() => {
+		const cls = $('view-new').className
+		if (String(cls).includes('pagein-left') || String(cls).includes('pagein-right')) sawPageIn = true
+	})
+	pageInObserver.observe($('view-new'), { attributes: true, attributeFilter: ['class'] })
 	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
+	const pageInNow = $('view-new').classList.contains('pagein-left') || $('view-new').classList.contains('pagein-right')
 	check('翻页时有进场动画的类名（即时反馈）',
-		$('view-new').classList.contains('pagein-left') || $('view-new').classList.contains('pagein-right'),
-		$('view-new').className)
+		sawPageIn || pageInNow,
+		`出现过=${sawPageIn} 检查时=${pageInNow} className=${$('view-new').className}`)
+	pageInObserver.disconnect()
 	click($('newBack'))
 	await wait(60)
 
@@ -4121,7 +4259,16 @@ check('说明指向了下拉框或读取状态',
 	 * setTimeout"这一类，源码断言正是对症的工具。
 	 */
 	{
-		const raw = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+		/*
+		 * ⚠️ 4.3.0 检修（冷视角复查点过"还有没有裸 await"✓）：这一处读的是**产品源码** ✓ ——
+		 * 读不到就**照实报红** ✓，不许崩在汇总之前 ✗（那样门禁只会说"拿不到项数" ✓）。
+		 */
+		let raw = ''
+		try {
+			raw = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+		} catch (error) {
+			check('读得到 lib/mobile.html（哨兵那条的判据来源）', false, String(error?.message ?? error))
+		}
 		// 先剥注释：说明文字里就写着"原来是 setTimeout(…, 2000)"，不剥会匹配到那句话本身。
 		const source = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 		const block = /const WATCHDOG_PULL_MS[\s\S]{0,900}?\},\s*(\d+)\)/.exec(source)
@@ -4144,7 +4291,13 @@ check('说明指向了下拉框或读取状态',
 	// （手机 ←→ 电脑 的"桥"隐喻），不再只是那层透明纱 ✓。别的面板和壁纸逻辑不受影响 ✓。
 	// jsdom 不解析 background 简写（getComputedStyle 返回空），所以查样式源码 —— 和哨兵那条一个路子。
 	{
-		const css = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+		// ⚠️ 4.3.0 检修：同上，读不到就报红 ✓，不崩在汇总之前 ✗。
+		let css = ''
+		try {
+			css = await readFile(join(HERE, '..', 'lib', 'mobile.html'), 'utf8')
+		} catch (error) {
+			check('读得到 lib/mobile.html（说明页背景那条的判据来源）', false, String(error?.message ?? error))
+		}
 		const rule = /#welcome \{[^}]*\}/.exec(css)?.[0] ?? ''
 		check('说明页有自己的背景（渐变 + 桥的网格），不是一层素纱',
 			rule.includes('radial-gradient') && css.includes('#welcome::before'),
@@ -6453,14 +6606,247 @@ await wait(40)
 		window.localStorage.getItem('dshm.top') === '1'
 		&& String($('toast')?.textContent ?? '').includes('顶栏已收起'),
 		`dshm.top=${window.localStorage.getItem('dshm.top')} toast="${String($('toast')?.textContent ?? '').slice(0, 24)}"`)
+	/*
+	 * ⚠️ 4.3.0 把"再点 ⌄ 展开"这条**改掉了** ✗（老断言在这里 ✗）：折叠态点 ⌄ 现在**弹纸** ✓
+	 * （用户 2026-10-14 选 B ✓），"整行回来"这件事由**纸上的「展开顶栏」**负责 ✓ ——
+	 * 那条断言搬到下面 ① 那一块里 ✓，这里只钉"折叠态点 ⌄ 会把纸弹出来" ✓。
+	 * ⚠️ 判据必须含"纸是关着的" ✗ —— 只写"栏收着"的话，第一版那个真 bug（**折叠时顺手把纸弹满屏** ✗）
+	 * 会被放过 ✓（冷视角复查抓到的 ✓，实测也踩过 ✓）。
+	 */
 	click($('topToggle'))
 	await wait(140)
-	check('再点 ⌄：顶栏整行都回来了 ✓、标记清掉 ✓',
-		header.classList.contains('folded') === false
-		&& window.getComputedStyle($('modelRow')).display !== 'none'
-		&& window.localStorage.getItem('dshm.top') !== '1',
-		`folded=${header.classList.contains('folded')} dshm.top=${window.localStorage.getItem('dshm.top')}`)
+	check('折叠态再点 ⌄：**弹纸**（栏保持收起 ✓ —— 4.3.0 起"整行回来"归纸上那个键管 ✓）',
+		header.classList.contains('folded') === true
+		&& window.getComputedStyle($('topsheet')).display !== 'none',
+		`folded=${header.classList.contains('folded')} topsheet=${window.getComputedStyle($('topsheet')).display}`)
+
 }
+
+	/*
+	 * ③ 4.3.0 ①（用户 2026-10-14 亲口，选了 B ✓）：「折叠顶栏后，那几个键要跟分享一样的操作」
+	 *    —— 现状是折叠后**只有分享还在** ✗（别的都被 CSS 藏了 ✓），所以点 ⌄ 要**弹一张纸** ✓，
+	 *    纸上五个动作各自**真生效** ✓，而展开态点 ⌄ 仍然是**直接折叠** ✓（别把常用动作变成两次 ✗）。
+	 *
+	 * ⚠️ 这一块写错过好几版 ✓，四条纪律留在这儿（比"结果绿了"值钱 ✓）：
+	 *   ① **一步一步来**：一个动作 + 一条断言，断言里带上完整现场（`folded/top/sheet` ✓）；
+	 *   ② **先读一次事实，再决定断言什么** ✗ 不许假设"现在是展开还是收起" ✓（这个假设错过两次 ✓）；
+	 *   ③ 摆状态只用**无状态**动作：关纸 = 纸上的「← 返回」✓、展开栏 = 纸上「展开顶栏」✓、
+	 *      打开纸 = **在收起态点 ⌄**（判据取 DOM 上的 `header.folded` ✓）；
+	 *   ④ **判据不许写成"纸关着也算过"** ✗ —— 那样"点 ⌄ 到底开没开纸"会被整个放过 ✓（自证 ✓）。
+	 */
+	{
+		const sheet = $('topsheet')
+		const sheetOpen = () => window.getComputedStyle(sheet).display !== 'none'
+		const header = window.document.querySelector('header')
+		const isFolded = () => header.classList.contains('folded')
+		const where = (tag) => `[${tag}] folded=${isFolded()} top=${JSON.stringify(window.localStorage.getItem('dshm.top'))} sheet=${window.getComputedStyle(sheet).display}`
+
+		/* 摆状态：关纸（无状态 ✓）。 */
+		const closeSheet = async () => { if (sheetOpen() === true) { click($('topSheetBack')); await wait(140) } }
+		/* 摆状态：展开栏（无状态 ✓）—— 收起态先弹纸、再按纸上的「展开顶栏」✓。 */
+		const expandBar = async () => {
+			if (isFolded() === true) {
+				click($('topToggle')); await wait(140)          // 收起态点 ⌄ = 弹纸 ✓
+				if (sheetOpen() === true) { click($('topSheetExpand')); await wait(160) }
+			}
+			await closeSheet()
+		}
+		/* 摆状态：收起栏 + 纸关着（用事实判断，不假设 ✓）。 */
+		const foldBar = async () => {
+			await closeSheet()
+			if (isFolded() === false) { click($('topToggle')); await wait(140) }
+		}
+
+		/* 第 1 步：收起那一刻**纸必须是关的** ✓ —— 冷视角复查抓到的真 bug（我第一版就是错的 ✗）：
+		 * `renderTop()` 在折叠态 `show(paper)` ✓ → 用户点"收起"想多看几行、结果被一张全屏纸盖住 ✗；
+		 * 更糟的是 `dshm.top=1` 是持久化的 ✓ → 每次冷启动/刷新都被自动弹一脸 ✗。 */
+		await expandBar()
+		const step1From = { folded: isFolded(), sheet: window.getComputedStyle(sheet).display }
+		check('（前置）第 1 步起点：栏是**展开**的、纸是关的 ✓（先读事实，再决定断言 ✓）',
+			step1From.folded === false && step1From.sheet === 'none',
+			`folded=${step1From.folded} sheet=${step1From.sheet}`)
+		click($('topToggle'))
+		await wait(140)
+		check('🔴 第 1 步：那一下点 ⌄ 之后 —— 栏折叠 ✓，而**纸仍然是关的** ✓（折叠的本意是"多看几行"，不是被全屏纸盖住 ✗；冷启动同理 ✓）',
+			isFolded() === true && sheetOpen() === false, where('step1'))
+
+		/* 第 2 步：折叠态点 ⌄ → 弹纸 ✓（栏保持收起 ✓）。 */
+		await foldBar()
+		click($('topToggle'))
+		await wait(140)
+		check('第 2 步：折叠态点 ⌄ → **弹纸** ✓（栏保持收起 ✓、五个动作一个都不丢 ✓）',
+			isFolded() === true && sheetOpen() === true, where('step2'))
+
+		/* 第 3 步：纸上内容与会话栏对得上 ✓。 */
+		check('纸上五样都在 ✓：展开顶栏 / 说明 / 刷新 / 退出 / 当前模型',
+			$('topSheetExpand') !== null && $('topSheetHelp') !== null && $('topSheetReload') !== null
+			&& $('topSheetLogout') !== null && $('topSheetModel') !== null
+			// ⚠️ 4.3.0 检修（冷视角复查的白 ✓）：光"在"不够 ✗ —— 模型选择器得**真有选项** ✓
+			//（它是这五样里唯一"有内容才算数"的那个 ✓；其余四样的"真生效"由下面几步各自钉住 ✓）。
+			&& $('topSheetModel').options.length >= 1,
+			`选择器选项=${$('topSheetModel').options.length} 个`)
+		check('纸上的模型选择器**和顶端那一行同一个值** ✓（不是各显示各的 ✗）',
+			$('topSheetModel').value === $('modelNow').value,
+			`纸=${$('topSheetModel').value} 顶端=${$('modelNow').value}`)
+
+		/* 第 4 步：折叠后那几个键**确实被藏了** ✓（用户看到的那一幕 ✓）；「分享」这次也进了名单 ✓。 */
+		await closeSheet()
+		check('（前置）第 4 步：栏收着、纸关着 ✓', isFolded() === true && sheetOpen() === false, where('step4-pre'))
+		check('第 4 步：折叠态下「说明 / 刷新 / 退出 / 当前模型」都被藏起来 ✓（这就是用户看到的那一幕 —— 4.1.0 起偏偏「分享」还在 ✗）',
+			window.getComputedStyle($('help')).display === 'none'
+			&& window.getComputedStyle($('reload')).display === 'none'
+			&& window.getComputedStyle($('logout')).display === 'none'
+			&& window.getComputedStyle($('modelRow')).display === 'none',
+			`help=${window.getComputedStyle($('help')).display} modelRow=${window.getComputedStyle($('modelRow')).display}`)
+		check('4.3.0 起「分享」也跟着收起来 ✓（用户看到的不一致就是它 ✗）',
+			window.getComputedStyle($('shareApp')).display === 'none',
+			`shareApp=${window.getComputedStyle($('shareApp')).display}`)
+
+		/* 第 5 步：纸上「说明」→ 真开说明页 ✓（复用 `#help` 自己那份接法 ✓）。 */
+		await foldBar()
+		click($('topToggle'))
+		await wait(140)
+		check('（前置）第 5 步：点 ⌄ 弹纸 ✓', sheetOpen() === true, where('step5-pre'))
+		click($('topSheetHelp'))
+		await wait(160)
+		check('纸上点「说明」：真把说明页开出来了 ✓（纸自己先收掉 ✓，不然盖在上面像卡住 ✗）',
+			window.getComputedStyle($('welcome')).display !== 'none' && sheetOpen() === false,
+			`welcome=${window.getComputedStyle($('welcome')).display} topsheet=${window.getComputedStyle(sheet).display}`)
+		click($('welcomeGo'))
+		await wait(160)
+
+		/* 第 6 步：纸上「刷新」→ 真发一次拉取 ✓。 */
+		await closeSheet()
+		if (isFolded() === false) { click($('topToggle')); await wait(140) }
+		click($('topToggle'))
+		await wait(140)
+		check('（前置）第 6 步：点 ⌄ 弹纸 ✓', sheetOpen() === true, where('step6-pre'))
+		const bootBefore = requests.filter((entry) => entry.path.startsWith('/api/bootstrap')).length
+		click($('topSheetReload'))
+		await wait(260)
+		check('纸上点「刷新」：真的发了一次拉取 ✓（`/api/bootstrap` ✓ —— 只改文案不发请求就是假的 ✗）',
+			requests.filter((entry) => entry.path.startsWith('/api/bootstrap')).length > bootBefore,
+			`bootstrap 请求 ${bootBefore} → ${requests.filter((entry) => entry.path.startsWith('/api/bootstrap')).length}`)
+		check('点完刷新纸也收起来了 ✓', sheetOpen() === false, where('step6-post'))
+
+		/* 第 7 步：纸上「退出登录」→ 真走退出那条路 ✓（然后重新登录回来 ✓）。 */
+		click($('topToggle'))
+		await wait(140)
+		check('（前置）第 7 步：点 ⌄ 弹纸 ✓', sheetOpen() === true, where('step7-pre'))
+		const logoutBefore = requests.filter((entry) => entry.path.startsWith('/api/logout')).length
+		click($('topSheetLogout'))
+		await wait(220)
+		check('纸上点「退出登录」：真的走退出那条路 ✓（`POST /api/logout` ✓ —— 不是只关一张纸 ✗）',
+			requests.filter((entry) => entry.path.startsWith('/api/logout')).length === logoutBefore + 1,
+			`logout 请求 ${logoutBefore} → ${requests.filter((entry) => entry.path.startsWith('/api/logout')).length}`)
+		const backIn = await ensureAppVisible()
+		check('（前置）退出后重新进得来 ✓ 且**折叠状态没被登录那一步抹掉** ✓（它记在 `dshm.top` 里 ✓）',
+			backIn === true && isFolded() === true
+			&& window.localStorage.getItem('dshm.top') === '1',
+			`ancestry: ${ancestry($('app'))} folded=${isFolded()} dshm.top=${window.localStorage.getItem('dshm.top')}`)
+
+		/* 第 8 步：纸上「当前模型」—— 那个选择器真会走的两条路，各自钉 ✓。 */
+		await closeSheet()
+		if (isFolded() === false) { click($('topToggle')); await wait(140) }
+		click($('topToggle'))
+		await wait(140)
+		check('（前置）第 8 步：收起 + 纸开着 ✓', isFolded() === true && sheetOpen() === true, where('step8-pre'))
+		{
+			const options = Array.from($('topSheetModel').options)
+			window.localStorage.setItem('dshm.model', 'zhipu|glm-4-plus')   // 保证第 ① 条有东西可清 ✓
+			check('（前置）选择器里有"默认"与"具体模型"两类选项 ✓（否则下面两条证不了什么 ✗）',
+				options.some((o) => o.value === '') && options.some((o) => o.value !== ''),
+				`当前=${$('modelNow').value} 选项=${options.map((o) => o.value).join(' / ')}`)
+
+			// ① 选「默认（跟随电脑）」：**不发请求** ✓，只是把手机记的选择清掉 ✓。
+			const postsBeforeDefault = pickedModelRequests.length
+			$('topSheetModel').value = ''
+			$('topSheetModel').dispatchEvent(new window.Event('change', { bubbles: true }))
+			await wait(220)
+			check('纸上选「默认（跟随电脑）」：**不发任何请求** ✓ 且把手机记的选择清掉 ✓（我第一版拿它断言"发了 POST" ✗ —— 实测一条红 ✓）',
+				pickedModelRequests.length === postsBeforeDefault && window.localStorage.getItem('dshm.model') === '',
+				`model 请求 ${postsBeforeDefault} → ${pickedModelRequests.length}；dshm.model=${JSON.stringify(window.localStorage.getItem('dshm.model'))}`)
+
+			// ② 选一个**具体模型**：恰好一条 POST ✓、带的就是刚选的值 ✓。
+			const concrete = options.find((o) => o.value !== '')
+			const postsBeforeConcrete = pickedModelRequests.length
+			$('topSheetModel').value = concrete.value
+			$('topSheetModel').dispatchEvent(new window.Event('change', { bubbles: true }))
+			await wait(260)
+			const sent = pickedModelRequests.at(-1)
+			check('纸上选一个具体模型：**恰好一条** `POST /api/model` ✓ 且带的就是刚选的那个值 ✓（不是旧值 ✗）',
+				pickedModelRequests.length === postsBeforeConcrete + 1
+				&& sent?.body?.provider === concrete.value.split('|')[0]
+				&& sent?.body?.model === concrete.value.split('|')[1],
+				`选了 ${JSON.stringify(concrete.value)} / 发出去 ${JSON.stringify(sent?.body ?? null)}`)
+			check('换了之后**顶端那一行也跟着对** ✓（两处显示同一个值 ✓）',
+				$('modelNow').value === concrete.value && $('topSheetModel').value === concrete.value,
+				`顶端=${$('modelNow').value} 纸=${$('topSheetModel').value}`)
+			window.localStorage.removeItem('dshm.model')
+		}
+
+		/* 第 9 步：纸上「展开顶栏」→ 回到展开态 ✓、纸收掉 ✓。 */
+		check('（前置）第 9 步：纸还开着 ✓', sheetOpen() === true, where('step9-pre'))
+		click($('topSheetExpand'))
+		await wait(160)
+		check('纸上点「展开顶栏」：回到展开态 ✓、纸收掉 ✓、那几个键又都在了 ✓',
+			isFolded() === false && sheetOpen() === false
+			&& window.getComputedStyle($('help')).display !== 'none'
+			&& window.getComputedStyle($('modelRow')).display !== 'none'
+			&& window.localStorage.getItem('dshm.top') !== '1',
+			where('step9'))
+
+		/*
+		 * 第 10 步：🔴 冷视角复查（橙）抓到的**真漏登记** ✓：新加的 `#topsheet` 是一张 `.sheet`
+		 *（fixed 全屏 ✓），却没进 `openToolPanel()` 那份清单 ✓ —— 那份清单管两件事 ✓：
+		 *   ① 左右滑动换页前先把抽屉收掉 ✓（漏了就"纸盖着、底下页换了" ✗）；
+		 *   ② **审批/提问卡片一到先把抽屉收掉** ✓（2.5.1 那条修的就是这个 ✗ —— 漏了它，
+		 *      卡片又被盖住 → 用户又看到"审批没弹出来" ✓，而宿主只等 120 秒 ✓）。
+		 */
+		await foldBar()
+		click($('topToggle'))
+		await wait(140)
+		check('（前置）第 10 步：收起 + 纸开着 ✓', isFolded() === true && sheetOpen() === true, where('step10-pre'))
+		/*
+		 * ⚠️ 这里**不假装测了滑动换页** ✗ —— 我试了两种起手点（`#log` / 页面容器 / `body` ✓），
+		 * 在这块场景里合成触摸事件**都没走完 `goPage`** ✓（实测：[对照] 把纸关掉再滑也不换页 ✓），
+		 * 于是"纸关着"这个结果**不是"登记生效"造成的** ✓ —— 拿它当判据就是**自证** ✗。
+		 * 真机端到端也没证据 ✗ —— 照本项目纪律：**宁缺不假** ✓（删掉假判据 ✓，缺口写进 CHANGELOG ✓）。
+		 * 真正压阵的是下面那条 ②：审批卡片到达时**必须**把这张纸收掉 ✓
+		 * （那条走的就是 `openToolPanel()` 同一段代码 ✓，而且合成事件走不动的问题在那儿不存在 ✓）。
+		 */
+		await closeSheet()
+		click(window.document.querySelector('#tabs button[data-tab="task"]'))
+		await wait(140)
+		await foldBar()
+		click($('topToggle'))
+		await wait(140)
+		// ⚠️ 4.3.0 检修（冷视角复查的黄 ✓）：只验"纸开着"不够 ✗ —— 还要验**栏是收起的**、**停在任务页** ✓
+		//（这两样是"点 ⌄ 弹纸"这个动作的前提 ✓；不验的话，摆场景那一步静默失败也看不出来 ✗）。
+		check('（前置）停在任务页、栏收着、纸开着 ✓',
+			window.document.querySelector('#tabs button.active')?.dataset?.tab === 'task'
+			&& isFolded() === true && sheetOpen() === true,
+			`active=${window.document.querySelector('#tabs button.active')?.dataset?.tab ?? '(无)'} folded=${isFolded()} sheet=${window.getComputedStyle(sheet).display}`)
+		source.emit({ t: 'interaction', kind: 'approval', id: 'ask-topsheet', payload: { toolName: 'pwsh', reason: '要跑一条命令' } })
+		await wait(120)
+		check('🔴 纸开着时来了审批卡片：纸**让位** ✓（不登记 = 卡片被盖住 = 用户以为"审批没弹出来"✗ —— 2.5.1 同款病 ✓）',
+			sheetOpen() === false && window.getComputedStyle($('ask')).display !== 'none',
+			`topsheet=${window.getComputedStyle(sheet).display} ask=${window.getComputedStyle($('ask')).display}`)
+		source.emit({ t: 'interaction-end', id: 'ask-topsheet' })
+		await wait(120)
+
+		/* 收尾：把页面恢复成"展开 + 任务页"✓ —— 后面的用例按这个前提走 ✓。 */
+		click(window.document.querySelector('#tabs button[data-tab="task"]'))
+		await wait(140)
+		await expandBar()
+		// ⚠️ 4.3.0 检修（冷视角复查的白 ✓）：收尾也要把**任务页**和**说明页已关**一起验 ✓ ——
+		// 不然这一块把页面留在别的页/别的纸上，后面的用例会"错着前提"往下跑 ✓（最难查的那种 ✗）。
+		check('（收尾）顶栏回到展开态、纸关着、说明页关着、停在任务页 ✓（这一块的状态不漏给下面 ✓）',
+			isFolded() === false && sheetOpen() === false
+			&& window.getComputedStyle($('welcome')).display === 'none'
+			&& window.document.querySelector('#tabs button.active')?.dataset?.tab === 'task',
+			`${where('final')} welcome=${window.getComputedStyle($('welcome')).display} active=${window.document.querySelector('#tabs button.active')?.dataset?.tab ?? '(无)'}`)
+	}
 
 /* --- 2.9.0 ★3：备份 / 换手机（导出与导入）----------------------------------- */
 /*
@@ -6550,6 +6936,14 @@ await wait(40)
 		&& visible($('roStrip'))
 		&& $('send').disabled === true,
 		`readonly=${window.localStorage.getItem('dshm.readonly')} roStrip 沿祖先链可见=${visible($('roStrip'))} send.disabled=${$('send').disabled}`)
+	/*
+	 * 🔴 4.3.0（冷视角复查第二轮抓到"这条修复没被钉住"✓）：**「只看不发」也要禁掉「停止」** ✗ ——
+	 * 原来只管发送键 ✓，锁上之后连着点两下「停止」照样能取消电脑上正在跑的那一轮 ✓，
+	 * 与"锁上就不动手"的初衷不对称 ✗（服务端的 `guardWrite()` 会把请求挡下来 ✓，
+	 * 但界面上先给个"能点"的样子就是在引诱误触 ✗）。
+	 */
+	check('🔴 「只看不发」也要把「停止」一并禁掉 ✓（锁着还能取消电脑上的一轮 = 与初衷不对称 ✗）',
+		$('stop').disabled === true, `stop.disabled=${$('stop').disabled}`)
 	// 收尾：把这台"手机"恢复成能发消息的状态（后面的用例还要用 ✓）。
 	click($('roBtn'))
 	await wait(120)

@@ -218,7 +218,11 @@
 	 */
 	#topToggle { padding: 3px 8px; font-size: 13px; line-height: 1; opacity: .72; }
 	header.folded { padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 4px; row-gap: 0; }
-	header.folded #heading, header.folded #help, header.folded #reload, header.folded #logout, header.folded #modelRow { display: none; }
+	/*
+	 * 4.3.0 ①：折叠时**「分享」也一起收起来** ✓ —— 全部收进那张纸 ✓（用户看到的"只有分享还在"
+	 * 就是这么来的 ✓，见「收起顶栏」那一节 ✓）。纸上的五个动作一个都不少 ✓。
+	 */
+	header.folded #heading, header.folded #help, header.folded #reload, header.folded #logout, header.folded #modelRow, header.folded #shareApp { display: none; }
 	#modelRow { flex: 1 1 100%; order: 2; display: flex; align-items: center; gap: 7px; min-width: 0; }
 	#modelLabel { flex: none; font-size: 12px; color: var(--muted); }
 	#modelNow {
@@ -1458,6 +1462,30 @@
 			</div>
 		</section>
 
+		<!-- 折叠顶栏那张纸（4.3.0 ①，用户 2026-10-14 亲口选了 B ✓）：
+		     收起顶栏后「说明 / 刷新 / 退出 / 当前模型」原本被 CSS 藏掉 ✗ —— 现在它们**一个都不丢** ✓，
+		     点细缝上的 ⌄ 就能弹回来 ✓。⚠️ 只有"已收起"时才弹它 ✓（展开态点 ⌄ 仍然是直接折叠 ✓）。 -->
+		<section class="sheet" id="topsheet" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="topSheetBack">← 返回</button>
+				<span class="title">顶栏</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="actions">
+					<button class="go" id="topSheetExpand">展开顶栏</button>
+					<button id="topSheetHelp">说明</button>
+					<button id="topSheetReload">刷新</button>
+					<button id="topSheetLogout">退出登录</button>
+				</div>
+				<div class="field">
+					<label>当前模型（点开就能换；电脑端换的这里也看得见）</label>
+					<select class="plain" id="topSheetModel" title="当前模型（点开就能换；电脑端换的这里也看得见）"></select>
+					<div class="hint" id="topSheetModelHint">收起顶栏也是这条细缝上的一个键：五个动作一个都不丢 ✓。</div>
+				</div>
+			</div>
+		</section>
+
 		<!-- 会话列表（2.5.0）：点上面那一行打开。
 		     为什么不再用原生 <select>：里面放不下 📌 / ⭐ 两个按钮，也不能分组排序 ✗，
 		     而"分组"正是用户要的东西 —— 📌 置顶 → ⭐ 常用 → 🕘 最近 ✓。
@@ -2162,6 +2190,51 @@
 	 */
 	function atBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 24 }
 
+	/* --------- 「停止」防误触（4.3.0 用户亲口要的 ✓）--------- */
+	/*
+	 * 用户原话：「信息发送出去后容易手点到停止」✓ —— 那是**真疼** ✓：
+	 * 一按就发 `POST /api/cancel` ✓，正在跑的那一轮当场没了 ✗，而且没有二次确认 ✗。
+	 *
+	 * 做法：照本项目已有的"点两次"惯例（解锁 / 我睡了 / 录屏 / 关机同款 ✓）——
+	 *   · 第一下：**一个请求都不发** ✓，按钮自己变成「真的要停？再点一次」✓ + 一句 toast 说清 ✓；
+	 *   · **3 秒**内第二下：发**恰好一条** `POST /api/cancel` ✓；
+	 *   · 窗口过了：自己退回「停止」✓（**仍然不发** ✗）—— 免得按钮一直挂着"再点一次"的状态 ✓，
+	 *     下次手滑的第一下又变成"上膛" ✓（这正是防误触要的 ✓）；
+	 *   · 会话停了（`setStatus(false)` ✓）也**自动解除上膛** ✓ —— 别留个"再来一下"的错觉 ✗。
+	 * 文案不忽悠 ✓：发出去之前**绝不**写"已停止" ✗（只有 toast 里那句"再点一次" ✓）。
+	 */
+	const STOP_ARM_MS = 3000
+	const stopArm = { until: 0, timer: 0 }
+
+	/** 按钮长什么样，**只在这一个地方定** ✓（和 `renderTopChrome` 同一条纪律：别两处各写一半 ✗）。 */
+	function renderStop() {
+		const armed = stopArm.until > Date.now()
+		stopBtn.textContent = armed ? '真的要停？再点一次' : '停止'
+		stopBtn.title = armed
+			? '再点一次就真的停（这一下发了才会停 ✓）'
+			: '停掉正在跑的这一轮（要点两次才真停 ✓ —— 防手滑 ✓）'
+	}
+
+	/** 上膛（第一下）：只改状态与文案 ✓，**不发任何请求** ✓。 */
+	function armStop() {
+		stopArm.until = Date.now() + STOP_ARM_MS
+		if (stopArm.timer !== 0) window.clearTimeout(stopArm.timer)
+		stopArm.timer = window.setTimeout(() => {
+			stopArm.timer = 0
+			stopArm.until = 0
+			renderStop()
+		}, STOP_ARM_MS + 30)
+		renderStop()
+		toast('再点一次才真的停 ✓（' + (STOP_ARM_MS / 1000) + ' 秒内有效）', 2400)
+	}
+
+	/** 解除上膛：会话停了 / 已经真发过一次了 ✓。 */
+	function disarmStop() {
+		stopArm.until = 0
+		if (stopArm.timer !== 0) { window.clearTimeout(stopArm.timer); stopArm.timer = 0 }
+		renderStop()
+	}
+
 	function setStatus(kind) {
 		dot.className = kind
 		// 运行中也要能发：handlePrompt 用的是 queue 模式，DSH 的语义是
@@ -2170,7 +2243,9 @@
 		sendBtn.textContent = state.running ? '插话' : '发送'
 		show(sendBtn)
 		compose.classList.toggle('two', state.running)
-		if (state.running) show(stopBtn); else hide(stopBtn)
+		// 会话停了就解除上膛 ✓（别留个"再来一下"的错觉 ✗）；还在跑则保持当前状态 ✓。
+		if (state.running) show(stopBtn); else { hide(stopBtn); disarmStop() }
+		renderStop()
 	}
 
 	/* --------- 实时耗时 / token 跳动（2.8.0 ★12）--------- */
@@ -2760,7 +2835,7 @@
 	 * （冷视角复查抓到 2.8.0 的 `secopen`、2.9.0 的 `backupopen` 都漏在这儿 ✗ —— 顺手补上 ✓）。
 	 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen']) {
+		for (const id of ['sessopen', 'delopen', 'sysopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen', 'topsheet']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -5332,6 +5407,14 @@
 		// 换会话必须把"在跑"重置成新会话的真实状态，否则按钮还写着「插话」、
 		// 停止键还亮着，而这条消息其实是普通发送（还会回一句假的"已插话"）。
 		state.running = picked !== undefined && picked.running === true
+		/*
+		 * ⚠️ 4.3.0（冷视角复查抓的橙 ✓）：**上膛状态必须跟会话走** ✗ ——
+		 * `stopArm` 是模块级的 ✓，换会话时若不清 ✓，就会出现这一幕：
+		 * 在 A 上点了一下「停止」（只是上膛、零请求 ✓）→ 3 秒内切到**正在跑**的 B（B 的停止键亮着 ✓）
+		 * → 再点一下**直接发出 `POST /api/cancel` 打 B** ✗ —— 而那一下本该只是 A 的"第一下" ✓。
+		 * 所以换会话就解除上膛 ✓（`disarmStop()` 幂等 ✓）。
+		 */
+		disarmStop()
 		// 有缓存就立刻铺上（秒开），没有才走"空 + 等下载"那条老路。
 		const warm = restoreSession(sessionId)
 		// DOM 上现在是【另一个会话】的内容，增量比对的前缀对不上，必须整段换。
@@ -5516,6 +5599,14 @@
 			// 会话在不在跑，以宿主给的 running 为准：切换/重开页面时 state.running
 			// 还留着上一个会话的值，按钮会一直写着「插话」，点下去还回一句假的"已插话"。
 			state.running = chosen.running === true
+			/*
+			 * ⚠️ 4.3.0（检修第二轮抓到"同一条 bug 的另一个入口"✓）：**这里也会换会话** ✓
+			 *（上次那个会话是空的/没了/打不开 → 自动改选 ✓，删完会话落脚到别的会话就走这条路 ✓）——
+			 * 所以上膛也要在这儿解除 ✓，不然"在 A 上点了一下（上膛）→ 删掉 A → 落脚到正在跑的 B →
+			 * 再点一下"就会直接 `POST /api/cancel` **打 B** ✗（正是 `switchSession` 那条的翻版 ✓）。
+			 * `disarmStop()` 幂等 ✓，多调几次没有副作用 ✓。
+			 */
+			disarmStop()
 			// `state.source === null` 也要重连：从 PIN 门回来时 sessionId 没变，但那条 SSE
 			// 已经在 showGate() 里被关掉了。只比较 sessionId 的话，页面看着一切正常，
 			// 却再也收不到任何实时更新。
@@ -7270,6 +7361,8 @@
 		}
 		pick.value = chosen
 		pick.title = chosen === '' ? '当前模型：跟随电脑的默认' : '当前模型：' + chosen.split('|')[1] + '（点开就能换）'
+		// 4.3.0 ①：折叠顶栏那张纸上的模型选择器**跟着一起刷新** ✓（同一个值、两处显示 ✓）。
+		renderTopSheet()
 	}
 
 	/**
@@ -7443,6 +7536,8 @@
 					rememberSession(state.sessionId)
 					state.sessionId = created.sessionId
 					writeLocal('dshm.session', created.sessionId)
+					// 4.3.0：换到新会话也要解除上膛 ✓（同上：不然留着旧会话的上膛，点一下会打在新会话上 ✗）。
+					disarmStop()
 					if (first !== '') {
 						/*
 						 * 第一句**放回输入框** ✓ —— 但输入框里可能已经有用户没写完的草稿 ✗：
@@ -7477,6 +7572,8 @@
 			rememberSession(state.sessionId)
 			state.sessionId = created.sessionId
 			writeLocal('dshm.session', created.sessionId)
+			// 4.3.0：换到新会话也要解除上膛 ✓（同 `switchSession` 那条 ✓）。
+			disarmStop()
 			const after = first === '' ? Promise.resolve() : api('api/prompt', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -8329,7 +8426,7 @@
 
 		html.push('<div class="syscard"><div class="sessgroup">踢掉其它设备</div>')
 		html.push('<div class="hint">别人拿到你的登录态时用这个键 ✓ —— 它会让<b>除这台手机之外</b>的设备全部下线（它们要重输 PIN ✓）。</div>')
-		html.push('<div class="hint">用的是你刚才输的那个 PIN ✓（**不会**把你自己这台踢掉 ✓）。</div>')
+		html.push('<div class="hint">用的是你刚才输的那个 PIN ✓（不会把你自己这台踢掉 ✓）。</div>')
 		html.push('<button class="primary" id="secRevoke">踢掉其它设备（保留这台）</button>')
 		html.push('<div class="hint" id="secError"></div>')
 		html.push('</div>')
@@ -9257,6 +9354,38 @@
 		modelRow.style.display = (state.tab === 'task' && topFolded() !== true) ? 'flex' : 'none'
 	}
 
+	/**
+	 * 4.3.0 ①（用户 2026-10-14 亲口，选了 B ✓）：**收起之后点 ⌄ 弹一张纸** ✓。
+	 *
+	 * 为什么要有它：`header.folded` 把 `#heading` / `#help` / `#reload` / `#logout` / `#modelRow`
+	 * **全藏掉** ✓（上面那行 CSS ✓），而 4.1.0 新加的「分享」**不在藏掉名单里** ✗ ——
+	 * 于是收起顶栏后**只剩分享还在** ✓，用户看到的就是"别的键都不见了、分享却还在"这个不一致 ✓。
+	 * B 方案：**键一个都不丢** ✓，折叠时把它们收进一张纸里 ✓（栏还是那条细缝 ✓）。
+	 *
+	 * 三条纪律：
+	 *   · **只有"已收起"时才弹纸** ✓ —— 展开态点 ⌄ 仍然是**直接折叠** ✓（别把常用动作变成两次 ✗）；
+	 *   · 纸上「展开顶栏」「说明」「刷新」「退出」**都复用各自原来的那个键** ✓
+	 *     （`$('help').click()` 之类 ✓）—— **不复制一份逻辑** ✗：复制出来的第二份迟早和第一份漂 ✗；
+	 *   · 纸上那个模型选择器**和顶端那一行是同一个值** ✓（两处都读写 `state.modelNow` + `dshm.model` ✓），
+	 *     换的时候照旧发 `POST /api/model` ✓（复用 `#modelNow` 上那份 change 逻辑 ✓）。
+	 */
+	function renderTopSheet() {
+		const pick = $('topSheetModel')
+		if (pick === null) return
+		const catalog = state.models.flatMap((group) =>
+			group.models.map((model) => ({ value: group.provider + '|' + model.id, label: model.label + '（' + (group.label ?? group.provider) + '）' })))
+		const chosen = currentModelValue()
+		// 和 #modelNow 一样**每次重建** ✓（目录可能刚拉下来、当前模型可能刚被电脑端换掉 ✓）。
+		pick.innerHTML = '<option value="">默认（跟随电脑）</option>' + catalog.map((entry) =>
+			'<option value="' + escapeHtml(entry.value) + '">' + escapeHtml(entry.label) + '</option>').join('')
+		// 当前模型不在目录里也要看得见 ✓（provider 被停用 / 目录没拉到时 ✓ —— 同 #modelNow 那条 ✓）。
+		if (chosen !== '' && catalog.some((entry) => entry.value === chosen) === false) {
+			const parts = chosen.split('|')
+			pick.insertAdjacentHTML('beforeend', '<option value="' + escapeHtml(chosen) + '">' + escapeHtml(parts[1] + '（' + parts[0] + '）') + '</option>')
+		}
+		pick.value = chosen
+	}
+
 	function renderTop() {
 		const folded = topFolded()
 		const bar = window.document.querySelector('header')
@@ -9265,8 +9394,25 @@
 		if (button !== null) {
 			button.textContent = folded ? '⌄' : '⌃'
 			button.title = folded
-				? '顶栏已收起（标题 / 说明 / 刷新 / 退出 / 当前模型都在这儿）—— 点一下展开 ✓'
-				: '点一下收起顶栏，多看几行（刷新也记得 ✓）'
+				? '点一下弹开这张纸：展开顶栏 / 说明 / 刷新 / 退出 / 当前模型（一个键都不丢 ✓）'
+				: '点一下收起顶栏，多看几行（收起后点左边的 ⌄ 能弹回来 ✓；刷新也记得 ✓）'
+		}
+		const paper = $('topsheet')
+		if (paper !== null) {
+			/*
+			 * ⚠️ 这里**只预渲染内容，一点可见性都不碰** ✓ —— 纸的开合**只有两处**说了算：
+			 * `⌄`（开 ✓）与纸上的「← 返回」/「展开顶栏」/四个动作键（关 ✓）。
+			 *
+			 * 🔴 4.3.0 冷视角复查抓到的真 bug（我第一版就是错的 ✗）：原来这儿写的是
+			 * `if (folded) { show(paper); … }` ✓ —— 而 `renderTop()` 会在**收起那一刻**被调用 ✓，
+			 * 也会在**冷启动/刷新**时被调用 ✓（`dshm.top=1` 是持久化的 ✓）→
+			 * 于是"点 ⌃ 想多看几行"立刻被一张**全屏纸**盖住 ✓，刷新之后每次都被自动弹一脸 ✗
+			 * —— 用户点折叠的**本意正好被反过来** ✓。
+			 * 后来我改成"折叠态就 hide"也是错的 ✗：`renderTop()` 在别处也会被调到 ✓（比如收起之后 ✓），
+			 * 于是刚弹开的纸会被顺手收掉 ✓（实测：`[收起 + 纸开着]` 这个状态根本摆不住 ✗）。
+			 * 结论：**这个函数不该管纸的开合** ✓ —— 状态与可见性分开 ✓（本项目的老教训：一个东西只由一处说了算 ✓）。
+			 */
+			if (folded) renderTopSheet()
 		}
 		renderTopChrome()
 	}
@@ -9274,10 +9420,47 @@
 	function setTopFolded(folded) {
 		writeLocal('dshm.top', folded ? '1' : '')
 		renderTop()
-		toast(folded ? '顶栏已收起（点左边的 ⌄ 展开）✓' : '顶栏展开了 ✓', 2200)
+		toast(folded ? '顶栏已收起（点左边的 ⌄ 弹开：展开 / 说明 / 刷新 / 退出 / 模型 ✓）' : '顶栏展开了 ✓', 2200)
 	}
 
-	$('topToggle').addEventListener('click', () => { setTopFolded(topFolded() !== true) })
+	/*
+	 * ⌄ 的两种含义**只在这一处**判定 ✓：
+	 *   展开态 → 直接折叠 ✓（老行为，一律照旧 ✓）；折叠态 → **弹纸** ✓，栏不动 ✓。
+	 * ⚠️ 别在这里 `preventDefault` 或再挂第二份监听 ✗（同一个目标只留一份接法 ✓ —— 3.5.0 的教训 ✓）。
+	 */
+	$('topToggle').addEventListener('click', () => {
+		/*
+		 * ⚠️ 判据取 **DOM 上的事实**（`header.folded` ✓），**不取 localStorage** ✗ ——
+		 * 两个来源会漂（实测：`dshm.top="1"` 而 `header` 没折叠 ✓ → 一次点击的分支判反 ✓、
+		 * 表现就是"点了 ⌄ 纸不开 / 收起反而弹纸"这类怪事 ✗）。
+		 * 规矩照旧：**一个状态只由一处说了算** ✓ —— 这里认 DOM ✓；localStorage 只负责"刷新还记得" ✓。
+		 */
+		const bar = window.document.querySelector('header')
+		const foldedNow = bar !== null && bar.classList.contains('folded')
+		if (foldedNow === true) {
+			renderTopSheet()
+			show($('topsheet'))
+			return
+		}
+		setTopFolded(true)
+	})
+	$('topSheetBack').addEventListener('click', () => hide($('topsheet')))
+	$('topSheetExpand').addEventListener('click', () => {
+		hide($('topsheet'))
+		setTopFolded(false)
+	})
+	$('topSheetHelp').addEventListener('click', () => { hide($('topsheet')); $('help').click() })
+	$('topSheetReload').addEventListener('click', () => { hide($('topsheet')); $('reload').click() })
+	$('topSheetLogout').addEventListener('click', () => { hide($('topsheet')); $('logout').click() })
+	/*
+	 * 换模型：把选择落到 `#modelNow` 上，再**让它自己的 change 监听去干活** ✓ ——
+	 * 好处是"记住哪个会话、发哪条请求、失败怎么回滚"全都只有一份实现 ✓（不复制 ✗）。
+	 */
+	$('topSheetModel').addEventListener('change', () => {
+		const raw = String($('topSheetModel').value ?? '')
+		$('modelNow').value = raw
+		$('modelNow').dispatchEvent(new window.Event('change', { bubbles: true }))
+	})
 	renderTop()
 
 	/* --------- 只看不发（2.7.0 ★7）--------- */
@@ -9299,6 +9482,16 @@
 		if (send !== null) {
 			send.disabled = readOnly.on === true
 			send.style.opacity = readOnly.on === true ? '.5' : ''
+		}
+		/*
+		 * ⚠️ 4.3.0（冷视角复查点名的白 ✓）：「只看不发」原来**只管住发送键** ✗ ——
+		 * 锁上之后，连着点两下「停止」照样能把这台电脑正在跑的那一轮取消掉 ✓，与"锁上就不动手"的
+		 * 初衷不对称 ✗。锁上时把它一并禁掉 ✓（解锁时恢复 ✓）。
+		 */
+		const stop = $('stop')
+		if (stop !== null) {
+			stop.disabled = readOnly.on === true
+			stop.style.opacity = readOnly.on === true ? '.5' : ''
 		}
 		if (document.body !== null && document.body !== undefined) {
 			document.body.classList.toggle('readonly', readOnly.on === true)
@@ -10377,6 +10570,12 @@
 	})
 	sendBtn.addEventListener('click', send)
 	stopBtn.addEventListener('click', () => {
+		/*
+		 * 4.3.0 防误触：**第一下只上膛** ✓（零请求 ✓），3 秒内第二下才发**恰好一条** cancel ✓。
+		 * ⚠️ 别把"按钮变了"当成"发出去了" ✗ —— 真正发请求只在这一条分支里 ✓（复查按这个找 ✓）。
+		 */
+		if (stopArm.until <= Date.now()) { armStop(); return }
+		disarmStop()
 		api('api/cancel', {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },

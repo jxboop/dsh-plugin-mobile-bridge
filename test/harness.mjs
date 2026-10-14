@@ -2429,14 +2429,28 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	const install = await (await fetch(`${base}/api/install`, authed)).json()
 	const installText = String(install.text ?? '')
 	const installWhole = JSON.stringify(install)
-	check('🔴 **整个回包**里没有任何凭据 ✓：pathSecret / PIN / 本机地址 / 任何域名都不许有 ✗（只查 text 会漏 ✓ —— 复查点名）',
+	/*
+	 * ⚠️ 4.3.0 检修第二轮（冷视角复查的橙 ✓）：这条也**泛化到裸 IPv4** ✗ ——
+	 * 它原来只查字面 `127.0.0.1` ✓，而同一份文案里已经出现 `0.0.0.0`（监听示例 ✓）——
+	 * 也就是说"再塞一个内网/隧道地址进去"能从这条底下溜过去 ✗。
+	 * 只放行那个**通配示例** `0.0.0.0` ✓（它不是任何人的真实地址 ✓）。
+	 */
+	const wholeDomains = installWhole.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []
+	const wholeIps = installWhole.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g) || []
+	const wholeIpsBad = wholeIps.filter((ip) => ip !== '0.0.0.0')
+	check('🔴 **整个回包**里没有任何凭据 ✓：pathSecret / PIN / 本机或内网地址 / 任何域名都不许有 ✗（只查 text 会漏 ✓ —— 复查点名）',
 		installWhole.includes(config.pathSecret) === false
 		&& installWhole.includes(config.pin) === false
-		&& installWhole.includes('127.0.0.1') === false
-		// 泛化 ✓：任何 `xxx.yyy` 域名都算（ts.net / ngrok / CF 隧道换了也漏不掉 ✓）—— 只放行 github.com ✓。
-		&& (installWhole.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []).every((hit) => hit.toLowerCase() === 'github.com'),
+		&& installWhole.includes('127.0.0.1') === false && wholeIpsBad.length === 0
+		&& wholeDomains.length > 0 && wholeDomains.every((hit) => hit.toLowerCase() === 'github.com'),
 		'长度=' + installWhole.length + ' 含路径密钥=' + installWhole.includes(config.pathSecret)
-		+ ' 出现的域名=' + JSON.stringify(installWhole.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []))
+		+ ' 出现的域名=' + JSON.stringify(wholeDomains) + ' IPv4=' + JSON.stringify(wholeIps))
+	/*
+	 * ⚠️ 4.3.0：用户当场说「安装文案一点都不详细」✗ —— 所以文案从"三句话"扩成了
+	 * 「要什么 → 7 小步 → 卡住了怎么办 → 安全」四段 ✓（`installDoc()` ✓）。
+	 * 因此这里的判据**放松到"含『三步装好』这个概念"** ✓（标题现在带后缀 ✓），
+	 * 但"版本号是真值 ✓ + 带仓库地址 ✓"这两条**一个字都不放松** ✓。
+	 */
 	check('文案是**当前版本**的 ✓（版本号等于 package.json 的真值 ✓ —— 手写就会漂 ✗）且带仓库地址 ✓',
 		String(install.version ?? '') === pkgVersion
 		&& installText.includes('手机桥 v' + pkgVersion)
@@ -2456,20 +2470,65 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		&& installHtml.includes('name="viewport"') && installHtml.includes('<style>')
 		&& installHtml.includes('<script') === false,
 		`HTTP ${installHtmlRes.status} ${installHtmlRes.headers.get('content-type')} ${installHtml.length} 字节`)
-	check('🔴 网页版与文本版**同源** ✓（同样的三步 + 仓库地址 + 同一个版本号 ✓ —— 两边各写一份必然漂 ✗）',
+	/*
+	 * ⚠️ 4.3.0 检修第二轮（冷视角复查的橙 ✓）：**按段比对** ✗ ——
+	 * ① 原来拿整份文本版去 includes ✓ → 判据从"步骤逐步同源"扩到**全文** ✓：
+	 *    把某一步改坏、只要那句话在别的段还出现一次，照样绿 ✗；
+	 * ② 只取"步骤段"又会漏掉另外两段（`need` 4 条 + `trouble` 5 条 ✓）→ 我改完当场红了一次 ✓。
+	 * 现在：**三段各自切出来、各自比对、并各自要求条数** ✓（哪段漂、哪段少一条都会红 ✓）。
+	 */
+	const stripMd = (value) => value.replace(/\*\*/g, '').replace(/`/g, '')
+	const itemsOf = (chunk) => (chunk.match(/<li>([\s\S]*?)<\/li>/g) || [])
+		.map((row) => stripMd(row.replace(/<[^>]+>/g, '').trim())).filter((row) => row !== '')
+	const sectionOf = (source, from, to) => {
+		const tail = source.split(from)[1]
+		return tail === undefined ? '' : (to === undefined ? tail : tail.split(to)[0])
+	}
+	const needHtml = itemsOf(sectionOf(installHtml, '装之前要有的东西', '三步装好'))
+	const stepsHtml = itemsOf(sectionOf(installHtml, '三步装好', '卡住了看这里'))
+	const troubleHtml = itemsOf(sectionOf(installHtml, '卡住了看这里', '安全'))
+	const needText = stripMd(sectionOf(installText, '装之前要有的东西', '三步装好'))
+	const stepsText = stripMd(sectionOf(installText, '三步装好', '卡住了看这里'))
+	const troubleText = stripMd(sectionOf(installText, '卡住了看这里', '安全'))
+	const partOk = (htmlItems, textSection, min) =>
+		htmlItems.length >= min && textSection.length > 50 && htmlItems.every((row) => textSection.includes(row))
+	const sameSource = partOk(needHtml, needText, 4) && partOk(stepsHtml, stepsText, 7) && partOk(troubleHtml, troubleText, 5)
+	check('🔴 网页版与文本版**同源** ✓（三段各自逐条比对 + 各自条数下限 ✓ —— 两边各写一份必然漂 ✗）',
 		installHtml.includes('三步装好') && installHtml.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
-		// ⚠️ 复查第 96 轮：**子串级判据不算同源** ✗ —— 只查「三个关键词在不在」 ✓，
-		// 谁把其中一边的步骤改了、另一边不动，两边就**静默漂**而套件全绿 ✓。
-		// 加严：把网页版 `<li>` 里的每一步原文抠出来 ✓，**逐步**在文本版里找到 ✓（哪边漂都会红 ✓）。
-		&& (installHtml.match(/<li>([\s\S]*?)<\/li>/g) || []).map((row) => row.replace(/<[^>]+>/g, '').replace(/\*\*/g, '').trim())
-			.every((step) => step !== '' && installText.includes(step))
+		&& sameSource
 		&& installHtml.includes('手机桥 v' + pkgVersion) && installHtml.includes('加到主屏幕'),
-		installHtml.includes('三步装好') + ' / ' + installHtml.includes('手机桥 v' + pkgVersion))
-	check('🔴 网页版**整个页面**里也没有任何凭据 ✓（pathSecret / PIN / 本机地址 / 除 github.com 外的域名统统不许有 ✗）',
+		`要什么 ${needHtml.length}/${needText.length} 字符 步骤 ${stepsHtml.length}/${stepsText.length} 字符`
+		+ ` 卡住了 ${troubleHtml.length}/${troubleText.length} 字符；同源=${sameSource}`
+		+ ` 版本=${installHtml.includes('手机桥 v' + pkgVersion)}`)
+	/*
+	 * ⚠️ 4.3.0 检修（冷视角复查的橙 ✓）：这条原来只查字面 `127.0.0.1` ✗ ——
+	 * 名字写着"本机地址 / 内网地址统统不许有" ✓，可 `192.168.x` / `10.x` / `172.16-31.x` / `100.64.x`
+	 *（Tailscale 网段 ✓）全都能溜过去 ✗。现在**按裸 IPv4 泛化** ✓，只放行文案里合法的通配示例 `0.0.0.0` ✓
+	 *（那是"监听地址长这样"的占位 ✓，不是任何人的真实地址 ✓）。
+	 */
+	const ipv4All = installHtml.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g) || []
+	const ipv4Bad = ipv4All.filter((ip) => ip !== '0.0.0.0')
+	/*
+	 * ⚠️ 4.3.0 检修（`self-derived` 判据点过一次 ✓）：域名那半句原来用
+	 * `(installHtml.match(...) || []).every(...)` ✓ —— **一个域名都没匹配到时它恒真** ✗。
+	 * 现在先取出来、**要求至少有一个**（文案里本来就有仓库地址 ✓），再逐个别名（只放行 github.com ✓）。
+	 */
+	const htmlDomains = installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []
+	check('🔴 网页版**整个页面**里也没有任何凭据 ✓（pathSecret / PIN / 本机或内网地址 / 除 github.com 外的域名统统不许有 ✗）',
 		installHtml.includes(config.pathSecret) === false && installHtml.includes(config.pin) === false
-		&& installHtml.includes('127.0.0.1') === false
-		&& (installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []).every((hit) => hit.toLowerCase() === 'github.com'),
-		'出现的域名=' + JSON.stringify(installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []))
+		&& installHtml.includes('127.0.0.1') === false && ipv4Bad.length === 0
+		&& htmlDomains.length > 0 && htmlDomains.every((hit) => hit.toLowerCase() === 'github.com'),
+		'出现的域名=' + JSON.stringify(htmlDomains) + ' IPv4=' + JSON.stringify(ipv4All))
+	/*
+	 * ⚠️ 4.3.0（冷视角复查点名的黄 ✓）：网页版原来只把 `**强调**` 转成 `<strong>` ✗，
+	 * 文案里的 `` `命令` `` **原样带着反引号落进页面** ✓ —— 同学看到的是"带反引号的 node -v" ✗。
+	 * 现在两种标记都转 ✓：正文不许残留 `**` 或反引号 ✓，并且**命令要变成 `<code>`** ✓
+	 *（判据取"文案里本来就有反引号命令"这个事实 ✓ —— 不是自证 ✓）。
+	 */
+	check('🔴 网页版把 `命令` 渲染成 `<code>` ✓（原来反引号原样落地 ✗ —— 复查点名）',
+		installText.includes('`') && installHtml.includes('<code>') && installHtml.includes('`') === false
+		&& installHtml.includes('**') === false,
+		`文本版反引号=${(installText.match(/`/g) || []).length} 网页版 <code>=${(installHtml.match(/<code>/g) || []).length} 网页版反引号=${(installHtml.match(/`/g) || []).length}`)
 	const recordOff = await fetch(`${base}/api/record`, {
 		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'start', pin: config.pin }),
 	})
