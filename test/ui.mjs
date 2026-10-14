@@ -60,6 +60,12 @@ const FIXTURE_WHATSNEW = JSON.stringify([
 	{ version: '9.9.8', date: '2026-10-08', lines: ['改（某个位置）'] },
 	{ version: '9.9.7', date: '2026-10-08', lines: ['加（第三版）'] },
 	{ version: '1.0.0', date: '2026-10-08', lines: ['加（最早那一版）'] },
+	/*
+	 * ⚠️ 4.3.1（用户 2026-10-14：「找到 1.0 以前版本的更新内容并补全到说明里」✓）：
+	 * 服务端会在最后追加一节 `1.0 之前` ✓（`whatsNew()` 里那段 ✓）—— fixture 也带上它 ✓，
+	 * 这样"页面上那一节真的画出来了"才有 DOM 断言 ✓（不然只有服务端的单元断言 ✓）。
+	 */
+	{ version: '1.0 之前', date: '起步', lines: ['起步（0.1 → 0.5）：手机上第一次能看进度、能回话'] },
 ])
 /*
  * ⚠️ 4.3.0 检修（冷视角复查点过"还有没有裸 await"✓）：这一处是**硬前置** ✓ ——
@@ -4315,8 +4321,9 @@ check('说明指向了下拉框或读取状态',
 	 * 用户 2026-10-09：「是 1.0 到 2.0 的更新汇总，不是一个个分别列出了」。
 	 * 所以说明页**先摆按主题的汇总**，逐版清单退到下面（默认还只摆最近三版）。
 	 */
-	check('说明页先摆「1.0 → 今 按主题的汇总」（要的是汇总，不是逐版罗列）',
+	check('说明页先摆「0.1 → 今 按主题的汇总」（要的是汇总，不是逐版罗列；起点从第一版算 ✓）',
 		$('wnList').textContent.includes('都改了什么（按主题）')
+		&& $('wnList').textContent.includes('0.1 → ')
 		&& $('wnList').textContent.includes('🎤 录音与转文字')
 		&& $('wnList').textContent.includes('从找文件变成网页里直接录'),
 		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(0, 90))
@@ -4336,17 +4343,31 @@ check('说明指向了下拉框或读取状态',
 	const moreButton = () => $('wnList').querySelector('.wnmore')
 	// 注意：jsdom 的 textContent 连 display:none 的内容也算，所以"折起来了没有"必须查容器本身。
 	const restBox = () => $('wnList').lastElementChild
+	/*
+	 * 按钮上的"共 N 版"要跟 fixture 的节数**对得上** ✓ —— 原来写死 `共 4 版` ✗：
+	 * 4.3.1 给 fixture 加了「1.0 之前」那一节（变 5 节 ✓）→ 这条当场红 ✓（**为错误的原因红** ✗）。
+	 * 改成从 fixture 现算 ✓：它本来就是这套测试自己的输入 ✓，不是被测产物 ✓。
+	 */
+	const fixtureSections = JSON.parse(FIXTURE_WHATSNEW).length
 	check('说明页默认只摆最近三版，更早的折起来（不糊屏）',
 		$('wnList').textContent.includes('v9.9.9') && $('wnList').textContent.includes('v9.9.7')
 		&& restBox().style.display === 'none'
-		&& moreButton() !== null && moreButton().textContent.includes('共 4 版'),
-		`${String(moreButton()?.textContent ?? '没有展开按钮')} rest=${restBox().style.display}`)
+		&& moreButton() !== null && moreButton().textContent.includes('共 ' + fixtureSections + ' 版'),
+		`${String(moreButton()?.textContent ?? '没有展开按钮')}（fixture ${fixtureSections} 节）rest=${restBox().style.display}`)
 	click(moreButton())
 	await wait(30)
 	check('点「展开全部更新」→ 完整历史展开（最早那一版也在）',
 		restBox().style.display !== 'none' && $('wnList').textContent.includes('v1.0.0')
 		&& moreButton().textContent === '收起',
 		`${moreButton().textContent} rest=${restBox().style.display}`)
+	/*
+	 * 🔴 4.3.1（用户 2026-10-14：「找到 1.0 以前版本的更新内容并补全到说明里」✓）：
+	 * 展开之后**最早那一节是「1.0 之前」** ✓（服务端把它追加在最后 ✓）—— 页面上真画出来了才算数 ✓。
+	 */
+	check('🔴 展开后能看见「1.0 之前」那一节 ✓（0.1 → 0.9.12 那四十多版；不展开就只在服务端有 ✗）',
+		$('wnList').textContent.includes('1.0 之前')
+		&& $('wnList').textContent.includes('起步（0.1 → 0.5）'),
+		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(-90))
 	click(moreButton())
 	await wait(30)
 	check('再点一下收起：按钮文字回来、最老那版重新折起来',

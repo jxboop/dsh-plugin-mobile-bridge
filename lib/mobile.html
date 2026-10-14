@@ -810,7 +810,7 @@
 	.wnhead { font-size: 13px; margin-bottom: 6px; font-variant-numeric: tabular-nums; }
 	.wnbody { font-size: 13px; line-height: 1.7; color: var(--muted); }
 	.wnbody .wnver { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-	/* 「1.0 → 今 按主题的汇总」：用户要的是汇总，不是一版版罗列 —— 这块是主角，逐版清单退到下面。 */
+	/* 「0.1 → 今 按主题的汇总」：用户要的是汇总，不是一版版罗列 —— 这块是主角，逐版清单退到下面。 */
 	.wnsum {
 		border: 1px solid var(--field-line); border-radius: 12px; padding: 9px 11px; margin-bottom: 10px;
 		background: color-mix(in srgb, var(--bg) 45%, transparent);
@@ -819,7 +819,7 @@
 	.wnsumhead { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
 	.wnsumrow { font-size: 13px; line-height: 1.62; color: var(--muted); margin-bottom: 5px; }
 	.wnsumlabel { color: var(--text); font-weight: 600; margin-right: 6px; }
-	/* 「展开全部更新」：说明页里能看到 1.0 → 今 的完整历史，默认折起来不糊屏。 */
+	/* 「展开全部更新」：说明页里能看到 0.1 → 今 的完整历史，默认折起来不糊屏。 */
 	.wnmore {
 		margin: 4px 0 2px; padding: 7px 12px; font-size: 12px; font-weight: 600;
 		color: var(--accent); background: none; border: 1px dashed var(--field-line);
@@ -916,7 +916,7 @@
 <!-- 「最近更新了什么」：服务端从 CHANGELOG.md 头部现读后注入（JSON，不是 HTML）。
      在这里是数据，客户端用 textContent 建节点 —— 不把文本当 HTML 塞进页面。 -->
 <script type="application/json" id="whatsnew">__DSH_WHATSNEW__</script>
-<!-- 「1.0 → 今 按主题的汇总」：用户要求"要汇总，不要一版版罗列"。服务端手写维护（index.js 的 WHATS_NEW_THEMES）。 -->
+<!-- 「0.1 → 今 按主题的汇总」：用户要求"要汇总，不要一版版罗列"。服务端手写维护（index.js 的 WHATS_NEW_THEMES）。 -->
 <script type="application/json" id="themes">__DSH_THEMES__</script>
 
 	<!-- 满屏浮层都放这儿（`#app` 的**兄弟** ✓）：这两屏出现时 `#app` 正是 hide 状态 ✓，
@@ -11569,7 +11569,7 @@
 	 * 用户要求「开始页加入版本说明」；随后又要求**说明里能看到 1.0 → 2.0 全量更新**。
 	 *
 	 * 所以这里不是"只摆最近三版"了：默认仍然只铺最近三版（手机上别一屏糊满），
-	 * 底下给一个「展开全部更新（1.0 → 今）」的按钮，展开就是完整历史。
+	 * 底下给一个「展开全部更新（0.1 → 今）」的按钮，展开就是完整历史。
 	 * 两处都派生自注入的 JSON：还没进去时的 **PIN 登录页**只印版本号，进来后的
 	 * **「开始使用」说明页**才摆这份清单。
 	 *
@@ -11599,7 +11599,13 @@
 		/** 把一节渲染成"版本号（日期）+ 几条要点"。 */
 		const renderSection = (wrapper, section) => {
 			const line = mk('div', undefined, '')
-			line.appendChild(mk('span', 'wnver', 'v' + String(section.version ?? '')))
+			/*
+			 * ⚠️ 4.3.1：那一节「1.0 之前」**不是版本号** ✓（0.x 当年没发过 Release，服务端把
+			 * `USERNEWS.md` 那段三句人话追加成 `version: '1.0 之前'` ✓）——
+			 * 一律加 "v" 会渲染成「v1.0 之前」✗（看着像版本号又不是 ✓）。数字才加 v ✓。
+			 */
+			const raw = String(section.version ?? '')
+			line.appendChild(mk('span', 'wnver', /^\d/.test(raw) ? 'v' + raw : raw))
 			if (section.date) line.appendChild(document.createTextNode('（' + String(section.date) + '）'))
 			wrapper.appendChild(line)
 			const list = document.createElement('ul')
@@ -11612,7 +11618,7 @@
 
 		const RECENT = 3
 		/*
-		 * 先摆「1.0 → 今 按主题的汇总」——用户明确要求："要汇总，不要一版版罗列"。
+		 * 先摆「0.1 → 今 按主题的汇总」——用户明确要求："要汇总，不要一版版罗列"。
 		 * 逐版清单留在下面（默认最近三版，想看细节的人自己展开）。
 		 */
 		let themes = []
@@ -11622,7 +11628,7 @@
 		} catch { /* 没注入就算了，只有逐版清单 */ }
 		if (themes.length > 0) {
 			const summary = mk('div', 'wnsum', '')
-			summary.appendChild(mk('div', 'wnsumhead', '1.0 → ' + String(sections[0].version ?? '') + ' 都改了什么（按主题）'))
+			summary.appendChild(mk('div', 'wnsumhead', '0.1 → ' + String(sections[0].version ?? '') + ' 都改了什么（按主题）'))
 			for (const entry of themes) {
 				const [label, text] = Array.isArray(entry) ? entry : [String(entry), '']
 				const row = mk('div', 'wnsumrow', '')
@@ -11640,12 +11646,12 @@
 			const rest = mk('div', undefined, '')
 			rest.style.display = 'none'
 			for (const section of sections.slice(RECENT)) renderSection(rest, section)
-			const toggle = mk('button', 'wnmore', '展开全部更新（1.0 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）')
+			const toggle = mk('button', 'wnmore', '展开全部更新（0.1 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）')
 			toggle.addEventListener('click', () => {
 				const open = rest.style.display !== 'none'
 				rest.style.display = open ? 'none' : 'block'
 				toggle.textContent = open
-					? '展开全部更新（1.0 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）'
+					? '展开全部更新（0.1 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）'
 					: '收起'
 			})
 			host.appendChild(toggle)

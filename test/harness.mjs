@@ -656,6 +656,17 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 		Array.isArray(sections) && sections.length >= 25 && sections[0].version === pkgVersion,
 		`共 ${sections.length} 版，最新 ${sections[0]?.version}`)
 	/*
+	 * 🔴 4.3.1（用户 2026-10-14：「找到 1.0 以前版本的更新内容并补全到说明里」✓）：
+	 * 说明页原来**只从 1.0 写起** ✗ —— 而 0.1 → 0.9.12 有四十多版 ✓（`CHANGELOG.md` 尾部的表 ✓、
+	 * `USERNEWS.md` 的「1.0 之前」那三句人话 ✓）。这条钉的是**端到端**：那三句人话真的跟着注入到了手机上 ✓
+	 *（`whatsNew()` 会把「1.0 之前」追加成一节 ✓ —— 只要 `USERNEWS.md` 里那段在 ✓，且不是空的 ✓）。
+	 */
+	const preTen = sections.find((section) => section.version === '1.0 之前')
+	check('🔴 说明页里有「1.0 之前」那一节 ✓（0.1 → 0.9.12 那四十多版不许当没发生过 ✗）',
+		preTen !== undefined && Array.isArray(preTen.lines) && preTen.lines.length >= 1
+		&& preTen.lines.some((line) => /0\.\d/.test(String(line))),
+		preTen === undefined ? '（没这一节 —— USERNEWS.md 里缺「## 1.0 之前」✗）' : JSON.stringify(preTen.lines).slice(0, 160))
+	/*
 	 * 用户 2026-10-11：「说明更新内容读者都不明白什么意思」——说明页要读 `USERNEWS.md`
 	 * 里那**一句人话** ✓，而不是 CHANGELOG 里的工程措辞（字段名/测试/光杆标题……✗）。
 	 */
