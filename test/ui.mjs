@@ -614,6 +614,7 @@ async function stubFetch(input, options = {}) {
 		if (body.action === 'volumeUp' || body.action === 'volumeDown') return jsonResponse({ ok: true, action: body.action, audio: { volume: body.action === 'volumeUp' ? 42 : 32, muted: false } })
 		if (body.action === 'brightnessUp' || body.action === 'brightnessDown') return jsonResponse({ ok: true, action: body.action, brightness: { supported: true, level: body.action === 'brightnessUp' ? 90 : 70 } })
 		if (body.action === 'bluetoothSettings') return jsonResponse({ ok: true, action: body.action, message: '已经在电脑上打开蓝牙设置 —— 连接 / 配对新设备在那儿点一下 ✓' })
+		if (body.action === 'bluetoothOn' || body.action === 'bluetoothOff') return jsonResponse({ ok: true, action: body.action, radio: body.action === 'bluetoothOn' ? 'On' : 'Off' })
 		return jsonResponse({ ok: true, action: body.action, audio: { volume: 37, muted: false }, brightness: { supported: true, level: 80 } })
 	}
 	if (path === '/api/pc') {
@@ -623,6 +624,7 @@ async function stubFetch(input, options = {}) {
 				enabled: true,
 				audio: { volume: 37, muted: false },
 				brightness: { supported: pcStubBrightnessUnsupported !== true, level: 80 },
+				bluetooth: { radio: 'On' },
 				battery: { supported: true, percent: 89, plugged: true, minutesLeft: null },
 				network: { internet: true, profiles: [{ name: 'ChinaTelecom-EDU5.8G', connectivity: '4' }], adapters: [{ name: 'WLAN', speed: '650 Mbps' }] },
 			})
@@ -4606,22 +4608,19 @@ check('说明指向了下拉框或读取状态',
 		&& $('pcState').textContent.includes('ChinaTelecom-EDU5.8G')
 		&& $('pcState').textContent.includes('外网通'),
 		$('pcState').textContent.replace(/\s+/g, ' ').slice(0, 90))
-	check('九个键都在（静音 / 音量± / 亮度± / 联网 / 电量 / 蓝牙设备 / 打开蓝牙设置）',
-		['pcMute', 'pcVolDown', 'pcVolUp', 'pcBrightDown', 'pcBrightUp', 'pcNet', 'pcBatt', 'pcBtDevices', 'pcBtSettings']
+	check('十一个键都在（静音 / 音量± / 亮度± / 联网 / 电量 / 蓝牙设备 / 开 / 关 / 打开蓝牙设置）',
+		['pcMute', 'pcVolDown', 'pcVolUp', 'pcBrightDown', 'pcBrightUp', 'pcNet', 'pcBatt', 'pcBtDevices', 'pcBtOn', 'pcBtOff', 'pcBtSettings']
 			.every((id) => $(id) !== null))
 	/*
 	 * ⚠️ 判据要看**按钮文字** ✓，不是整块文字 ✗ —— 说明里本来就写着"连接要在设置里点一下" ✓，
 	 * 拿 `pcopen.textContent.includes('连接')` 去判会**永远为真** ✗（我第一版就是这么写歪的 ✓）。
 	 */
 	const pcButtonTexts = [...$('pcopen').querySelectorAll('button')].map((node) => String(node.textContent ?? ''))
-	check('🔴 **没有**「连接某台设备」也**没有**「开 / 关蓝牙」这两个键 ✗（Windows 没有可靠接口 ✓ —— 真机验过调不动 ✓，摆了就是骗人 ✗）',
-		pcButtonTexts.some((text) => text.includes('连接')) === false
-		// ⚠️ 必须**整字比对** ✗：「打开蓝牙设置」里也含"开蓝牙" ✓（我第一版就是这么误判的 ✓）。
-		&& pcButtonTexts.some((text) => text.trim() === '开蓝牙' || text.trim() === '关蓝牙') === false
-		&& pcButtonTexts.length >= 9,
+	check('🔴 仍然**没有**「连接某台设备」那个键 ✗（Windows 没有可靠接口 ✓ —— 摆了就是骗人 ✗）',
+		pcButtonTexts.some((text) => text.includes('连接')) === false && pcButtonTexts.length >= 11,
 		`按钮：${pcButtonTexts.join(' / ')}`)
-	check('面板上写明"连接 / 开关都要去系统设置里点" ✓（做不到就如实说 ✓）',
-		$('pcopen').textContent.includes('打开蓝牙设置') && $('pcopen').textContent.includes('系统设置'))
+	check('面板上写明「连接要去系统设置里点」✓（做不到的那一步如实说 ✓）',
+		$('pcopen').textContent.includes('打开蓝牙设置') && $('pcopen').textContent.includes('Windows 没有可靠的命令行接口'))
 
 	// ② 点键 → 发对 action ✓
 	pcRequests.length = 0

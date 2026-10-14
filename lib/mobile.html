@@ -1573,13 +1573,16 @@
 					<button class="pcbtn" id="pcNet">联网检查</button>
 					<button class="pcbtn" id="pcBatt">电量检查</button>
 					<button class="pcbtn" id="pcBtDevices">蓝牙设备</button>
+					<button class="pcbtn" id="pcBtOn">开蓝牙</button>
+					<button class="pcbtn" id="pcBtOff">关蓝牙</button>
 					<button class="pcbtn" id="pcBtSettings">打开蓝牙设置</button>
 				</div>
 				<div class="hint" id="pcMessage"></div>
 				<div id="pcBluetooth"></div>
-				<div class="hint">蓝牙这块**只做做到的事**：设备列表能看 ✓、设置页能打开 ✓。
-					「连接某台设备」和「开 / 关蓝牙」都要在系统设置里点一下 —— Windows 没有可靠的命令行接口，
-					所以这里**不摆**那两个键（摆了就是按了没反应 ✗）。</div>
+				<!-- 4.5.1：开 / 关蓝牙做回来了 ✓（发出去 + 读回真状态 ✓）；「连接某台设备」仍然做不到 ✓，所以只留说明 ✓。 -->
+				<div class="hint">开 / 关蓝牙这里可以直接点 ✓（做完读回来的是**真状态** ✓）。
+					「连接某台设备」这一步 Windows 没有可靠的命令行接口 —— 点「打开蓝牙设置」在电脑上点一下 ✓
+					（面板上不摆一个按了没反应的键 ✗）。</div>
 			</div>
 		</section>
 
@@ -10554,6 +10557,9 @@
 		rows.push(['☀️ 亮度', bright?.supported === false ? '这台机器没有可调的内置屏幕（台式机 / 只接外接屏）' : pcPercent(bright?.level)])
 		rows.push(['🔋 电量', batt?.supported === false ? '这台机器没有电池（台式机）' : pcPercent(batt?.percent) + (batt?.plugged === true ? '（接着电源）' : (typeof batt?.minutesLeft === 'number' ? '（还能用约 ' + Math.floor(batt.minutesLeft / 60) + ' 小时 ' + (batt.minutesLeft % 60) + ' 分）' : ''))])
 		rows.push(['🌐 联网', (net?.internet === true ? '外网通 ✓' : '外网不通 ✗') + (net !== undefined && net !== null && net.profiles.length > 0 ? ' · ' + net.profiles.map((row) => row.name).join(' / ') : '')])
+		// 4.5.1：蓝牙无线电状态也摆上来 ✓（读它只要约 1 秒 ✓ —— 慢的是那 45 条 PnP 设备列表 ✓）。
+		const radio = state.bluetooth?.radio
+		rows.push(['📶 蓝牙', radio === 'On' ? '开着 ✓' : radio === 'Off' ? '关着' : '读不到（这台机器可能没有蓝牙）'])
 		box.innerHTML = rows.map(([label, value]) =>
 			'<div class="pcrow"><span class="pcrowlabel">' + escapeHtml(label) + '</span><span>' + escapeHtml(String(value)) + '</span></div>').join('')
 		// 静音键的文案跟着真实状态走 ✓（不然"静音/取消静音"到底是哪个，用户只能猜 ✗）。
@@ -10602,6 +10608,10 @@
 			if (result.audio !== undefined && result.audio !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), audio: result.audio }
 			if (result.brightness !== undefined && result.brightness !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), brightness: result.brightness }
 			if (result.bluetooth !== undefined && result.bluetooth !== null) pcPanel.bluetooth = result.bluetooth
+			// 4.5.1：开 / 关蓝牙回来的是**真状态** ✓ —— 立刻反映到上面那一行 ✓。
+			if (result.radio !== undefined && result.radio !== null) {
+				pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), bluetooth: { radio: result.radio } }
+			}
 			if (result.network !== undefined && result.network !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), network: result.network }
 			if (result.battery !== undefined && result.battery !== null) pcPanel.state = { ...(pcPanel.state ?? { enabled: true }), battery: result.battery }
 			renderPc()
@@ -10629,6 +10639,8 @@
 	$('pcNet').addEventListener('click', () => { void pcAction('refresh') })
 	$('pcBatt').addEventListener('click', () => { void pcAction('refresh') })
 	$('pcBtDevices').addEventListener('click', () => { void pcAction('bluetoothDevices') })
+	$('pcBtOn').addEventListener('click', () => { void pcAction('bluetoothOn') })
+	$('pcBtOff').addEventListener('click', () => { void pcAction('bluetoothOff') })
 	$('pcBtSettings').addEventListener('click', () => { void pcAction('bluetoothSettings') })
 
 	$('sysBtn').addEventListener('click', () => { show($('sysopen')); void loadSystem() })
