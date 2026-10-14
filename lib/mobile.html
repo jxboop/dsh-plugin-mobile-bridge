@@ -948,6 +948,9 @@
 		<span id="dot"></span>
 		<span class="grow" id="heading">DSH 手机端</span>
 		<button class="iconbtn" id="help" title="怎么用（第一次连上时会自动讲一遍，这里随时能再看）">说明</button>
+		<!-- 4.1.0（用户 2026-10-14 亲口要的 ✓）：「顶部增加一个分享按钮，能分享当前版本的零基础安装文案」✓。
+		     文案由**服务端单点生成** ✓（版本号读 package.json 真值 ✓），里面**没有**任何密码/密钥/内网地址 ✓。 -->
+		<button class="iconbtn" id="shareApp" title="把「怎么装这个」发给别人（零基础安装文案 ✓；不含任何密码/密钥 ✓）">分享</button>
 		<button class="iconbtn" id="reload">刷新</button>
 		<button class="iconbtn" id="logout">退出</button>
 		<!-- 当前模型（2.6.0）：用户 2026-10-11「在网页顶端加一个当前模型的显示」。
@@ -1216,12 +1219,14 @@
 						<li><strong>🔍 搜一搜</strong> —— 搜<strong>这台电脑上</strong>的会话内容（<strong>不上云</strong>），点一条直接跳过去。机器上没开会话检索时，它会<strong>如实念出宿主那句话</strong>，不会假装"没搜到"。</li>
 						<li><strong>📅 这周学了什么</strong> —— 最近 7 天有活动的会话列一份；超过 60 条会写明"还有更多"，不让你以为就这些。</li>
 						<li><strong>📤 导出 / 分享</strong> —— 这份对话导成 Markdown 下载、复制全文，或走系统分享发微信。</li>
+						<li><strong>📤 分享（顶栏）</strong> —— 一键拿到**当前版本的零基础安装文案**（含三步装好 + 仓库地址 ✓），可以复制或走系统分享发给朋友 ✓；<strong>里面没有你的密码、密钥、内网地址</strong> ✓。<strong>4.1.0</strong> 起顶栏就有这个键 ✓。</li>
 						<li><strong>📋 剪贴板 / 截屏</strong> —— 看电脑剪贴板、把手机上的字发到电脑；📸 一键看电脑屏幕（<strong>要现输 PIN</strong>，锁屏时它会如实说"截不到"）。<strong>3.8.0</strong> 起这张纸上还多了两样：<strong>「最近放进去的」</strong>（你发到电脑剪贴板的文字留最近 20 条，<strong>只在这台手机上</strong> —— 点一条只<strong>放进输入框</strong>，不替你按发送 ✓；⚠️ <strong>从电脑读回来的不进历史</strong>：那可能是密码）与 <strong>🔤 取字</strong>（把这一屏交给电脑上的 agent 认字、存成一份<strong>可搜索的</strong>笔记 —— 桥自己不认字）。</li>
 						<li><strong>📊 电脑状态</strong> —— CPU / 内存 / 磁盘 / 网速、哪个进程占着端口、哪个 node 卡住（只有真的能结束的才给「结束」，而且<strong>不许杀 DSH 本体</strong>）；底部还有「最近批过什么」。<strong>3.9.0</strong> 起这张纸上还多了两样：<strong>💤 我睡了</strong>（一键锁屏 + 明早打开页面提醒你听最新一条 ✓ —— <strong>绝不一键关机</strong> ✗）与 <strong>🎬 专注模式</strong>（一键：网页通知静音 + 「专注中」徽章 + ⏱ 打点把一条带时间的标记发进会话 ✓；⚠️ 录音那一半没做 ✗ —— 网页在后台录音会被 iOS 挂起，做了也是"录到一半没了"）。<strong>4.0.0</strong> 起还有 <strong>🎬 录屏遥控</strong>：手机上开始 / 停止电脑录屏 ✓（走同一个 PIN 纸 ✓，最多 10 分钟<strong>自动停</strong> ✓ —— 不靠手机计时 ✓，手机断了也照样到点停；<strong>默认关</strong>，要用先在配置里加 <code>"screenRecord": true</code> ✓）。</li>
 						<li><strong>📅 定时任务</strong> —— 到点往这个会话发一句话（"每晚 23:00 整理今天的笔记"）；<strong>⏰ 工作流</strong>可以把"转写 → 出提纲 → 存笔记"这类步骤一行一步串起来跑一遍。</li>
 						<li><strong>🧩 面板</strong> —— 电脑上放一个目录 + <code>panel.json</code>，手机这里就多一个键（自带的便签、计时器就是例子）。</li>
 						<li><strong>🩺 一键自检</strong> —— 七条只读检查（桥在听、桌面端在听、开机自启、外网隧道、写权限、ffmpeg…），每条都带"怎么办"。</li>
 						<li><strong>🛡 安全审计</strong> —— 谁登录过、从哪来、有没有陌生设备；可以一键踢掉其它设备（要输 PIN）。</li>
+						<li><strong>🔓 解锁</strong> —— 在「📊 电脑状态」那张纸上：把电脑从锁屏/睡眠**唤醒到登录界面** ✓（<strong>密码仍要你自己按</strong> ✗ —— 安全桌面不收程序的输入 ✓）；要现输 PIN ✓，3 秒内只发一次 ✓。<strong>4.1.0</strong> 起这个入口真的通了 ✓。</li>
 						<li><strong>🔓 只看不发</strong> —— 出门看进度时一键锁住发送，不怕误触（再点一下解锁）。<strong>⌨</strong> 是键盘手感：Enter 直接发、↑ 取上一条、长按拖光标。</li>
 						<li><strong>🔗 只读链接</strong> —— 给别人（家人 / 另一台设备）临时看<strong>某一篇</strong>会话：<strong>默认关</strong>，生成要重输 PIN，随时可撤销。<strong>4.0.0</strong> 起还能勾 <strong>「一次性」</strong>：谁先打开谁看 ✓，<strong>看完就作废</strong> ✓（第二次打开会明确告诉你"别人用过了" ✓ —— 不是含糊的 404 ✓）。</li>
 					</ul>
@@ -1605,6 +1610,26 @@
 
 		<!-- 剪贴板 & 截屏（2.7.0 池子里的 ★4）：电脑截图 → 手机立刻看到；手机复制 → 进电脑剪贴板。
 		     文字/命令都走 base64+stdio（不碰代码页、也不会被当代码执行 ✓），截图用完即删 ✓。 -->
+		<!-- 4.1.0「分享安装」：一张纸三件事 —— 看文案 ✓、复制 ✓、系统分享 ✓（不支持就如实说只复制 ✓）。 -->
+		<section class="sheet" id="installopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="installBack">← 返回</button>
+				<span class="title">分享安装</span>
+				<span class="spacer"></span>
+				<button class="iconbtn" id="installRefresh">重新取</button>
+			</div>
+			<div class="scroll pad">
+				<div class="hint" id="installHint">正在取文案…</div>
+				<textarea class="plain" id="installText" rows="14" readonly placeholder="（取不到就点右上角「重新取」）"></textarea>
+				<div class="actions">
+					<button class="go" id="installCopy">复制全文</button>
+					<button id="installShare">系统分享…</button>
+				</div>
+				<div class="hint">这份文案是**给别人看的** ✓（怎么从零装起来 ✓）—— 里面**没有**你的密码、密钥、内网地址 ✓，
+					可以放心转发 ✓。它是一份**说明**，不是安装器 ✗（装还得在你朋友自己电脑上做 ✓）。</div>
+			</div>
+		</section>
+
 		<section class="sheet" id="clipopen" data-display="flex" style="display:none">
 			<div class="sheetbar">
 				<button class="iconbtn" id="clipBack">← 返回</button>
@@ -9703,6 +9728,54 @@
 		})()
 	}
 
+	/* ---------------------------------------------------- 4.1.0「分享安装」 */
+	async function loadInstall() {
+		setDelText('installHint', '正在取文案…')
+		try {
+			const body = await api('api/install')
+			const box = $('installText')
+			if (box !== null) box.value = String(body.text ?? '')
+			setDelText('installHint', '这是 v' + String(body.version ?? '?') + ' 的零基础安装文案 ✓ —— 复制或系统分享都行 ✓。')
+		} catch (error) {
+			// ⚠️ 复查第 95 轮 P2：**失败时要把框清空** ✗ —— 否则换版本后取失败 ✓，框里留着**旧版本**的
+			// 安装说明 ✓，用户点「复制全文」发出去的就是过期的 ✓（比不说更坏 ✗）。
+			const box = $('installText')
+			if (box !== null) box.value = ''
+			setDelText('installHint', '取不到：' + error.message + ' —— 框已经清空了 ✓（不留旧版本的文案 ✗）')
+		}
+	}
+
+	async function copyInstall() {
+		const value = String($('installText')?.value ?? '')
+		if (value === '') { toast('还没取到文案', 2200); return }
+		try {
+			await navigator.clipboard.writeText(value)
+			toast('复制好了 ✓ 粘到微信/短信里就能发', 3000)
+		} catch {
+			// 剪贴板 API 在 http / 老浏览器上会失败 ✓ —— **如实说**，并教一个一定能用的办法 ✗。
+			setDelText('installHint', '这个浏览器不给自动复制 ✓ —— 长按上面的框、全选、复制 ✓（一样能发）。')
+		}
+	}
+
+	async function shareInstall() {
+		const value = String($('installText')?.value ?? '')
+		if (value === '') { toast('还没取到文案', 2200); return }
+		if (typeof navigator.share !== 'function') {
+			// ⚠️ **如实说** ✗（不许装作分享成功 ✓）—— 并把能用的那条路说清 ✓。
+			setDelText('installHint', '这个浏览器不支持系统的分享面板 ✓ —— 用「复制全文」也一样：粘到微信里就能发 ✓。')
+			return
+		}
+		try {
+			await navigator.share({ title: '手机桥安装说明', text: value })
+		} catch { /* 用户自己取消的 ✓ —— 不报错、不假装 ✓ */ }
+	}
+
+	$('shareApp').addEventListener('click', () => { show($('installopen')); void loadInstall() })
+	$('installBack').addEventListener('click', () => hide($('installopen')))
+	$('installRefresh').addEventListener('click', () => { void loadInstall() })
+	$('installCopy').addEventListener('click', () => { void copyInstall() })
+	$('installShare').addEventListener('click', () => { void shareInstall() })
+
 	$('clipBtn').addEventListener('click', () => { show($('clipopen')); void loadClipboard(); renderClipHist() })
 	$('clipBack').addEventListener('click', () => hide($('clipopen')))
 	$('clipRefresh').addEventListener('click', () => { void loadClipboard() })
@@ -9853,6 +9926,16 @@
 		 */
 		html.push('<div class="actions"><button data-record-open="start">🎬 录屏开始…</button>'
 			+ '<button data-record-open="stop">⏹ 停止录屏</button></div>')
+		/*
+		 * 4.1.0「解锁入口重做」✓：**只加这一个入口** ✓（3.5.0 试了 5 种接法都栽了 ✓，
+		 * 四条纪律写在下面的委派处 ✓）。⚠️ 属性名**故意避开 data-unlock** ✗ ——
+		 * test/ui.mjs 里有一条断言专门盯着「data-unlock 不许再出现」✓（那是防死按钮的闸 ✓）。
+		 */
+		if (power.powerEnabled === true) {
+			html.push('<div class="actions"><button data-pw-unlock="1">🔓 解锁（唤醒后仍要密码 ✓）</button></div>')
+			html.push('<div class="hint">解锁：把这台电脑从锁屏/睡眠唤醒到**登录界面** ✓ —— '
+				+ '<strong>不会替你输密码</strong> ✗（系统安全桌面不允许 ✓）；要现输 PIN ✓，且 3 秒内只发一次 ✓。</div>')
+		}
 		html.push('<div class="hint">录屏：最多 10 分钟**自动停** ✓（不靠手机计时 ✓ —— 手机断了也照样到点停 ✓）；'
 			+ '**默认关**（配置里 `screenRecord: true` ✓），要现输 PIN ✓；录好的文件留在电脑的 `~/.dsh/recordings/` ✓。</div>')
 		if (power.powerEnabled === true) {
@@ -9928,6 +10011,14 @@
 	function openPower(kind) {
 		powerPanel.kind = kind
 		/*
+		 * 4.1.0 修 ✓：**同时写一份到静态节点上** ✗ —— `powerPanel` 会被面板重渲染清掉 ✓
+		 *（DBG 实测：两次点击之间 `kind` 变成 '' ✓ → `confirmPower()` 一进门就 return ✓ → 连一条请求都没发 ✓）。
+		 * `#poweropen` 是静态节点 ✓，它上面的 dataset 不会被重渲染冲掉 ✓ —— 这就是 3.5.0 那条
+		 * 「别把状态寄托在会被重建的东西上」的第三次变体 ✓。
+		 */
+		const sheet = $('poweropen')
+		if (sheet !== null) sheet.dataset.kind = kind
+		/*
 		 * ⚠️ 3.5.0 的红队复查在这儿抓到过真 bug ✗（留着当下一版的教训 ✓）：这里**曾经**给
 		 * `#powerUnlock` 挂过一份委派 ✓，而模块尾部还给同一个按钮挂过另一份 ✓（两个守卫在**两个
 		 * 不同元素**上 → 都生效 ✓）→ 一次点击发**两条** POST ✓，第二条被 3 秒闸回成 429 ✓，
@@ -9938,8 +10029,10 @@
 		powerPanel.power = sysPanel.power
 		setDelText('powerTitle', kind === 'shutdown' ? '关机'
 			: kind === 'restart' ? '重启'
-				: kind === 'record-start' ? '开始录屏' : kind === 'record-stop' ? '停止录屏' : '执行')
-		setDelText('powerNote', kind.startsWith('record') === true
+				: kind === 'record-start' ? '开始录屏' : kind === 'record-stop' ? '停止录屏'
+					: kind === 'unlock' ? '解锁电脑' : '执行')
+		setDelText('powerNote', kind === 'unlock' ? '把电脑唤醒到**登录界面** ✓ —— 密码得你自己按 ✓（安全桌面不收程序的输入 ✗）。'
+			: kind.startsWith('record') === true
 			? '录屏要现输 PIN ✓ —— 录的是**整块屏幕** ✓；最多 10 分钟自动停 ✓（不靠手机计时 ✓）。'
 			: String(sysPanel.power?.note ?? ''))
 		setDelText('powerError', '')
@@ -9962,6 +10055,9 @@
 	 */
 
 	async function confirmPower() {
+		// 4.1.0 修 ✓：**以静态节点上的为准** ✗（`powerPanel.kind` 只当兜底 ✓ —— 它会被重渲染清掉 ✓）。
+		const sheetKind = $('poweropen')?.dataset?.kind ?? ''
+		if (sheetKind !== '') powerPanel.kind = sheetKind
 		if (powerPanel.kind === '') return
 		const button = $('powerGo')
 		const pin = String($('powerPin')?.value ?? '').trim()
@@ -9981,11 +10077,13 @@
 			}
 			powerPanel.armed = true
 			if (button !== null) {
-				button.textContent = isRecord
+				button.textContent = powerPanel.kind === 'unlock' ? '真的要唤醒？再点一次' : isRecord
 					? (powerPanel.kind === 'record-start' ? '真的要开始录屏？再点一次' : '真的要停止录屏？再点一次')
 					: '真的要' + (powerPanel.kind === 'shutdown' ? '关机' : '重启') + '？再点一次'
 			}
-			setDelText('powerError', isRecord
+			setDelText('powerError', powerPanel.kind === 'unlock'
+				? '再点一次就发一次唤醒 ✓（**不会**替你输密码 ✓，也不会在 3 秒内重复发 ✓）。'
+				: isRecord
 				? '再点一次就开始 / 停止录屏 ✓（录屏最多 10 分钟**自动停** ✓ —— **没有**"20 秒可以取消"那回事 ✗）。'
 				: '再点一次就执行（执行后有 20 秒可以取消）。')
 			return
@@ -9996,6 +10094,55 @@
 			 * 4.0.0 录屏 ✓：走 `/api/record` ✓（**不是** `/api/power` ✗ —— 拿 `record-start` 去 POST 电源那条路
 			 * 会落到"关机"的默认支上 ✓，那正是 3.5.0 解锁入口踩过的坑 ✓）。
 			 */
+			/*
+			 * 4.1.0 解锁 ✓：**自己发** ✗ 不走 `api()` —— 它见到 `needPin` 会弹「登录已过期」的门 ✓（我们没掉线 ✓）；
+			 * PIN 放**请求头** ✓（不进 URL ✗）；三种结论**各自说清** ✓。
+			 */
+			if (powerPanel.kind === 'unlock') {
+				const response = await fetch('api/power', {
+					method: 'POST',
+					cache: 'no-store',
+					headers: { 'content-type': 'application/json', 'x-dsh-pin': pin },
+					body: JSON.stringify({ action: 'unlock' }),
+				})
+				let payload = {}
+				try { payload = await response.json() } catch { payload = {} }
+				/*
+				 * ⚠️ 复查第 95 轮 P1：**「还锁着」不是「读不到」** ✗ —— 服务端对「还锁着」回的是
+				 * **200 + {ok:false, state:'locked', message:'还锁着 ✗…'}** ✓（`lib/power.js` 只在 unlocked 时才给 ok=true ✓），
+				 * 而原来只在 `ok===true` 时读 message ✓，其余全落兜底 ✓ → 真锁屏时用户看到的是
+				 * 「这次读不到结论：还锁着 ✗…」✗（把明明白白的结论说成读不到 ✓）。**先看 state** ✗。
+				 */
+				const unlockState = String(payload.state ?? '')
+				if (response.ok === true && payload.ok === true) {
+					const said = String(payload.message ?? '已经唤醒到登录界面了 ✓ —— 密码要你自己按 ✓')
+					setDelText('powerError', said)
+					// ⚠️ 再 **toast 一遍** ✓：纸上的那两格会被面板重渲染冲掉 ✗（实测过 ✓），toast 不会 ✓，
+					// 而且用户正在看着屏幕 ✓ —— 结论必须**留得住** ✓。
+					toast(said, 6000)
+				} else if (response.ok === true && unlockState === 'locked') {
+					// 已经照实说：**还锁着** ✓（要密码 ✓）—— 不许说成「读不到」 ✗。
+					const saidLocked = String(payload.message ?? '还锁着 ✗ —— 这台电脑的锁屏要密码 ✓（密码得你自己按 ✗）')
+					setDelText('powerError', saidLocked)
+					toast(saidLocked, 6000)
+				} else if (response.ok === true && unlockState === 'unknown') {
+					const saidUnknown = '这次**读不到**锁屏状态 ✓ —— 就是不知道现在是解锁还是锁着 ✗（这和「还锁着」是两件事 ✓）。'
+					setDelText('powerError', saidUnknown)
+					toast(saidUnknown, 6000)
+				} else if (response.status === 403 && String(payload.error ?? '').includes('默认关闭')) {
+					setDelText('powerError', String(payload.error))
+				} else if (response.status === 429) {
+					setDelText('powerError', '刚试过 —— 3 秒内只发一次 ✓（' + String(payload.error ?? '') + '）')
+				} else if (response.status === 403) {
+					setDelText('powerError', 'PIN 不正确 —— **没有唤醒任何东西** ✗')
+				} else {
+					// 「读不到状态」和「还锁着」是**两件事** ✓ —— 照实说，不许猜 ✗。
+					setDelText('powerError', '这次读不到结论：' + String(payload.error ?? ('HTTP ' + response.status)) + ' ✓')
+				}
+				powerPanel.armed = false
+				if (button !== null) { button.textContent = '继续'; button.disabled = false }
+				return
+			}
 			if (powerPanel.kind.startsWith('record') === true) {
 				const body = await api('api/record', {
 					method: 'POST',
@@ -10097,6 +10244,9 @@
 		// 3.9.0：专注模式 / 我睡了 / 打点 —— 都走**这一条委派** ✓（`#sysBody` 是稳定祖先 ✓，
 		// 面板重渲染不影响它 ✓ —— 这正是 3.5.0 那个入口栽过的地方 ✓，这次一开始就按规矩来 ✓）。
 		if (target.closest('[data-sleep]') !== null) { void runSleep(); return }
+		// 4.1.0 解锁：**也在这一处委派** ✓ —— 全文件只有这一份接法 ✗（3.5.0 的教训：两份 = 一次点击两条 POST ✓）。
+		// 目标节点用 closest **每次重查** ✓（面板会重渲染 ✓，存引用就会点了没反应 ✓）。
+		if (target.closest('[data-pw-unlock]') !== null) { openPower('unlock'); return }
 		// 4.0.0 录屏：复用 `#poweropen` 那张 PIN 纸 ✓（kind 用 `record-start` / `record-stop` ✓）。
 		const recordOpen = target.closest('[data-record-open]')
 		if (recordOpen !== null) { openPower('record-' + String(recordOpen.getAttribute('data-record-open'))); return }
@@ -10608,7 +10758,7 @@
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
 	// 24（3.9.0）：补**💤 我睡了 + 🎬 专注模式**（都在**已有的 📊 电脑状态纸**上 ✓ —— 仍然不加新工具键 ✓）；
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
-	const WELCOME_VERSION = '25'
+	const WELCOME_VERSION = '26'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网

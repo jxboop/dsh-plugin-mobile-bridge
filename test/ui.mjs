@@ -309,6 +309,9 @@ let powerFailOnce = false
 const recordRequests = []
 let recordFailOnce = false
 
+/** 4.1.0「分享安装」：取过几次文案 ✓（「点了没反应」这类 bug 全靠它抓 ✓）。 */
+let installFetches = 0
+
 /**
  * 3.5.x「解锁」：页面发给 `/api/power` 的 **POST** 都记在这儿 ✓ ——
  * 断言"点了「解锁电脑」到底发没发那条请求"✓ 就靠它 ✓（和 `voicePosts` 同款思路 ✓：
@@ -622,6 +625,11 @@ async function stubFetch(input, options = {}) {
 		// 1×1 的 PNG（内容不重要，页面只把它塞进 <img> ✓）
 		return { ok: true, status: 200, headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'image/png' : null) }, async json() { return {} } }
 	}
+	if (path === '/api/install') {
+		// 4.1.0「分享安装」：给一段**构造成有凭据的样子** ✗ —— 用来钉「页面不做二次加工、只显示服务端给的」✓。
+		installFetches += 1
+		return jsonResponse({ version: '9.9.9', text: '手机桥 v9.9.9 —— 零基础安装\n三步装好：\n  1) …\n仓库：https://github.com/jxboop/dsh-plugin-mobile-bridge' })
+	}
 	if (path === '/api/record') {
 		// 4.0.0「录屏遥控」：记下页面到底发了什么 ✓（**绝不真录** ✗ —— 这是桩 ✓）。
 		let sent = {}
@@ -640,10 +648,17 @@ async function stubFetch(input, options = {}) {
 		 */
 		if (options.method === 'POST') {
 			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
-			powerRequests.push(body)
+			// 4.1.0：把**请求头里的 PIN** 也记下来 ✓（解锁不带 body.pin ✗ —— 只记 body 就抓不到「没带 PIN」✓）。
+			powerRequests.push({ ...body, headerPin: String(options?.headers?.['x-dsh-pin'] ?? '') })
 			if (powerFailOnce === true) {
 				powerFailOnce = false
 				return jsonResponse({ error: '锁屏没成（测试里装的故障）' }, 500)
+			}
+			// 4.1.0 解锁 ✓：照服务端的真实口径回 ✓（唤醒到登录界面 ✓、密码要你自己按 ✓）。
+			if (body.action === 'unlock') {
+				// ⚠️ 复查第 95 轮：这句**故意独有** ✓ —— 断言「纸上有服务端那句话」才咬得住 ✓
+		//（原来只断言整张纸含「登录界面/自己按」✓，而那两句是 `openPower()` 静态写上去的 ✓ → 假绿 ✗）。
+		return jsonResponse({ ok: true, action: 'unlock', state: 'unlocked', message: 'UNIQ-UNLOCK-42 已唤醒到登录界面 ✓ —— 密码还是要你自己按 ✓' })
 			}
 			return jsonResponse(body.action === 'lock'
 				? { ok: true, action: 'lock', message: '已锁屏' }
@@ -4393,6 +4408,8 @@ await wait(40)
 	 * 不改它们的判据 ✗（那是别人的断言 ✓，动它就是拆别人的刹车 ✓），只把自己留下的状态收干净 ✓。
 	 */
 	powerRequests.splice(sleepBefore, 2)
+	click($('powerBack'))
+	await wait(60)
 
 	/*
 	 * 4.0.0「录屏遥控」✓：从 📊 纸进**已有的 PIN 纸** ✓ → 两次确认 → 发 `/api/record` ✓。
@@ -4455,6 +4472,85 @@ await wait(40)
 		powerRequests.length === lockBefore + 2
 		&& powerRequests.at(-1)?.action === 'shutdown' && powerRequests.at(-1)?.pin === '935881',
 		JSON.stringify(powerRequests.at(-1) ?? null))
+	/*
+	 * 4.1.0「解锁入口重做」✓ —— 四条纪律的机器判据 ✓：
+	 * 「只挂了一份接法」人眼看不出 ✗、但 DOM 数得出 ✓；「点了没反应 / 发了两条」只能靠计数器钉 ✓。
+	 * ⚠️ 计数**先快照、跑完还原** ✓（后面那几个关机用例是按 lockBefore 计数的 ✓ —— 直接清零会把它们弄红 ✗）。
+	 */
+	click($('sysBtn'))
+	await wait(140)
+	check('🔴 解锁入口在页面上**只出现一次** ✓（「只留一份接法」的机器判据 —— 两份 = 一次点击两条请求 ✗）',
+		$('sysBody').querySelectorAll('[data-pw-unlock]').length === 1
+		&& window.document.querySelectorAll('#powerUnlock').length === 0,
+		'入口数=' + $('sysBody').querySelectorAll('[data-pw-unlock]').length)
+	const powerSnapshotKeep = powerRequests.splice(0, powerRequests.length)
+	// ⚠️ 基线 ✗：`requests` 是**全套件**的总账 ✓，里面有前面用例的电源 POST ✓ —— 直接比绝对值会假红 ✓。
+	const powerPostsBefore = requests.filter((entry) => entry.path.startsWith('/api/power') && entry.options?.method === 'POST').length
+	click($('sysBody').querySelector('[data-pw-unlock]'))
+	await wait(140)
+	check('🔴 点「解锁」**只开纸、一个请求都不发** ✓（3.5.0 就是这儿一次点击发出两条 POST 的 ✗）',
+		window.getComputedStyle($('poweropen')).display !== 'none'
+		&& String($('powerTitle').textContent).includes('解锁')
+		&& requests.filter((entry) => entry.path.startsWith('/api/power') && entry.options?.method === 'POST').length === powerPostsBefore,
+		JSON.stringify({ 标题: String($('powerTitle').textContent), 新增电源POST: requests.filter((entry) => entry.path.startsWith('/api/power') && entry.options?.method === 'POST').length - powerPostsBefore }))
+	$('powerPin').value = '935881'
+	click($('powerGo'))
+	await wait(120)
+	check('解锁上膛说的是**解锁自己的话** ✓（不许借电源那句「执行后有 20 秒可以取消」✗）',
+		String($('powerError').textContent).includes('唤醒')
+		&& String($('powerError').textContent).includes('执行后有 20 秒可以取消') === false,
+		String($('powerError').textContent).slice(0, 40))
+	click($('powerGo'))
+	await wait(300)
+	// 同样用基线 ✓：这两次点击**只该多一条** ✓。
+	const unlockPosts = requests.filter((entry) => entry.path.startsWith('/api/power') && entry.options?.method === 'POST').slice(powerPostsBefore)
+	const unlockLast = unlockPosts.at(-1)
+	let unlockBody = {}
+	try { unlockBody = JSON.parse(String(unlockLast?.options?.body ?? '{}')) } catch { unlockBody = {} }
+	check('🔴 两次点击后**恰好一条** `action:unlock` ✓ 且 **PIN 在请求头**里 ✓（放 body 不算 ✗ —— DBG 已证明请求真发出去了 ✓，这条是把它钉住 ✓）',
+		unlockPosts.length === 1 && unlockBody.action === 'unlock'
+		&& String(unlockLast?.options?.headers?.['x-dsh-pin'] ?? '') === '935881',
+		JSON.stringify({ 条数: unlockPosts.length, body: unlockBody, 头里PIN: String(unlockLast?.options?.headers?.['x-dsh-pin'] ?? '') }))
+	// ⚠️ 读**整张纸** ✗ 不读某一格：`#powerError` 那一格当时被电源的提示占着 ✓
+	//（DBG 已证明请求发出且服务端 200 ✓ —— 这条要钉的是「页面上有没有如实把结论说出来」✓）。
+	// ⚠️ 改读 `#powerError` ✓ 并断言**服务端那句独有的话**出现了 ✓ —— 只读整张纸是假绿 ✗（复查实测过 ✓）。
+	// ⚠️ 读**整张纸**但要求**服务端那句独有的话** ✓：
+	//   · 只读整张纸**不行** ✗（`openPower()` 自己写的那两句会让它假绿 ✓ —— 复查实测过 ✓）；
+	//   · 只读 `#powerError` 也不行 ✗（那一格随后会被别的渲染覆盖 ✓ —— 这次实测到的 ✓）。
+	//   所以：**整张纸 + 独有串** ✓ —— 服务端那句话一旦没渲染出来，这条必红 ✓。
+	/*
+	 * ⚠️ 这里原先有一条「解锁的结论照实说」→ **撤掉了** ✗（复查第 95 轮点出它**假绿** ✓：
+	 * 它读的是纸上那两句**静态说明** ✓，改桩的 message 也照样绿 ✓；我随后改成读 `#powerError` ✗
+	 * （被面板重渲染冲掉 ✓）、又改成读 `#toast` 里的独有串 ✗（结论没落到 toast 上 ✓）都没做成 ✓。
+	 * 纪律是**假绿比缺测试更坏** ✗ → 先撤 ✓，缺口写进 CHANGELOG ✓。
+	 * 真正压阵的是上一条「**恰好一条 `action:unlock` 且 PIN 在请求头**」✓ —— 复查做过反向探针：
+	 * 把 kind 冲掉后它**当场红** ✓（实收 `{action:'shutdown'}` ✓），那条是真会咬的 ✓。
+	 */
+	powerRequests.push(...powerSnapshotKeep)
+	click($('powerBack'))
+	await wait(60)
+
+	/*
+	 * 4.1.0「顶部分享键」✓（用户 2026-10-14 亲口要的 ✓）：顶栏有键 ✓ → 取到文案原样填进去 ✓
+	 * → **不支持系统分享时如实说** ✗（不许装作分享成功 ✓）；jsdom 里没有 navigator.share ✓，正好钉这条 ✓。
+	 */
+	check('🔴 顶栏有「分享」键 ✓，而且它在 `<header>` 里（用户要的就是**顶部** ✓）',
+		$('shareApp') !== null && $('shareApp').closest('header') !== null,
+		String($('shareApp')?.textContent ?? '(没有)'))
+	installFetches = 0
+	click($('shareApp'))
+	await wait(180)
+	check('🔴 点「分享」：真的去取了文案 ✓，而且**原样**填进框里（页面不自己改 ✗）',
+		installFetches === 1 && String($('installText').value).includes('手机桥 v9.9.9')
+		&& String($('installHint').textContent).includes('9.9.9'),
+		JSON.stringify({ 取了几次: installFetches, 首行: String($('installText').value).split('\n')[0] }))
+	click($('installShare'))
+	await wait(140)
+	check('🔴 浏览器不支持系统分享时：**如实说**不支持 + 教用「复制全文」 ✓（不假装分享成功 ✗）',
+		String($('installHint').textContent).includes('不支持'),
+		String($('installHint').textContent).slice(0, 60))
+	click($('installBack'))
+	await wait(60)
 	click($('sysBack'))
 	await wait(60)
 }

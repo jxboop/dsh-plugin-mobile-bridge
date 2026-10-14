@@ -2419,6 +2419,30 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	 * 测试里绝不能启动录制 ✗（不然跑一次套件就在人家机器上留一段录屏 ✓）。
 	 * 所以这里钉四件"没做成就得说清楚"的事 ✓：默认关 ✓、没 PIN ✓、action 不认识 ✓、没在录时说没在录 ✓。
 	 */
+	/*
+	 * 4.1.0「分享安装」✓ —— 这段最要紧的一条是：**分享出去的文案里绝不能有凭据** ✗
+	 *（它是要转发给别人的 ✓：pathSecret / PIN / 本机地址出现一个就是事故 ✓）。
+	 */
+	const installAnon = await fetch(`${base}/api/install`)
+	check('🔴 `GET /api/install` 没登录 → 401 ✓（是「你自己拿去转发」的接口 ✓，不是公开抓取点 ✗）',
+		installAnon.status === 401, String(installAnon.status))
+	const install = await (await fetch(`${base}/api/install`, authed)).json()
+	const installText = String(install.text ?? '')
+	const installWhole = JSON.stringify(install)
+	check('🔴 **整个回包**里没有任何凭据 ✓：pathSecret / PIN / 本机地址 / 任何域名都不许有 ✗（只查 text 会漏 ✓ —— 复查点名）',
+		installWhole.includes(config.pathSecret) === false
+		&& installWhole.includes(config.pin) === false
+		&& installWhole.includes('127.0.0.1') === false
+		// 泛化 ✓：任何 `xxx.yyy` 域名都算（ts.net / ngrok / CF 隧道换了也漏不掉 ✓）—— 只放行 github.com ✓。
+		&& (installWhole.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []).every((hit) => hit.toLowerCase() === 'github.com'),
+		'长度=' + installWhole.length + ' 含路径密钥=' + installWhole.includes(config.pathSecret)
+		+ ' 出现的域名=' + JSON.stringify(installWhole.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []))
+	check('文案是**当前版本**的 ✓（版本号等于 package.json 的真值 ✓ —— 手写就会漂 ✗）且带仓库地址 ✓',
+		String(install.version ?? '') === pkgVersion
+		&& installText.includes('手机桥 v' + pkgVersion)
+		&& installText.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
+		&& installText.includes('三步装好'),
+		JSON.stringify({ 回包版本: install.version, 期望: pkgVersion }))
 	const recordOff = await fetch(`${base}/api/record`, {
 		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'start', pin: config.pin }),
 	})
