@@ -3694,6 +3694,28 @@ check('说明指向了下拉框或读取状态',
 
 	check('生图键在输入区上方那一排工具键里', tools.contains($('genBtn')))
 	check('权限键也在那一排里', tools.contains($('permBtn')))
+	/*
+	 * 🔴 4.5.2 布局整理（用户 2026-10-15：「整理一下手机桥页面布局，要美观简洁方便」✓）：
+	 * 那一排原来挤了 **16 个键** ✓（一半光秃秃的 emoji、一半文字 ✓，390px 上折成两三行把输入框往上顶 ✗）。
+	 * 现在只留**常用的 5 个** ✓ + 一个「更多」✓，其余搬进「更多」那张纸 ✓。
+	 * 这两条钉的就是"整理"本身 ✓：① 排上不再挤 ✓；② **一个功能都没丢** ✓（16 个 id 一个都不许少 ✓）。
+	 */
+	const ROW_IDS = ['pick', 'pickAny', 'genBtn', 'permBtn', 'moreBtn']
+	/*
+	 * ⚠️ 判据**不能数"一排几个按钮"** ✗ —— 那一排还会被插件面板注入键（🔍 / 📝，见 3.1.0 面板协议 ✓，
+	 * 其中有的还带 `data-panel`、有的不带 ✓），数量不受我们控制 ✓。
+	 * 要钉的真属性是：**我们自己那 12 个不常用的键不再挂在排上** ✓（搬进「更多」了 ✓），
+	 * 排上只留那 5 个 ✓ —— 这就等于"不再挤成一团" ✓。
+	 */
+	const MOVED_IDS = ['rawToggle', 'bgBtn', 'goalBtn', 'sysBtn', 'pcBtn', 'clipBtn', 'expBtn', 'schBtn', 'roBtn', 'checkBtn', 'secBtn', 'kbBtn']
+	check('🔴 工具排里**只剩那 5 个内置常用键** ✓（另外 12 个不再挂在这一排上 ✓ —— 这就是"不挤了" ✓）',
+		ROW_IDS.every((id) => $('toolKeys').querySelector('#' + id) !== null)
+		&& MOVED_IDS.every((id) => $('toolKeys').querySelector('#' + id) === null),
+		[...$('toolKeys').querySelectorAll(':scope > button')].map((node) => node.textContent.trim() || node.id).join(' / '))
+	const ALL_TOOL_IDS = ['pick', 'pickAny', 'rawToggle', 'genBtn', 'bgBtn', 'permBtn', 'goalBtn', 'sysBtn', 'pcBtn', 'clipBtn', 'expBtn', 'schBtn', 'roBtn', 'checkBtn', 'secBtn', 'kbBtn']
+	check('🔴 整理后**一个功能都没丢** ✓（16 个工具键的 id 一个都不少 ✓ —— 这是"整理"最容易犯的错 ✗）',
+		ALL_TOOL_IDS.every((id) => $(id) !== null),
+		ALL_TOOL_IDS.filter((id) => $(id) === null).join(' ') || '16 个全在 ✓')
 	check('工具键排和输入框排在同一个输入区里（没被挪到别的地方）',
 		$('composer').contains(tools) && $('composer').contains(compose))
 	check('两个面板都先收着', window.getComputedStyle(genPanel).display === 'none' && window.getComputedStyle(permPanel).display === 'none')
@@ -4677,6 +4699,49 @@ check('说明指向了下拉框或读取状态',
 		`pcopen=${window.getComputedStyle($('pcopen')).display} ask=${window.getComputedStyle($('ask')).display}`)
 	source.emit({ t: 'interaction-end', id: 'ask-pcopen' })
 	await wait(120)
+}
+
+/* --- 4.5.2：把不常用的键收进「更多」那张纸（布局整理）------------------------- */
+/*
+ * 用户 2026-10-15：「整理一下手机桥页面布局，要美观简洁方便」✓。
+ * 这一块钉四件事 ✓：① 「更多」能开、能返回 ✓；② 纸里那 12 个键**都在纸里** ✓（不是凭空消失 ✓）；
+ * ③ 每一行都带**文字名字**（emoji 单摆着没人认得出 ✗）；④ 纸**登记进抽屉清单** ✓
+ *（审批卡片来了要让它让位 ✓ —— 4.3.0 那条教训 ✓）。
+ */
+{
+	click(tabButton('task'))
+	await wait(40)
+	check('（前置）「更多」那张纸先收着 ✓', window.getComputedStyle($('moreopen')).display === 'none')
+	click($('moreBtn'))
+	await wait(120)
+	check('🔴 点「更多」打开那张纸 ✓（12 个不常用的键都在这儿 ✓）',
+		window.getComputedStyle($('moreopen')).display !== 'none'
+		&& ['rawToggle', 'bgBtn', 'goalBtn', 'sysBtn', 'pcBtn', 'clipBtn', 'expBtn', 'schBtn', 'roBtn', 'checkBtn', 'secBtn', 'kbBtn']
+			.every((id) => $('moreopen').querySelector('#' + id) !== null),
+		[...$('moreopen').querySelectorAll('button[id]')].map((node) => node.id).join(' '))
+	check('🔴 每一行都有**文字名字** ✓（不是光秃秃一个 emoji ✗）+ 一句说明 ✓',
+		$('moreopen').querySelectorAll('.moreitem b').length >= 11
+		&& $('moreopen').querySelectorAll('.morehint').length >= 11
+		&& $('moreopen').textContent.includes('电脑状态') && $('moreopen').textContent.includes('剪贴板'),
+		`名字 ${$('moreopen').querySelectorAll('.moreitem b').length} 个 / 说明 ${$('moreopen').querySelectorAll('.morehint').length} 条`)
+	check('纸里分了组 ✓（这条会话 / 电脑 / 界面与手感 / 安全与维护）',
+		['这条会话', '电脑', '界面与手感', '安全与维护'].every((group) => $('moreopen').textContent.includes(group)))
+	check('🔴 纸登记进抽屉清单了 ✓（审批卡片一来必须让位 —— 4.3.0 那条教训 ✓）',
+		(() => {
+			const before = window.getComputedStyle($('moreopen')).display
+			return before !== 'none'
+		})())
+	source.emit({ t: 'interaction', kind: 'approval', id: 'ask-more', payload: { toolName: 'pwsh', reason: '要跑一条命令' } })
+	await wait(120)
+	check('审批卡片来了：「更多」那张纸让位 ✓', window.getComputedStyle($('moreopen')).display === 'none' && window.getComputedStyle($('ask')).display !== 'none')
+	source.emit({ t: 'interaction-end', id: 'ask-more' })
+	await wait(100)
+	// 返回键 ✓
+	click($('moreBtn'))
+	await wait(100)
+	click($('moreBack'))
+	await wait(100)
+	check('「更多」里的返回键能关掉那张纸 ✓', window.getComputedStyle($('moreopen')).display === 'none')
 }
 
 /* --- 2.7.0 ★3/★4：状态盘 + 一键动作（"点两次"这条一定要钉住 ✓）------------- */

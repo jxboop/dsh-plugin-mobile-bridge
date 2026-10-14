@@ -549,11 +549,44 @@
 	#stop { background: var(--stop-bg); }
 	/* 工具键那一排：图片 / 文件 / 原图 / 生图 / 权限。共用一套底色和内边距 —— */
 	/* 各写各的，早晚会有一条对不齐。 */
-	#pick, #pickAny, #rawToggle, #genBtn, #bgBtn, #permBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
+	/*
+	 * ⚠️ 4.5.2：这条原来把 `#rawToggle / #bgBtn` 也算进"工具排按钮" ✓ ——
+	 * 它们已经搬进「更多」那张纸 ✓，而 **id 选择器的优先级会盖过 `.moreitem`** ✗
+	 * （那几行就会长得跟别的行不一样 ✓）。所以这里只留**还在工具排上**的 ✓，
+	 * 搬走的那些一律交给 `.moreitem` 统一样式 ✓。
+	 */
+	#pick, #pickAny, #genBtn, #permBtn, #moreBtn { background: var(--panel-2); border: 1px solid var(--field-line); border-radius: 12px; padding: 8px 12px; flex: none; font-size: 13px; box-shadow: var(--glass-edge); }
+	/*
+	 * 4.5.2：工具排只留 5 个常用键 ✓（`#moreBtn` 是新的「更多」✓）——
+	 * 尺寸统一成**够手指点**的 40px 高 ✓，而且**不许换行**（换行会把输入框往上顶 ✗）：
+	 * 一排 5 个在 390px 上正好放下 ✓（图片/文件/生图/更多 是文字 ✓、权限是 emoji ✓）。
+	 */
+	#toolKeys { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+	#toolKeys::-webkit-scrollbar { display: none; }
+	#toolKeys > button { min-height: 40px; padding: 0 12px; border-radius: 12px; font-size: 13px; flex: none; }
+	#moreBtn { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); font-weight: 600; }
+	/* 「更多」那张纸：分组标题 + 一行一个功能（图标 + 名字 + 一句话说明 ✓）。 */
+	.moregroup { font-size: 12px; font-weight: 700; color: var(--muted); margin: 12px 0 4px; }
+	.moregroup:first-child { margin-top: 2px; }
+	.moreitem {
+		display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+		padding: 11px 12px; margin-bottom: 6px; font-size: 14px; color: var(--text);
+		background: color-mix(in srgb, var(--bg) 45%, transparent);
+		border: 1px solid var(--field-line); border-radius: 12px;
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+	}
+	.moreitem:active { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+	.moreicon { flex: 0 0 22px; font-size: 17px; text-align: center; }
+	.moreitem b { flex: 0 0 auto; font-weight: 600; }
+	.morehint { flex: 1 1 auto; font-size: 12px; color: var(--muted); text-align: right; }
 	/* 背景键：和「生图」一样是次要动作，压成 muted，别和「图片/文件」抢眼。 */
 	#bgBtn { color: var(--muted); }
-	/* 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用） */
-	#rawToggle { color: var(--muted); }
+	/*
+	 * 原图开关：亮了就是不压缩、不转格式（发背景那种要画质的场景用）。
+	 * ⚠️ 4.5.2：它搬进「更多」那张纸了 ✓ —— **不再压暗整行** ✗（原来 `color: var(--muted)`
+	 * 会把"原图模式"这一行的名字一起压暗 ✓，而纸里每一行都该一样亮 ✓）；
+	 * "已开"仍然靠 `.on` 那个渐变一眼看出来 ✓。
+	 */
 	#rawToggle.on { background: linear-gradient(160deg, var(--accent-2), var(--accent)); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
 	/* 生图键：和「图片」「原图」并排，点开生图面板（英文提示词 → 交给会话里的 image_generate）。 */
 	#genBtn { color: var(--muted); }
@@ -1028,27 +1061,22 @@
 				     2026-10-12 用户：「底下功能栏太多了挡住视线」→ 这一排可以**收起** ✓
 				     （开关在下面那行的 ⋯ 上 ✓：收起后输入框与发送照旧在 ✓）。 -->
 				<div id="tools">
-					<div id="toolKeys">
+					<!--
+				⚠️ 4.5.2 布局整理（用户 2026-10-15：「整理一下手机桥页面布局，要美观简洁方便」）：
+				这一排原来**挤了 16 个键**（一半是光秃秃的 emoji、一半是文字，风格也不统一），
+				390px 手机上会折成两三行、把输入框往上顶 ✗。
+				现在只留**最常用的 5 个**（图片 / 文件 / 生图 / 权限 / 更多），其余 12 个搬进「更多」那张纸，
+				每个都带**文字标签 + 一句话说明**（emoji 单摆着没人认得出 ✓）。
+				保留的东西（别动 ✗）：① `#toolKeys` 这个**容器 id 不变** —— 插件面板键（`data-panel=`）由
+				`panels.js` 注进这里 ✓，测试也盯着它 ✓；② 「⋯ 收起工具键」照旧 ✓（4.5.2 又保留了一层退路 ✓）。
+			-->
+			<div id="toolKeys">
 					<button id="pick">图片</button>
 					<button id="pickAny" title="上传任意文件到电脑（原样传，agent 拿到路径）">文件</button>
-					<button id="rawToggle" title="发送时不压缩、不转格式（画质最高）">原图</button>
 					<button id="genBtn" title="用一句话生成一张图（会话里的 image_generate）">生图</button>
-					<button id="bgBtn" title="换手机界面的背景（图片 / 动图 / 视频）">背景</button>
 					<button id="permBtn" title="这个会话允许 agent 做到哪一步（改权限要重新输 PIN）">🔐</button>
-					<!-- 3.5.0：这条会话的**目标**（做什么 / 什么阶段 / 第几轮 ✓）——
-					     用户 2026-10-13：「我手机桥上看不到目标」✗。只读 ✓，改目标仍在电脑上做 ✓。 -->
-					<button id="goalBtn" title="这条会话的目标（DSH 目标：做什么 / 什么阶段 / 第几轮）">🎯</button>
-					<button id="sysBtn" title="电脑状态（CPU / 内存 / 磁盘 / 网速）+ 结束卡住的 node 进程">📊</button>
-					<!-- 4.5.0：手机上控制电脑（用户 2026-10-14 点名要的七件事 ✓）—— 默认关 ✓，见 pcControl。 -->
-					<button id="pcBtn" title="控制电脑：静音 / 音量 / 亮度 / 联网检查 / 电量检查 / 蓝牙设备与开关">🖥</button>
-					<button id="clipBtn" title="电脑剪贴板（看 / 发）与截屏（电脑屏幕 → 手机）">📋</button>
-					<button id="expBtn" title="把这份对话导出成 Markdown（下载 / 复制全文 / 分享 → 发微信）">📤</button>
-					<button id="schBtn" title="定时任务：到点把一句话发进这个会话（每晚 23:00 这类）">📅</button>
-					<button id="roBtn" title="只看不发：出门看进度时一键锁住发送，不怕误触（再点一下解锁）">🔓</button>
-					<button id="checkBtn" title="一键自检：哪一环不对、以及"怎么办"（只读，不会启动任何东西）">🩺</button>
-					<button id="secBtn" title="安全审计：谁登录过、从哪来、有没有陌生设备；一键踢掉其它设备（要输 PIN）">🛡</button>
-					<button id="kbBtn" title="键盘手感：Enter 直接发送 / ↑ 取上一条已发消息 / 长按拖光标">⌨</button>
-					</div><!-- /#toolKeys：这一层才是"可收起的那排键" ✓ -->
+					<button id="moreBtn" title="更多功能：电脑状态 / 控制电脑 / 剪贴板 / 导出 / 定时 / 目标 / 安全审计 / 自检 / 原图 / 背景 / 键盘">更多</button>
+			</div><!-- /#toolKeys：这一层才是"可收起的那排键" ✓ -->
 		<!-- 只看不发（2.7.0 池子里的 ★7）：**防误触**，不是安全边界 ✗ —— 真安全靠 PIN + 令牌 ✓。 -->
 		<div id="roStrip" style="display:none;position:fixed;left:0;right:0;top:0;z-index:2147482000;background:rgba(178,120,20,.94);color:#fff;font:12px/1.7 ui-monospace,Menlo,monospace;text-align:center;padding:3px 8px">🔒 只看不发 —— 点右上角 🔓 才发得出去（刷新也保持 ✓）</div>
 		<!-- 离线发件箱（2.7.0 池子里的 ★8）：没网也能先写 ✓，有网自动发 ✓。点一下立刻重试 ✓。 -->
@@ -1545,6 +1573,40 @@
 				<button class="iconbtn" id="sysRefresh">刷新</button>
 			</div>
 			<div class="scroll pad" id="sysBody"></div>
+		</section>
+
+		<!--
+			4.5.2「更多」（用户 2026-10-15：「整理一下手机桥页面布局，要美观简洁方便」✓）：
+			把工具排上**不常用的 12 个键**收进这一张纸 ✓，按用途分四组 ✓，
+			每一行都是「图标 + 名字 + 一句话说明」✓ —— emoji 单摆着没人认得出 ✗。
+			⚠️ id 一个都没改 ✓：所有点击处理器、以及那 300 多条界面断言**照旧** ✓（这是整理，不是重构 ✗）。
+			⚠️ `#roBtn` 保持**纯文字** ✓ —— 它由 JS 整段改写自己的文字（🔒/🔓 ✓），里面塞标记会被抹掉 ✗。
+		-->
+		<section class="sheet" id="moreopen" data-display="flex" style="display:none">
+			<div class="sheetbar">
+				<button class="iconbtn" id="moreBack">← 返回</button>
+				<span class="title">更多</span>
+				<span class="spacer"></span>
+			</div>
+			<div class="scroll pad">
+				<div class="moregroup">这条会话</div>
+				<button class="moreitem" id="goalBtn"><span class="moreicon">🎯</span><b>目标</b><span class="morehint">这条会话在做什么、跑到第几轮</span></button>
+				<button class="moreitem" id="expBtn"><span class="moreicon">📤</span><b>导出</b><span class="morehint">把这段对话存成 Markdown</span></button>
+				<button class="moreitem" id="schBtn"><span class="moreicon">📅</span><b>定时</b><span class="morehint">到点把一句话发进这个会话</span></button>
+				<div class="moregroup">电脑</div>
+				<button class="moreitem" id="sysBtn"><span class="moreicon">📊</span><b>电脑状态</b><span class="morehint">CPU / 内存 / 磁盘 / 网速，一键结束卡死的 node</span></button>
+				<button class="moreitem" id="pcBtn"><span class="moreicon">🖥</span><b>控制电脑</b><span class="morehint">静音 / 音量 / 亮度 / 蓝牙 / 电量 / 联网</span></button>
+				<button class="moreitem" id="clipBtn"><span class="moreicon">📋</span><b>剪贴板与截屏</b><span class="morehint">电脑剪贴板互通；截屏发到手机</span></button>
+				<div class="moregroup">界面与手感</div>
+				<button class="moreitem" id="rawToggle"><span class="moreicon">🖼</span><b>原图模式</b><span class="morehint">发送时不压缩、不转格式（画质最高）</span></button>
+				<button class="moreitem" id="bgBtn"><span class="moreicon">🎨</span><b>背景</b><span class="morehint">换手机界面的背景（图片 / 动图 / 视频）</span></button>
+				<button class="moreitem" id="kbBtn"><span class="moreicon">⌨</span><b>键盘手感</b><span class="morehint">Enter 直接发送 / ↑ 取上一条 / 长按拖光标</span></button>
+				<div class="moregroup">安全与维护</div>
+				<button class="moreitem" id="secBtn"><span class="moreicon">🛡</span><b>安全审计</b><span class="morehint">谁登录过、有没有陌生设备；可踢掉其它设备</span></button>
+				<button class="moreitem" id="checkBtn"><span class="moreicon">🩺</span><b>一键自检</b><span class="morehint">哪一环不对、以及"怎么办"（只读）</span></button>
+				<button class="moreitem" id="roBtn">🔓 只看不发</button>
+				<div class="hint">「只看不发」是**防误触**，不是安全边界 ✓ —— 真安全靠 PIN + 令牌 ✓。</div>
+			</div>
 		</section>
 
 		<!-- 4.5.0「控制电脑」（用户 2026-10-14 点名要的七件事 ✓）：
@@ -2904,7 +2966,7 @@
 	 * （冷视角复查抓到 2.8.0 的 `secopen`、2.9.0 的 `backupopen` 都漏在这儿 ✗ —— 顺手补上 ✓）。
 	 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'sysopen', 'pcopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen', 'topsheet']) {
+		for (const id of ['sessopen', 'delopen', 'sysopen', 'pcopen', 'moreopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen', 'topsheet']) {
 			if (nodeShown($(id))) return $(id)
 		}
 		return null
@@ -10628,6 +10690,12 @@
 		}
 	}
 
+	/*
+	 * 4.5.2：「更多」那张纸 ✓ —— 收的都是**不常用**的键 ✓（常用 5 个留在工具排上 ✓）。
+	 * 返回键也顺便把工具排的收起状态留着 ✓（用户点开看一眼再回来，不该发现整排被折了 ✗）。
+	 */
+	$('moreBtn').addEventListener('click', () => show($('moreopen')))
+	$('moreBack').addEventListener('click', () => hide($('moreopen')))
 	$('pcBtn').addEventListener('click', () => { show($('pcopen')); void loadPc() })
 	$('pcBack').addEventListener('click', () => hide($('pcopen')))
 	$('pcRefresh').addEventListener('click', () => { pcPanel.state = null; void loadPc() })
