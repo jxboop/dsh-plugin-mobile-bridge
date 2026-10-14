@@ -313,6 +313,8 @@ let recordFailOnce = false
 let installFetches = 0
 /** 4.2.0：取过几次**网页版** ✓（钉「点了真去取」✓）。 */
 let installHtmlFetches = 0
+/** 4.2.0：让**下一次**取网页版失败 ✓（钉「取不到要明说」✓ —— 复查第 96 轮点名的那条缺口 ✓）。 */
+let installHtmlFailOnce = false
 
 /**
  * 4.1.0 复查：下一次 `GET /api/install` 让它失败 ✓（和 `powerFailOnce` / `recordFailOnce` 同一个思路 ✓）——
@@ -640,6 +642,12 @@ async function stubFetch(input, options = {}) {
 	 */
 	if (path.startsWith('/api/install') && path.includes('format=html')) {
 		installHtmlFetches += 1
+		// 4.2.0 收尾：让这条**也能失败** ✓ —— 否则「取不到就明说」那条分支从没被测过 ✗
+		//（复查第 96 轮点名过 ✓；桩永远回 200 就是"判据只测了一半" ✓）。
+		if (installHtmlFailOnce === true) {
+			installHtmlFailOnce = false
+			return jsonResponse({ error: '取不到（测试里装的故障）' }, 500)
+		}
 		return {
 			ok: true, status: 200,
 			headers: { get: (name) => (String(name).toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null) },
@@ -4619,6 +4627,14 @@ await wait(40)
 	check('🔴 不能直接分享文件时：**如实说不能** ✓ + 说清已下载、怎么发给同学 ✓（不假装分享成功 ✗）',
 		String($('installHint').textContent).includes('不能直接分享')
 		&& String($('installHint').textContent).includes('下载'),
+		String($('installHint').textContent).slice(0, 70))
+	// 🔴 复查第 96 轮点名的那条缺口 ✓：让桩回一次 500 ✓ —— 页面必须**明说取不到** ✓ 且**不静默** ✓。
+	installHtmlFailOnce = true
+	click($('installShareHtml'))
+	await wait(280)
+	check('🔴 网页版取不到时（桩回 500）：**明说没取到** ✓ + 提示文本版还能用 ✓（不静默、不假装成功 ✗）',
+		String($('installHint').textContent).includes('没取到')
+		&& String($('installHint').textContent).includes('文本版'),
 		String($('installHint').textContent).slice(0, 70))
 	click($('installBack'))
 	await wait(60)

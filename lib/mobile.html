@@ -1219,7 +1219,7 @@
 						<li><strong>🔍 搜一搜</strong> —— 搜<strong>这台电脑上</strong>的会话内容（<strong>不上云</strong>），点一条直接跳过去。机器上没开会话检索时，它会<strong>如实念出宿主那句话</strong>，不会假装"没搜到"。</li>
 						<li><strong>📅 这周学了什么</strong> —— 最近 7 天有活动的会话列一份；超过 60 条会写明"还有更多"，不让你以为就这些。</li>
 						<li><strong>📤 导出 / 分享</strong> —— 这份对话导成 Markdown 下载、复制全文，或走系统分享发微信。</li>
-						<li><strong>📤 分享（顶栏）</strong> —— 一键拿到**当前版本的零基础安装文案**（含三步装好 + 仓库地址 ✓），可以复制或走系统分享发给朋友 ✓；<strong>里面没有你的密码、密钥、内网地址</strong> ✓。<strong>4.1.0</strong> 起顶栏就有这个键 ✓。</li>
+						<li><strong>📤 分享（顶栏）</strong> —— 一键拿到**当前版本的零基础安装文案**（含三步装好 + 仓库地址 ✓），可以复制或走系统分享发给朋友 ✓；<strong>里面没有你的密码、密钥、内网地址</strong> ✓。<strong>4.1.0</strong> 起顶栏就有这个键 ✓。<strong>4.2.0</strong> 起还能给<strong>网页版</strong> ✓：一份<strong>自带排版</strong>的 <code>.html</code>（<strong>同学直接浏览器打开就能读</strong> ✓，<strong>不需要你电脑在线</strong> ✓）；手机上不能直接分享文件时会<strong>如实说</strong> ✓ 并把它<strong>下载</strong>下来 ✓。</li>
 						<li><strong>📋 剪贴板 / 截屏</strong> —— 看电脑剪贴板、把手机上的字发到电脑；📸 一键看电脑屏幕（<strong>要现输 PIN</strong>，锁屏时它会如实说"截不到"）。<strong>3.8.0</strong> 起这张纸上还多了两样：<strong>「最近放进去的」</strong>（你发到电脑剪贴板的文字留最近 20 条，<strong>只在这台手机上</strong> —— 点一条只<strong>放进输入框</strong>，不替你按发送 ✓；⚠️ <strong>从电脑读回来的不进历史</strong>：那可能是密码）与 <strong>🔤 取字</strong>（把这一屏交给电脑上的 agent 认字、存成一份<strong>可搜索的</strong>笔记 —— 桥自己不认字）。</li>
 						<li><strong>📊 电脑状态</strong> —— CPU / 内存 / 磁盘 / 网速、哪个进程占着端口、哪个 node 卡住（只有真的能结束的才给「结束」，而且<strong>不许杀 DSH 本体</strong>）；底部还有「最近批过什么」。<strong>3.9.0</strong> 起这张纸上还多了两样：<strong>💤 我睡了</strong>（一键锁屏 + 明早打开页面提醒你听最新一条 ✓ —— <strong>绝不一键关机</strong> ✗）与 <strong>🎬 专注模式</strong>（一键：网页通知静音 + 「专注中」徽章 + ⏱ 打点把一条带时间的标记发进会话 ✓；⚠️ 录音那一半没做 ✗ —— 网页在后台录音会被 iOS 挂起，做了也是"录到一半没了"）。<strong>4.0.0</strong> 起还有 <strong>🎬 录屏遥控</strong>：手机上开始 / 停止电脑录屏 ✓（走同一个 PIN 纸 ✓，最多 10 分钟<strong>自动停</strong> ✓ —— 不靠手机计时 ✓，手机断了也照样到点停；<strong>默认关</strong>，要用先在配置里加 <code>"screenRecord": true</code> ✓）。</li>
 						<li><strong>📅 定时任务</strong> —— 到点往这个会话发一句话（"每晚 23:00 整理今天的笔记"）；<strong>⏰ 工作流</strong>可以把"转写 → 出提纲 → 存笔记"这类步骤一行一步串起来跑一遍。</li>
@@ -10806,7 +10806,7 @@
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
 	// 24（3.9.0）：补**💤 我睡了 + 🎬 专注模式**（都在**已有的 📊 电脑状态纸**上 ✓ —— 仍然不加新工具键 ✓）；
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
-	const WELCOME_VERSION = '27'
+	const WELCOME_VERSION = '28'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
