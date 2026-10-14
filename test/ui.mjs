@@ -87,6 +87,19 @@ const html = htmlSource
 	.replaceAll('__DSH_BRIDGE_VERSION__', FIXTURE_VERSION)
 	.replaceAll('__DSH_WHATSNEW__', FIXTURE_WHATSNEW)
 	.replaceAll('__DSH_THEMES__', JSON.stringify([['🎤 录音与转文字', '从找文件变成网页里直接录（1.5.0）'], ['📱 手机界面', '左右滑换页（1.7.0）']]))
+	/*
+	 * 4.4.0：按"代"的总结 + 5.0 预告 ✓（服务端注入的两块数据 ✓）—— 测试也得替 ✓，
+	 * 不然测的就是"标记漏在页面上" ✗。
+	 */
+	.replaceAll('__DSH_ERAS__', JSON.stringify([['0.1 → 1.0', '（四十多版）能看进度、能回话、能批操作'], ['1.0 → 2.0', '复制键 + 任意文件、网页录音、左右滑换页']]))
+	.replaceAll('__DSH_NEXTUP__', JSON.stringify({
+		version: '5.0.0',
+		title: '开放平台',
+		lead: '从一个插件，长成"个人 AI 操作系统的入口"。',
+		items: ['开放标准协议', '第三方硬件与服务接入'],
+		between: '中间那几代是方向，不是承诺。',
+		note: '⚠️ 这是愿景，不是排期。',
+	}))
 
 /**
  * 页面真实所在的地址：**藏在密钥段后面**。
@@ -4341,8 +4354,13 @@ check('说明指向了下拉框或读取状态',
 	 * 默认只摆最近三版（别一屏糊满），底下那个按钮点开是**完整历史**（最早那一版也在）。
 	 */
 	const moreButton = () => $('wnList').querySelector('.wnmore')
-	// 注意：jsdom 的 textContent 连 display:none 的内容也算，所以"折起来了没有"必须查容器本身。
-	const restBox = () => $('wnList').lastElementChild
+	/*
+	 * 注意：jsdom 的 textContent 连 display:none 的内容也算，所以"折起来了没有"必须查容器本身。
+	 * ⚠️ 4.4.0：**按类名查** ✓（`wnrest`）—— 以前是 `lastElementChild` ✗（猜位置 ✓）：
+	 * 我在后面加「5.0 预告」那一块之后它就猜错了 ✗ → 两条断言为**错误的原因**红 ✓。
+	 * 留个兜底 ✓（老页面没有这个类时退回原来的猜法 ✓），但主判据是类名 ✓。
+	 */
+	const restBox = () => $('wnList').querySelector('.wnrest') ?? $('wnList').lastElementChild
 	/*
 	 * 按钮上的"共 N 版"要跟 fixture 的节数**对得上** ✓ —— 原来写死 `共 4 版` ✗：
 	 * 4.3.1 给 fixture 加了「1.0 之前」那一节（变 5 节 ✓）→ 这条当场红 ✓（**为错误的原因红** ✗）。
@@ -4373,6 +4391,28 @@ check('说明指向了下拉框或读取状态',
 	check('再点一下收起：按钮文字回来、最老那版重新折起来',
 		restBox().style.display === 'none' && moreButton().textContent.includes('展开全部更新'),
 		`${moreButton().textContent.slice(0, 24)} rest=${restBox().style.display}`)
+	/*
+	 * 🔴 4.4.0（用户 2026-10-14：「分别总结一下 0.1 到 1.0、1.0 到 2.0、2.0 到 3.0、3.0 到 4.0
+	 * 分别改变了什么并添加到说明，然后写到 5.0 版本的预告」✓）：两块新内容都要**真画在页面上** ✓ ——
+	 * 服务端注入的数据在网上 ✓，这里钉的是页面这一层 ✓。
+	 */
+	check('🔴 说明页有「一代一代看」那一块 ✓（按代总结：0.1→1.0 / 1.0→2.0 …）',
+		$('wnList').textContent.includes('一代一代看：每一代各改了什么')
+		&& $('wnList').textContent.includes('0.1 → 1.0') && $('wnList').textContent.includes('1.0 → 2.0'),
+		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(0, 120))
+	check('🔴 分代总结排在逐版清单**前面** ✓（先给主线，再给逐版）',
+		$('wnList').textContent.indexOf('一代一代看') < $('wnList').textContent.indexOf('逐版更新'))
+	check('🔴 说明页有「5.0 预告」那一块 ✓（版本 + 主题 + 几条愿景 + "愿景不是排期"的说明 ✓）',
+		$('wnList').textContent.includes('下一站：v5.0.0')
+		&& $('wnList').textContent.includes('开放平台')
+		&& $('wnList').textContent.includes('开放标准协议')
+		&& $('wnList').textContent.includes('愿景，不是排期'),
+		$('wnList').textContent.replace(/\s+/g, ' ').trim().slice(-120))
+	/*
+	 * ⚠️ 预告里**不许出现日期** ✗（它没排期 ✓）—— 数据里没有日期字段 ✓，这一条防的是"以后有人往里写日期" ✓。
+	 */
+	check('5.0 预告里不写日期（愿景 ≠ 排期 ✓）',
+		/20\d\d-\d\d-\d\d/.test($('wnList').textContent.slice($('wnList').textContent.indexOf('下一站：v5.0.0'))) === false)
 	// 注意：不能只查 `__DSH_` 前缀 —— 客户端守卫里那个标记是故意拆开拼的
 	// （'__DSH_' + 'PAGE_TAG__'），所以它在源码里必然含这个前缀。要查的是**完整标记**。
 	/*
@@ -4395,6 +4435,9 @@ check('说明指向了下拉框或读取状态',
 		window.document.documentElement.outerHTML.includes('__DSH_PAGE_TAG__') === false
 		&& window.document.documentElement.outerHTML.includes('__DSH_BRIDGE_VERSION__') === false
 		&& window.document.documentElement.outerHTML.includes('__DSH_WHATSNEW__') === false
+		// 4.4.0：新加的两个注入标记同样一枚都不许漏在页面上 ✓（漏了就是把模板摆给用户看 ✗）。
+		&& window.document.documentElement.outerHTML.includes('__DSH_ERAS__') === false
+		&& window.document.documentElement.outerHTML.includes('__DSH_NEXTUP__') === false
 		// 注入的 JSON 是"数据"，不能变成用户看到的文字（它躺在 <script type=application/json> 里）。
 		&& $('wnList').textContent.includes('{"version"') === false,
 		`pageTag=${window.document.documentElement.outerHTML.includes('__DSH_PAGE_TAG__')}`)

@@ -636,7 +636,40 @@ check('页面上的版本号 = package.json 里的版本（现读，不手抄）
 check('注入标记一处都没漏（replaceAll 而不是 replace）',
 	pageHtml.includes('__DSH_PAGE_TAG__') === false
 	&& pageHtml.includes('__DSH_BRIDGE_VERSION__') === false
-	&& pageHtml.includes('__DSH_WHATSNEW__') === false)
+	&& pageHtml.includes('__DSH_WHATSNEW__') === false
+	// 4.4.0：新加的「分代总结」「5.0 预告」两个标记同样一处都不许漏 ✓。
+	&& pageHtml.includes('__DSH_ERAS__') === false
+	&& pageHtml.includes('__DSH_NEXTUP__') === false)
+/*
+ * 🔴 4.4.0（用户 2026-10-14：「分别总结一下 0.1 到 1.0、1.0 到 2.0、2.0 到 3.0、3.0 到 4.0
+ * 分别改变了什么并添加到说明，然后写到 5.0 版本的预告」✓）：这两块数据**都要真的发到手机上** ✓。
+ */
+{
+	const readBlock = (id) => {
+		const raw = new RegExp('<script type="application/json" id="' + id + '">([\\s\\S]*?)<\\/script>').exec(pageHtml)
+		try { return JSON.parse(raw?.[1] ?? 'null') } catch { return null }
+	}
+	const eras = readBlock('eras')
+	check('🔴 分代总结（0.1→1.0 / 1.0→2.0 / 2.0→3.0 / 3.0→4.0 …）真的发到了手机上 ✓',
+		Array.isArray(eras) && eras.length >= 4
+		&& ['0.1 → 1.0', '1.0 → 2.0', '2.0 → 3.0', '3.0 → 4.0'].every((label) => eras.some((row) => Array.isArray(row) && row[0] === label))
+		&& eras.every((row) => Array.isArray(row) && String(row[1] ?? '').length > 30),
+		(Array.isArray(eras) ? eras.map((row) => String(row?.[0])) : []).join(' / '))
+	const nextUp = readBlock('nextup')
+	check('🔴 5.0 预告真的发到了手机上 ✓（版本 + 主题 + 愿景条目 + "不是排期"的说明 ✓）',
+		nextUp !== null && typeof nextUp === 'object' && nextUp.version === '5.0.0'
+		&& typeof nextUp.title === 'string' && nextUp.title !== ''
+		&& Array.isArray(nextUp.items) && nextUp.items.length >= 3
+		&& String(nextUp.note ?? '').includes('愿景'),
+		JSON.stringify(nextUp ?? null).slice(0, 140))
+	/*
+	 * ⚠️ 预告里**不许出现日期** ✗ —— 它没排期 ✓。这条钉的是"以后有人往数据里写日期" ✓：
+	 * 项目里那份定稿就明写着"这一段是愿景，不是待办" ✓，写成有日期的清单就是在骗用户 ✗。
+	 */
+	check('⚠️ 5.0 预告里不写日期（愿景 ≠ 排期 ✓ —— 写日期就是承诺 ✗）',
+		JSON.stringify(nextUp ?? {}).search(/20\d\d-\d\d-\d\d/) < 0,
+		JSON.stringify(nextUp ?? {}).slice(0, 120))
+}
 {
 	const injected = /<script type="application\/json" id="whatsnew">([\s\S]*?)<\/script>/.exec(pageHtml)
 	let sections = []

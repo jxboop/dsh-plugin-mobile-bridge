@@ -3,7 +3,8 @@
  *
  *   node tools/token-report.mjs [--days 3] [--top 8] [--hours]
  *
- * 数据来源就是 DSH 自己的会话日志（`~/.dsh/sessions/<cwd>/<sessionId>/session.v3.jsonl.zstd`）：
+ * 数据来源就是 DSH 自己的会话日志（`~/.dsh/sessions/<cwd>/<sessionId>/session.v<格式版本>.jsonl.zstd`
+ * —— 版本号**不许写死** ✓：以磁盘上版本号最大的那份为准 ✓，发现逻辑与 `lib/export.js` **共用一份** ✓）：
  * 每条 `assistant/message` 都带 `usage`（inputTokens / cacheReadTokens / outputTokens /
  * reasoningTokens / totalTokens），全是本地文件，不联网、不花钱。
  *
@@ -15,10 +16,15 @@
  *   total = inputTokens（未命中缓存的输入）+ cacheReadTokens（命中缓存的输入）+ outputTokens
  *   缓存命中的输入单价通常只有未命中的零头，所以"贵"的部分主要是 inputTokens 与 outputTokens。
  */
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
-import { zstdDecompressSync } from 'node:zlib'
+import { readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+/*
+ * ⚠️ 4.3.1：日志发现逻辑**共用 `lib/export.js` 那一份** ✓ ——
+ * 原来这个文件自己 walk 一遍、把名字写死成 `session.v3.jsonl.zstd` ✗（v4 那 64 份全漏 ✓）。
+ * 两处各写一遍就是这条 bug 的根 ✓，所以现在只留一份 ✓。
+ */
+import { listSessionLogs, readSessionEvents } from '../lib/export.js'
 
 const argv = process.argv.slice(2)
 const argOf = (name, fallback) => {
@@ -46,25 +52,11 @@ function titleOf(sessionId) {
 	return sessionId.slice(0, 18)
 }
 
-/** 会话日志是"一帧一行"的 zstd（不是单一流），所以按 magic 切开逐帧解。 */
-function readEvents(file) {
-	const buf = readFileSync(file)
-	const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd])
-	const hits = []
-	let index = 0
-	while ((index = buf.indexOf(magic, index)) >= 0) { hits.push(index); index += 4 }
-	let text = ''
-	for (let i = 0; i < hits.length; i += 1) {
-		const slice = buf.slice(hits[i], i + 1 < hits.length ? hits[i + 1] : buf.length)
-		try { text += zstdDecompressSync(slice).toString('utf8') + '\n' } catch { /* 半帧跳过 */ }
-	}
-	const events = []
-	for (const line of text.split('\n')) {
-		if (line.trim() === '') continue
-		try { events.push(JSON.parse(line)) } catch { /* 坏行跳过 */ }
-	}
-	return events
-}
+/*
+ * ⚠️ 4.3.1：这里原来还有一份**逐帧解 zstd 的副本** ✗（和 `lib/export.js` 的 `readSessionEvents` 一模一样 ✓）。
+ * 一起删掉 ✓、换成共用那份 ✓ —— 同一条 bug 的教训：**两处各写一遍，早晚一处漂** ✓。
+ */
+const readEvents = readSessionEvents
 
 const localDay = (ms) => {
 	const date = new Date(ms)
@@ -80,53 +72,54 @@ const perHourToday = new Map()
 const today = localDay(Date.now())
 let scanned = 0
 
-const walk = (dir) => {
-	let entries = []
-	try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
-	for (const entry of entries) {
-		const full = join(dir, entry.name)
-		if (entry.isDirectory()) { walk(full); continue }
-		if (entry.name !== 'session.v3.jsonl.zstd') continue
-		scanned += 1
-		const sessionId = full.split(/[\\/]/).slice(-2)[0]
-		let events
-		try { events = readEvents(full) } catch { continue }
-		for (const event of events) {
-			if (event?.type !== 'assistant/message') continue
-			const usage = event?.data?.usage
-			const time = Number(event?.time ?? 0)
-			if (usage === undefined || !Number.isFinite(time) || time < cutoff) continue
-			const row = {
-				input: Number(usage.inputTokens ?? 0),
-				cache: Number(usage.cacheReadTokens ?? 0),
-				output: Number(usage.outputTokens ?? 0),
-				reasoning: Number(usage.reasoningTokens ?? 0),
-				total: Number(usage.totalTokens ?? 0),
-			}
-			const bucket = perSession.get(sessionId) ?? { sessionId, calls: 0, input: 0, cache: 0, output: 0, reasoning: 0, total: 0, last: 0 }
-			bucket.calls += 1
-			bucket.input += row.input; bucket.cache += row.cache; bucket.output += row.output
-			bucket.reasoning += row.reasoning; bucket.total += row.total
-			bucket.last = Math.max(bucket.last, time)
-			perSession.set(sessionId, bucket)
+/*
+ * ⚠️ 4.3.1 修了一个**静默漏账**的真 bug ✓（另一个会话只读复查报的 ✓）：
+ * 这里原来写死 `entry.name !== 'session.v3.jsonl.zstd'` ✗ —— 而 DSH 的日志名带**格式版本号** ✓，
+ * 本机实测 v3 **61 份** / v4 **64 份** ✓ → **v4 那 64 份一条都没算** ✗（按天只列到 10-09 ✓，
+ * 而且不报错、不提示 ✓ —— 用户看到的是"最近几天的账不见了" ✓）。
+ * 现在改成**共用 `lib/export.js` 的那一份发现逻辑** ✓（`listSessionLogs` ✓）——
+ * 正则只有一处 ✓，谁也不许再写死版本号 ✗；每个会话只取版本号最大的那一份 ✓。
+ */
+const logs = listSessionLogs(sessionsRoot)
+for (const log of logs) {
+	scanned += 1
+	const sessionId = log.sessionId
+	let events
+	try { events = readEvents(log.full) } catch { continue }
+	for (const event of events) {
+		if (event?.type !== 'assistant/message') continue
+		const usage = event?.data?.usage
+		const time = Number(event?.time ?? 0)
+		if (usage === undefined || !Number.isFinite(time) || time < cutoff) continue
+		const row = {
+			input: Number(usage.inputTokens ?? 0),
+			cache: Number(usage.cacheReadTokens ?? 0),
+			output: Number(usage.outputTokens ?? 0),
+			reasoning: Number(usage.reasoningTokens ?? 0),
+			total: Number(usage.totalTokens ?? 0),
+		}
+		const bucket = perSession.get(sessionId) ?? { sessionId, calls: 0, input: 0, cache: 0, output: 0, reasoning: 0, total: 0, last: 0 }
+		bucket.calls += 1
+		bucket.input += row.input; bucket.cache += row.cache; bucket.output += row.output
+		bucket.reasoning += row.reasoning; bucket.total += row.total
+		bucket.last = Math.max(bucket.last, time)
+		perSession.set(sessionId, bucket)
 
-			const day = localDay(time)
-			const dayBucket = perDay.get(day) ?? { input: 0, cache: 0, output: 0, total: 0, calls: 0 }
-			dayBucket.input += row.input; dayBucket.cache += row.cache; dayBucket.output += row.output
-			dayBucket.total += row.total; dayBucket.calls += 1
-			perDay.set(day, dayBucket)
+		const day = localDay(time)
+		const dayBucket = perDay.get(day) ?? { input: 0, cache: 0, output: 0, total: 0, calls: 0 }
+		dayBucket.input += row.input; dayBucket.cache += row.cache; dayBucket.output += row.output
+		dayBucket.total += row.total; dayBucket.calls += 1
+		perDay.set(day, dayBucket)
 
-			if (day === today) {
-				const hour = localHour(time)
-				const hourBucket = perHourToday.get(hour) ?? { total: 0, output: 0, calls: 0 }
-				hourBucket.total += row.total; hourBucket.output += row.output; hourBucket.calls += 1
-				perHourToday.set(hour, hourBucket)
-			}
+		if (day === today) {
+			const hour = localHour(time)
+			const hourBucket = perHourToday.get(hour) ?? { total: 0, output: 0, calls: 0 }
+			hourBucket.total += row.total; hourBucket.output += row.output; hourBucket.calls += 1
+			perHourToday.set(hour, hourBucket)
 		}
 	}
 }
 if (!existsSync(sessionsRoot)) { console.error('找不到会话目录: ' + sessionsRoot); process.exit(1) }
-walk(sessionsRoot)
 
 console.log(`扫描 ${scanned} 份会话日志（最近 ${days} 天，DSH_HOME=${dshHome}）`)
 console.log('')

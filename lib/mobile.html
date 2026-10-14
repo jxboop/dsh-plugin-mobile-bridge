@@ -819,6 +819,20 @@
 	.wnsumhead { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
 	.wnsumrow { font-size: 13px; line-height: 1.62; color: var(--muted); margin-bottom: 5px; }
 	.wnsumlabel { color: var(--text); font-weight: 600; margin-right: 6px; }
+	/* 4.4.0：按"代"的总结（和主题汇总同一套版式，但分成独立一块，别让人以为是一份东西）。 */
+	.wneras {
+		border: 1px solid var(--field-line); border-radius: 12px; padding: 9px 11px; margin-bottom: 10px;
+		background: color-mix(in srgb, var(--bg) 45%, transparent);
+		-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+	}
+	.wneras .wnsumlabel { display: inline-block; min-width: 74px; }
+	/* 4.4.0：5.0 预告 —— 用虚线边框和别的块区分开（"还没发生"的事不该长得像已发布的东西）。 */
+	.wnnext {
+		border: 1px dashed var(--field-line); border-radius: 12px; padding: 9px 11px; margin: 10px 0 4px;
+		background: color-mix(in srgb, var(--accent) 6%, transparent);
+	}
+	.wnnextlead { font-size: 13px; line-height: 1.6; color: var(--text); margin: 2px 0 4px; }
+	.wnnextnote { font-size: 12px; line-height: 1.6; color: var(--muted); margin-top: 6px; }
 	/* 「展开全部更新」：说明页里能看到 0.1 → 今 的完整历史，默认折起来不糊屏。 */
 	.wnmore {
 		margin: 4px 0 2px; padding: 7px 12px; font-size: 12px; font-weight: 600;
@@ -918,6 +932,10 @@
 <script type="application/json" id="whatsnew">__DSH_WHATSNEW__</script>
 <!-- 「0.1 → 今 按主题的汇总」：用户要求"要汇总，不要一版版罗列"。服务端手写维护（index.js 的 WHATS_NEW_THEMES）。 -->
 <script type="application/json" id="themes">__DSH_THEMES__</script>
+<!-- 4.4.0：按"代"的总结（0.1→1.0 / 1.0→2.0 / 2.0→3.0 / 3.0→4.0 …）+ 5.0 预告。
+     同样是服务端维护的数据（index.js 的 WHATS_NEW_ERAS / WHATS_NEW_NEXT），页面只负责画。 -->
+<script type="application/json" id="eras">__DSH_ERAS__</script>
+<script type="application/json" id="nextup">__DSH_NEXTUP__</script>
 
 	<!-- 满屏浮层都放这儿（`#app` 的**兄弟** ✓）：这两屏出现时 `#app` 正是 hide 状态 ✓，
 	     嵌在 `#app` 里就永远看不见 ✗（3.0.0 复查顺出来的老毛病：`#offline` 冷启动时其实不显示 ✓）。 -->
@@ -11638,12 +11656,40 @@
 			}
 			host.appendChild(summary)
 		}
+		/*
+		 * 4.4.0（用户 2026-10-14：「分别总结一下 0.1 到 1.0、1.0 到 2.0、2.0 到 3.0、3.0 到 4.0
+		 * 分别改变了什么并添加到说明」✓）：主题汇总**管横向**（"录音怎么一路变好的"）✓，
+		 * 这里这段**管纵向**（"每一代的整体主线是什么"）✓ —— 两份数据都由服务端给 ✓，页面只画 ✓。
+		 */
+		let eras = []
+		try {
+			const parsed = JSON.parse($('eras')?.textContent ?? '[]')
+			if (Array.isArray(parsed)) eras = parsed
+		} catch { /* 没注入就不画这一段，别的照旧 */ }
+		if (eras.length > 0) {
+			const box = mk('div', 'wneras', '')
+			box.appendChild(mk('div', 'wnsumhead', '一代一代看：每一代各改了什么'))
+			for (const entry of eras) {
+				const [label, text] = Array.isArray(entry) ? entry : [String(entry), '']
+				const row = mk('div', 'wnsumrow', '')
+				row.appendChild(mk('span', 'wnsumlabel', String(label)))
+				row.appendChild(document.createTextNode(String(text)))
+				box.appendChild(row)
+			}
+			host.appendChild(box)
+		}
 		host.appendChild(mk('div', undefined, '逐版更新：'))
 		for (const section of sections.slice(0, RECENT)) renderSection(host, section)
 
 		// 还有更早的版本：折起来，想看全量的人自己点开（默认不糊屏）。
 		if (sections.length > RECENT) {
-			const rest = mk('div', undefined, '')
+			/*
+			 * ⚠️ 4.4.0：给它一个**类名** ✓（`wnrest`）—— 4.3.1 之前测试是拿
+			 * `$('wnList').lastElementChild` **猜位置** ✗ 的，我这一次在后面加了「5.0 预告」那一块 ✓
+			 * → 猜到的就不是它了 ✗ → 两条断言当场红 ✓（**为错误的原因红** ✗）。
+			 * 位置会变 ✓、类名不会 ✓（这也是这个项目一贯的规矩 ✓）。
+			 */
+			const rest = mk('div', 'wnrest', '')
 			rest.style.display = 'none'
 			for (const section of sections.slice(RECENT)) renderSection(rest, section)
 			const toggle = mk('button', 'wnmore', '展开全部更新（0.1 → v' + String(sections[0].version ?? '') + '，共 ' + sections.length + ' 版）')
@@ -11656,6 +11702,29 @@
 			})
 			host.appendChild(toggle)
 			host.appendChild(rest)
+		}
+		/*
+		 * 4.4.0：**下一站：5.0 预告** ✓（用户：「写到 5.0 版本的预告」✓）。
+		 * ⚠️ 口径照项目那份定稿 ✓：**愿景，不是排期** ✗ —— 所以这段话里**没有日期** ✓、
+		 * 也不写成待办 ✓（页面照抄服务端给的字 ✓，不在客户端另编 ✓）。
+		 */
+		let nextUp = null
+		try {
+			const parsed = JSON.parse($('nextup')?.textContent ?? 'null')
+			if (parsed !== null && typeof parsed === 'object') nextUp = parsed
+		} catch { /* 没注入就不画 */ }
+		if (nextUp !== null) {
+			const box = mk('div', 'wnnext', '')
+			box.appendChild(mk('div', 'wnsumhead', '下一站：v' + String(nextUp.version ?? '') + '「' + String(nextUp.title ?? '') + '」预告'))
+			if (nextUp.lead) box.appendChild(mk('div', 'wnnextlead', String(nextUp.lead)))
+			const list = document.createElement('ul')
+			for (const item of Array.isArray(nextUp.items) ? nextUp.items : []) {
+				list.appendChild(mk('li', undefined, String(item).replace(/\*\*/g, '')))
+			}
+			box.appendChild(list)
+			if (nextUp.between) box.appendChild(mk('div', 'wnnextnote', String(nextUp.between).replace(/\*\*/g, '')))
+			if (nextUp.note) box.appendChild(mk('div', 'wnnextnote', String(nextUp.note).replace(/\*\*/g, '')))
+			host.appendChild(box)
 		}
 	}
 	renderVersionInfo()
