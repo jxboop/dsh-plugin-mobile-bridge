@@ -2443,6 +2443,33 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		&& installText.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
 		&& installText.includes('三步装好'),
 		JSON.stringify({ 回包版本: install.version, 期望: pkgVersion }))
+	/*
+	 * 4.2.0「网页版分享」✓（用户要的「方便同学阅读」✓）：`?format=html` 给一份**单文件静态页** ✓。
+	 * 三条判据 ✓：是 HTML ✓、与文本版**同源** ✓、**整页无凭据** ✓。
+	 */
+	const installHtmlRes = await fetch(`${base}/api/install?format=html`, authed)
+	const installHtml = await installHtmlRes.text()
+	check('🔴 网页版：200 + `text/html` + 完整单文件页面 ✓（doctype + viewport + 内联样式 ✓ 且**不带脚本** ✗ —— 同学打开就能读 ✓）',
+		installHtmlRes.status === 200
+		&& String(installHtmlRes.headers.get('content-type') ?? '').includes('text/html')
+		&& installHtml.startsWith('<!doctype html>')
+		&& installHtml.includes('name="viewport"') && installHtml.includes('<style>')
+		&& installHtml.includes('<script') === false,
+		`HTTP ${installHtmlRes.status} ${installHtmlRes.headers.get('content-type')} ${installHtml.length} 字节`)
+	check('🔴 网页版与文本版**同源** ✓（同样的三步 + 仓库地址 + 同一个版本号 ✓ —— 两边各写一份必然漂 ✗）',
+		installHtml.includes('三步装好') && installHtml.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
+		// ⚠️ 复查第 96 轮：**子串级判据不算同源** ✗ —— 只查「三个关键词在不在」 ✓，
+		// 谁把其中一边的步骤改了、另一边不动，两边就**静默漂**而套件全绿 ✓。
+		// 加严：把网页版 `<li>` 里的每一步原文抠出来 ✓，**逐步**在文本版里找到 ✓（哪边漂都会红 ✓）。
+		&& (installHtml.match(/<li>([\s\S]*?)<\/li>/g) || []).map((row) => row.replace(/<[^>]+>/g, '').replace(/\*\*/g, '').trim())
+			.every((step) => step !== '' && installText.includes(step))
+		&& installHtml.includes('手机桥 v' + pkgVersion) && installHtml.includes('加到主屏幕'),
+		installHtml.includes('三步装好') + ' / ' + installHtml.includes('手机桥 v' + pkgVersion))
+	check('🔴 网页版**整个页面**里也没有任何凭据 ✓（pathSecret / PIN / 本机地址 / 除 github.com 外的域名统统不许有 ✗）',
+		installHtml.includes(config.pathSecret) === false && installHtml.includes(config.pin) === false
+		&& installHtml.includes('127.0.0.1') === false
+		&& (installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []).every((hit) => hit.toLowerCase() === 'github.com'),
+		'出现的域名=' + JSON.stringify(installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []))
 	const recordOff = await fetch(`${base}/api/record`, {
 		method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'start', pin: config.pin }),
 	})

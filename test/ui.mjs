@@ -311,6 +311,15 @@ let recordFailOnce = false
 
 /** 4.1.0「分享安装」：取过几次文案 ✓（「点了没反应」这类 bug 全靠它抓 ✓）。 */
 let installFetches = 0
+/** 4.2.0：取过几次**网页版** ✓（钉「点了真去取」✓）。 */
+let installHtmlFetches = 0
+
+/**
+ * 4.1.0 复查：下一次 `GET /api/install` 让它失败 ✓（和 `powerFailOnce` / `recordFailOnce` 同一个思路 ✓）——
+ * 桩原来永远 200 ✓，`loadInstall()` 的 **catch 分支**（`box.value = ''` + 「取不到：…」）**从没被碰过** ✗
+ * → 把清空那行删掉也照样全绿 ✗（假绿 ✓）。用完自动复位 ✓，不影响后面那次「重新取」✓。
+ */
+let installFailOnce = false
 
 /**
  * 3.5.x「解锁」：页面发给 `/api/power` 的 **POST** 都记在这儿 ✓ ——
@@ -625,9 +634,39 @@ async function stubFetch(input, options = {}) {
 		// 1×1 的 PNG（内容不重要，页面只把它塞进 <img> ✓）
 		return { ok: true, status: 200, headers: { get: (name) => (name.toLowerCase() === 'content-type' ? 'image/png' : null) }, async json() { return {} } }
 	}
+	/*
+	 * 4.2.0 顶层：网页版 ✓ —— ⚠️ 这里的 `path` **带着查询串** ✗（形如 `/api/install?format=html` ✓），
+	 * 所以必须**在** `path === '/api/install'` 那条之前判 ✓（我第一版把分支塞进里面 ✗ → 永远进不去 ✓ → 页面拿到 404 ✓）。
+	 */
+	if (path.startsWith('/api/install') && path.includes('format=html')) {
+		installHtmlFetches += 1
+		return {
+			ok: true, status: 200,
+			headers: { get: (name) => (String(name).toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null) },
+			async blob() { return new window.Blob(['<!doctype html><title>手机桥 v9.9.9 安装说明</title>'], { type: 'text/html' }) },
+			async text() { return '<!doctype html><title>手机桥 v9.9.9 安装说明</title>' },
+			async json() { return {} },
+		}
+	}
 	if (path === '/api/install') {
+		// 4.2.0：`?format=html` 走另一条 ✓（数一下页面到底有没有去取 ✓）。
+		if (String(options?.url ?? '').includes('format=html') === true) {
+			installHtmlFetches += 1
+			return {
+				ok: true, status: 200,
+				headers: { get: (name) => (String(name).toLowerCase() === 'content-type' ? 'text/html; charset=utf-8' : null) },
+				async blob() { return new window.Blob(['<!doctype html><title>手机桥 v9.9.9 安装说明</title>'], { type: 'text/html' }) },
+				async text() { return '<!doctype html><title>手机桥 v9.9.9 安装说明</title>' },
+				async json() { return {} },
+			}
+		}
 		// 4.1.0「分享安装」：给一段**构造成有凭据的样子** ✗ —— 用来钉「页面不做二次加工、只显示服务端给的」✓。
 		installFetches += 1
+		// 4.1.0 复查：一次性故障旋钮 ✓ —— 只让**这一次**失败 ✓（用完自动复位 ✓，不影响后面的「重新取」✓）。
+		if (installFailOnce === true) {
+			installFailOnce = false
+			return jsonResponse({ error: '取不到（测试里装的故障）' }, 500)
+		}
 		return jsonResponse({ version: '9.9.9', text: '手机桥 v9.9.9 —— 零基础安装\n三步装好：\n  1) …\n仓库：https://github.com/jxboop/dsh-plugin-mobile-bridge' })
 	}
 	if (path === '/api/record') {
@@ -4544,11 +4583,43 @@ await wait(40)
 		installFetches === 1 && String($('installText').value).includes('手机桥 v9.9.9')
 		&& String($('installHint').textContent).includes('9.9.9'),
 		JSON.stringify({ 取了几次: installFetches, 首行: String($('installText').value).split('\n')[0] }))
+	/*
+	 * 4.1.0 复查补的**失败分支** ✓（`loadInstall()` 的 catch ✓）：服务端取不到时，
+	 * 框**必须清空** ✗（留着旧版本文案 → 用户点「复制全文」发出去的是过期的 ✓，比不说更坏 ✗）
+	 * + 提示**必须如实说**取不到 ✓。加这条之前，把 `box.value = ''` 删掉也**照样全绿** ✗（假绿 ✓）。
+	 */
+	installFailOnce = true
+	click($('installRefresh'))
+	await wait(180)
+	check('🔴 取不到文案时：框**清空** ✓ 且提示**如实说**取不到 ✓（不许留着旧版本文案装没事 ✗）',
+		String($('installText').value) === '' && String($('installHint').textContent).includes('取不到'),
+		JSON.stringify({ 框里剩的: String($('installText').value).slice(0, 40), 提示: String($('installHint').textContent).slice(0, 60) }))
+	/*
+	 * ⚠️ **顺序**：下面那条断言读的就是 `installHint` ✓ —— 必须把正常文案**取回来**再往下走 ✓
+	 * （旋钮是一次性的 ✓，这次会走成功分支 ✓）—— 提示被留着的话它必红 ✗。
+	 */
+	click($('installRefresh'))
+	await wait(180)
 	click($('installShare'))
 	await wait(140)
 	check('🔴 浏览器不支持系统分享时：**如实说**不支持 + 教用「复制全文」 ✓（不假装分享成功 ✗）',
 		String($('installHint').textContent).includes('不支持'),
 		String($('installHint').textContent).slice(0, 60))
+	/*
+	 * 4.2.0「分享网页版」✓：点它必须**真去取** `?format=html` ✓；jsdom 里没有 `navigator.share` ✓
+	 * → 正好钉住降级那条：**如实说不能直接分享 + 已下载** ✗（不假装成功 ✓）。
+	 */
+	check('🔴 分享纸上有「分享网页版」键 ✓（同学拿 .html 直接打开就能读 ✓）',
+		$('installShareHtml') !== null, String($('installShareHtml')?.textContent ?? '(没有)'))
+	installHtmlFetches = 0
+	click($('installShareHtml'))
+	await wait(280)
+	check('🔴 点它**真去取了网页版** ✓（`?format=html` 一次 ✓ —— 只改文案不去取文件，是最容易犯的假实现 ✗）',
+		installHtmlFetches === 1, '取了几次=' + installHtmlFetches)
+	check('🔴 不能直接分享文件时：**如实说不能** ✓ + 说清已下载、怎么发给同学 ✓（不假装分享成功 ✗）',
+		String($('installHint').textContent).includes('不能直接分享')
+		&& String($('installHint').textContent).includes('下载'),
+		String($('installHint').textContent).slice(0, 70))
 	click($('installBack'))
 	await wait(60)
 	click($('sysBack'))

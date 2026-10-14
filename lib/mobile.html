@@ -1624,6 +1624,9 @@
 				<div class="actions">
 					<button class="go" id="installCopy">复制全文</button>
 					<button id="installShare">系统分享…</button>
+					<!-- 4.2.0（用户 2026-10-14：「分享按钮加一个网页版分享（方便同学阅读）」✓）：
+					     一份**单文件、自带样式**的安装页面 ✓ —— 同学拿到直接浏览器打开就能读 ✓，不需要你电脑在线 ✓。 -->
+					<button id="installShareHtml">分享网页版…</button>
 				</div>
 				<div class="hint">这份文案是**给别人看的** ✓（怎么从零装起来 ✓）—— 里面**没有**你的密码、密钥、内网地址 ✓，
 					可以放心转发 ✓。它是一份**说明**，不是安装器 ✗（装还得在你朋友自己电脑上做 ✓）。</div>
@@ -9770,11 +9773,56 @@
 		} catch { /* 用户自己取消的 ✓ —— 不报错、不假装 ✓ */ }
 	}
 
+	/*
+	 * 4.2.0「分享网页版」✓（用户 2026-10-14：「方便同学阅读」✓）：
+	 * 拿的是一份**单文件静态页面** ✓（服务端 `?format=html` ✓）→ 包成 `File` ✓ →
+	 * 与"分享文档"同一条路（`navigator.share({files})` ✓）。同学那边**不需要你电脑在线** ✓。
+	 * 降级**如实说** ✗（不装作分享成功 ✓）：不能分享文件 → 退到**下载**（`<a download>` ✓）并说清怎么发 ✓。
+	 */
+	async function shareInstallHtml() {
+		try {
+			setDelText('installHint', '正在取网页版…')
+			const response = await fetch('api/install?format=html')
+			if (response.ok !== true) throw new Error('HTTP ' + response.status)
+			const blob = await response.blob()
+			const name = '手机桥-v' + BRIDGE_VERSION + '-安装说明.html'
+			const url = URL.createObjectURL(blob)
+			const file = new File([blob], name, { type: 'text/html' })
+			if (typeof navigator.share === 'function' && typeof navigator.canShare === 'function'
+				&& navigator.canShare({ files: [file] }) === true) {
+				await navigator.share({ files: [file], title: '手机桥安装说明' })
+				setDelText('installHint', '网页版已经交给系统分享 ✓ —— 同学拿到这个 .html 直接浏览器打开就能读 ✓。')
+				setTimeout(() => { try { URL.revokeObjectURL(url) } catch { /* 忽略 */ } }, 60000)
+				return
+			}
+			/*
+			 * 退路 ✓（如实说 ✓）：先把文件放出来（`<a download>` ✓），再告诉用户怎么发。
+			 * ⚠️ 这里**不假装分享成功** ✗ —— 手机上（http 明文地址 / 老浏览器）拿不到系统分享很常见 ✓。
+			 */
+			const link = document.createElement('a')
+			link.href = url
+			link.download = name
+			document.body.appendChild(link)
+			link.click()
+			link.remove()
+			setTimeout(() => { try { URL.revokeObjectURL(url) } catch { /* 忽略 */ } }, 60000)
+			setDelText('installHint', '这个浏览器不能直接分享文件 ✓ —— 已经**下载**成 ' + name
+				+ ' ✓：在「文件」里发给同学（或发到自己微信再转）就行 ✓，他打开就是网页版 ✓。')
+		} catch (error) {
+			// ⚠️ 复查第 96 轮 P1：**用户把系统分享面板划掉 = AbortError** ✓ —— 那是「他自己取消」 ✗，
+			// 不是失败 ✓（文件其实已经取到了 ✓）。另两条分享路径（shareDoc / 文档面板）都写着这条守卫 ✓，
+			// 只有新这条漏了 ✓ —— 不补就会对着一个「取不到」的假报错 ✓（正好违反本版自己的纪律 ✗）。
+			if (error?.name === 'AbortError') return
+			setDelText('installHint', '网页版没取到：' + error.message + ' ✓（文本版还能用 ✓）')
+		}
+	}
+
 	$('shareApp').addEventListener('click', () => { show($('installopen')); void loadInstall() })
 	$('installBack').addEventListener('click', () => hide($('installopen')))
 	$('installRefresh').addEventListener('click', () => { void loadInstall() })
 	$('installCopy').addEventListener('click', () => { void copyInstall() })
 	$('installShare').addEventListener('click', () => { void shareInstall() })
+	$('installShareHtml').addEventListener('click', () => { void shareInstallHtml() })
 
 	$('clipBtn').addEventListener('click', () => { show($('clipopen')); void loadClipboard(); renderClipHist() })
 	$('clipBack').addEventListener('click', () => hide($('clipopen')))
@@ -10758,7 +10806,7 @@
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
 	// 24（3.9.0）：补**💤 我睡了 + 🎬 专注模式**（都在**已有的 📊 电脑状态纸**上 ✓ —— 仍然不加新工具键 ✓）；
 	// 服务端 `WELCOME_VERSION` 一起 +1 ✓。
-	const WELCOME_VERSION = '26'
+	const WELCOME_VERSION = '27'
 	// 本地标记：同一次打开里别再反复弹（localStorage 写不进去时的兜底）。
 	let welcomed = false
 	// 服务端标记：宿主按"来源地址"记着这台手机看过说明页。换地址（Funnel ↔ 局域网
