@@ -226,5 +226,43 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/GET \/api\/pc'\)\s*return\s+guard\(\)/.test(entrySource))
 }
 
+/*
+ * 9) **`lib/pccontrol.js` 里的 PowerShell 脚本块必须是纯 ASCII**（4.6.0 加 ✓）。
+ *
+ * 现场（2026-10-15，一天之内咬了四次 ✗）：那些脚本是当**命令行参数**传给 PowerShell 5.1 的 ✓，
+ * 中文进去会被按本地代码页解掉 ✗ —— **不会报语法错** ✓，只会**静默失灵** ✗
+ *（第一版把中文关键词写进 PS 正则 ✓ → 脚本跑不通还卡满超时 ✓、列表回空 ✓）。
+ * 所以拿一条断言把它钉住 ✓：脚本块里出现非 ASCII 就红 ✓。
+ * 提取方法：从 `const X = ` 后面那个反引号开始扫 ✓ —— 要**认 `\`` 转义** ✗
+ *（脚本里有 `IAsyncOperation\`1` 这种 PS 泛型名 ✓，认错了会把块切短 ✓）。
+ */
+{
+	const source = await readFile(join(ROOT, 'lib', 'pccontrol.js'), 'utf8')
+	const blocks = []
+	const marker = /const\s+[A-Z_]+\s*=\s*`/g
+	for (let m = marker.exec(source); m !== null; m = marker.exec(source)) {
+		let i = m.index + m[0].length
+		let out = ''
+		while (i < source.length) {
+			const ch = source[i]
+			if (ch === '\\') { out += source.slice(i, i + 2); i += 2; continue }
+			if (ch === '`') break
+			out += ch
+			i += 1
+		}
+		blocks.push(out)
+	}
+	check('（自检）从 lib/pccontrol.js 里抠出了 PowerShell 脚本块（别把这条写成永远通过）',
+		blocks.length >= 3, `${blocks.length} 块`)
+	const badLines = []
+	for (const block of blocks) {
+		for (const line of block.split('\n')) {
+			if (/[^\x00-\x7F]/.test(line)) badLines.push(line.trim().slice(0, 60))
+		}
+	}
+	check('🔴 PowerShell 脚本块里**一个非 ASCII 字符都没有** ✓（中文进去不会报错、只会静默失灵 ✗ —— 今天咬了四次 ✓）',
+		badLines.length === 0, badLines.slice(0, 3).join(' ｜ ') || `${blocks.length} 块全是 ASCII ✓`)
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

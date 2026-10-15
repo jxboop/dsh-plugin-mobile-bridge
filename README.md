@@ -167,7 +167,7 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 | `elevationMinutes` | 60 | 输一次 PIN 后，多久内可以"指挥 DSH 干活" |
 | `crashProbe` | false | **排查用，平时别开。** 设为 `true` 会把宿主的 uncaughtException / exit 事件写进 `~/.dsh/dsh-crash.log`（含每 30 秒一条内存心跳）。它跑在宿主进程里、会注册全局处理器并持续写盘，所以默认关闭。 |
 | `answerOnPhone` | false | 让**手机**回答 agent 的提问（`ask_user_question`）和工具审批。默认关：开着时"正在看这个会话的手机"会抢在桌面前面拿到提问，桌面要等 120 秒才轮到。没有手机在看这个会话时，无论开关如何都是桌面先拿到。 |
-| `pcControl` | **关** | 手机上控制电脑（4.5.0 / 4.5.1）：静音 / 音量 / 亮度 / 开-关蓝牙 / 看电量与联网 / 看蓝牙设备。默认关，**改完立刻生效、不用重启**。开着时"让电脑动手"的动作仍要 PIN 提权。⚠️ 亮度只能调**笔记本内置屏**（台式机 / 外接屏会如实说调不了）；蓝牙「连接某台设备」Windows 没有可靠命令行接口，所以面板里只有"打开蓝牙设置"（开关是可以的）。 |
+| `pcControl` | **关** | 手机上控制电脑（4.5.0 / 4.5.1）：静音 / 音量 / 亮度 / 开-关蓝牙 / 看电量与联网 / 看蓝牙设备。默认关，**改完立刻生效、不用重启**。开着时"让电脑动手"的动作仍要 PIN 提权。⚠️ 亮度只能调**笔记本内置屏**（台式机 / 外接屏会如实说调不了）；蓝牙设备列表走系统原生接口（约 0.8 秒、带连接状态）；「连接某台设备」底层接口实测一律被拒（rc=87），所以列表里点一台就是打开系统蓝牙设置。 |
 
 ### 为什么过一会儿又让我输 PIN？
 
@@ -422,7 +422,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1513 项**（package **22** · harness **557** · qr 12 · ui **791** · security 54 · crashprobe 17 ·
+**九个套件共 1516 项**（package **24** · harness **557** · qr 12 · ui **792** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。

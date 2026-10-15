@@ -1641,9 +1641,13 @@
 				</div>
 				<div class="hint" id="pcMessage"></div>
 				<div id="pcBluetooth"></div>
-				<!-- 4.5.1：开 / 关蓝牙做回来了 ✓（发出去 + 读回真状态 ✓）；「连接某台设备」仍然做不到 ✓，所以只留说明 ✓。 -->
+				<!-- 4.5.1：开 / 关蓝牙做回来了 ✓（发出去 + 读回真状态 ✓）；
+					 4.6.0：「连接某台设备」**底层试到底了** ✗ —— BluetoothSetServiceState(ENABLE) 一律 rc=87 ✓。
+					 所以设备列表每一行**点一下就到系统蓝牙设置** ✓（一下点到能动手的地方 ✓），
+					 不摆一个按了没反应的"连接"键 ✗。 -->
 				<div class="hint">开 / 关蓝牙这里可以直接点 ✓（做完读回来的是**真状态** ✓）。
-					「连接某台设备」这一步 Windows 没有可靠的命令行接口 —— 点「打开蓝牙设置」在电脑上点一下 ✓
+					设备列表里的每一行**点一下就到系统蓝牙设置** ✓ —— 「连接某台设备」这一步 Windows
+					没有可靠接口（底层接口在这台机器上实测一律被拒 ✗），所以在设置里点一下 ✓
 					（面板上不摆一个按了没反应的键 ✗）。</div>
 			</div>
 		</section>
@@ -10592,8 +10596,9 @@
 	 * ---------------------------------------------------- 4.5.0 控制电脑（用户点名的七件事）
 	 *
 	 * 面板打开时先读**快状态** ✓（音量 / 亮度 / 电量 / 联网 ✓，实测约 3~4 秒 ✓）；
-	 * 蓝牙**设备列表单独点** ✓ —— 那一步要十几秒（Windows 的 PnP 枚举慢 ✓），
-	 * 所以不塞进"打开面板"里让用户干等 ✗（按钮上写了"要十几秒" ✓）。
+	 * 蓝牙**设备列表单独点** ✓ —— 4.6.0 起换成了系统原生蓝牙 API ✓，**约 0.8 秒** ✓
+	 *（之前用 PnP 枚举要 12~16 秒 ✗）。仍然单独点 ✓：它比"快状态"慢一点 ✓，
+	 * 用户点它的时候也知道自己在等什么 ✓。
 	 */
 	const pcPanel = { busy: false, state: null, bluetooth: null }
 	const pcPercent = (value) => (typeof value === 'number' ? value + '%' : '—')
@@ -10637,8 +10642,19 @@
 			box.innerHTML = '<div class="hint">没读到已配对的蓝牙设备（也可能这台机器没有蓝牙）。</div>'
 			return
 		}
-		box.innerHTML = '<div class="hint">已配对的蓝牙设备 ' + data.devices.length + ' 台：</div>'
-			+ data.devices.map((row) => '<div class="pcrow"><span>' + escapeHtml(row.name) + '</span><span>' + (row.ok ? '在' : '不在线') + '</span></div>').join('')
+		/*
+		 * 4.6.0：每台设备一行 ✓，**带真实连接状态** ✓（原生 API 给的 `fConnected` ✓）。
+		 * ⚠️ 「连接」这个动作 Windows 没有可靠接口 ✓（底层试到底是 rc=87 ✓，见 lib/pccontrol.js ✓）——
+		 * 所以每一行**点一下 = 打开系统蓝牙设置** ✓（从"找到那台设备"到"能动手的地方"只要一下 ✓），
+		 * 而不是摆一个按了没反应的"连接"键 ✗。
+		 */
+		box.innerHTML = '<div class="hint">已配对 ' + data.devices.length + ' 台（点一台就到系统蓝牙设置里去连 ✓）：</div>'
+			+ data.devices.map((row) =>
+				'<button class="moreitem" data-bt="' + escapeHtml(row.name) + '">'
+				+ '<span class="moreicon">' + (row.connected === true ? '🔗' : '📶') + '</span>'
+				+ '<b>' + escapeHtml(row.name) + '</b>'
+				+ '<span class="morehint">' + (row.connected === true ? '已连接' : '未连接') + '</span>'
+				+ '</button>').join('')
 	}
 
 	async function loadPc() {
@@ -10707,6 +10723,16 @@
 	$('pcNet').addEventListener('click', () => { void pcAction('refresh') })
 	$('pcBatt').addEventListener('click', () => { void pcAction('refresh') })
 	$('pcBtDevices').addEventListener('click', () => { void pcAction('bluetoothDevices') })
+	/*
+	 * 4.6.0：设备列表里**点一台 = 打开系统蓝牙设置** ✓（每一行都是按钮 ✓，用事件委托接 ✓）。
+	 * 这是"连接"的**诚实替代** ✓ —— 底层那条路试到底了：`BluetoothSetServiceState(ENABLE)` 一律 rc=87 ✗
+	 *（详见 lib/pccontrol.js 顶部那段账 ✓）。所以给的是"一下点到能动手的地方" ✓，不是假键 ✗。
+	 */
+	$('pcBluetooth').addEventListener('click', (event) => {
+		const row = event.target?.closest?.('[data-bt]')
+		if (row === null || row === undefined) return
+		void pcAction('bluetoothSettings', { device: row.dataset.bt })
+	})
 	$('pcBtOn').addEventListener('click', () => { void pcAction('bluetoothOn') })
 	$('pcBtOff').addEventListener('click', () => { void pcAction('bluetoothOff') })
 	$('pcBtSettings').addEventListener('click', () => { void pcAction('bluetoothSettings') })

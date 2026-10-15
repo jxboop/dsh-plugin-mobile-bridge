@@ -609,7 +609,7 @@ async function stubFetch(input, options = {}) {
 	if (path === '/api/pc' && String(options?.method ?? 'GET').toUpperCase() === 'POST') {
 		const body = JSON.parse(String(options?.body ?? '{}'))
 		pcRequests.push(body)
-		if (body.action === 'bluetoothDevices') return jsonResponse({ ok: true, action: body.action, bluetooth: { devices: [{ name: '杰的AirPods', ok: true }, { name: 'WI-C200', ok: false }] } })
+		if (body.action === 'bluetoothDevices') return jsonResponse({ ok: true, action: body.action, bluetooth: { devices: [{ name: '杰的AirPods', connected: true }, { name: 'WI-C200', connected: false }] } })
 		if (body.action === 'mute' || body.action === 'unmute') return jsonResponse({ ok: true, action: body.action, audio: { volume: 37, muted: body.action === 'mute' } })
 		if (body.action === 'volumeUp' || body.action === 'volumeDown') return jsonResponse({ ok: true, action: body.action, audio: { volume: body.action === 'volumeUp' ? 42 : 32, muted: false } })
 		if (body.action === 'brightnessUp' || body.action === 'brightnessDown') return jsonResponse({ ok: true, action: body.action, brightness: { supported: true, level: body.action === 'brightnessUp' ? 90 : 70 } })
@@ -4642,7 +4642,7 @@ check('说明指向了下拉框或读取状态',
 		pcButtonTexts.some((text) => text.includes('连接')) === false && pcButtonTexts.length >= 11,
 		`按钮：${pcButtonTexts.join(' / ')}`)
 	check('面板上写明「连接要去系统设置里点」✓（做不到的那一步如实说 ✓）',
-		$('pcopen').textContent.includes('打开蓝牙设置') && $('pcopen').textContent.includes('Windows 没有可靠的命令行接口'))
+		$('pcopen').textContent.includes('打开蓝牙设置') && $('pcopen').textContent.includes('没有可靠接口'))
 
 	// ② 点键 → 发对 action ✓
 	pcRequests.length = 0
@@ -4658,9 +4658,20 @@ check('说明指向了下拉框或读取状态',
 	check('音量/亮度按键带上了步长（5 / 10 ✓ —— 不然一下调太狠 ✓）',
 		pcRequests[0]?.step === 5 && pcRequests[1]?.step === 10,
 		JSON.stringify(pcRequests.map((row) => row.step)))
-	check('蓝牙设备列表真画出来了（名字 + 在/不在线 ✓）',
-		$('pcBluetooth').textContent.includes('杰的AirPods') && $('pcBluetooth').textContent.includes('WI-C200'),
+	check('🔴 蓝牙设备列表画出来了 ✓ 而且带**真实连接状态** ✓（已连接 / 未连接 ✓ —— 原生 API 的 fConnected ✓）',
+		$('pcBluetooth').textContent.includes('杰的AirPods') && $('pcBluetooth').textContent.includes('WI-C200')
+		&& $('pcBluetooth').textContent.includes('已连接') && $('pcBluetooth').textContent.includes('未连接'),
 		$('pcBluetooth').textContent.replace(/\s+/g, ' ').slice(0, 60))
+	/*
+	 * 🔴 4.6.0：「连接」这一步 Windows 没有可靠接口 ✓（BluetoothSetServiceState(ENABLE) 真机实测 rc=87 ✓）——
+	 * 所以**列表里点一台 = 打开系统蓝牙设置** ✓（从找到设备到能动手的地方只要一下 ✓），不是摆假键 ✗。
+	 */
+	pcRequests.length = 0
+	click($('pcBluetooth').querySelector('[data-bt]'))
+	await wait(120)
+	check('🔴 设备列表里**点一台** → 发的是「打开蓝牙设置」✓（连接做不到，就给一下点到设置 ✓）',
+		pcRequests.length === 1 && pcRequests[0].action === 'bluetoothSettings' && String(pcRequests[0].device ?? '').length > 0,
+		JSON.stringify(pcRequests[0] ?? null))
 	check('调完音量/亮度后，状态行显示的是**返回的真实值** ✓（不是"已调低"这种糊话 ✓）',
 		$('pcState').textContent.includes('70%'), $('pcState').textContent.replace(/\s+/g, ' ').slice(0, 60))
 	click($('pcBack'))
