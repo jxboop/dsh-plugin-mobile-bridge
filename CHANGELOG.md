@@ -1,3 +1,47 @@
+## 4.10.0 — 2026-10-15
+
+**主题：新背景风格「夜行星」—— 带素材的预设（归档）** ✓
+（用户 2026-10-15：「你把这个背景归档到背景风格里面（新建一个背景风格）」✓）。
+
+### 为什么要分"两种预设" ✓
+
+- 原来的 `cyberpunk` 是**纯 CSS 画的** ✓（不要文件、不用下载 ✓）；
+- 用户要归档的这套**自带素材** ✓（他那支星球实况视频 ✓）→ 所以预设多了一种形态 ✓。
+
+### 两条底线（都写进代码注释了 ✓）
+
+1. **素材一个字节都不改** ✓ —— 归档就是**逐字节复制** ✓（`readFile` + `writeFile` ✓；用户对那支视频
+   说过「不要更改」✓）。归档完**逐个比 SHA-256** ✓：实测 `15d72128…` 与原件**完全一致** ✓。
+2. **素材永远不进插件、不进 Release** ✗ —— 那是用户自己的东西 ✓。归档只写到**他本机**的
+   `~/.dsh/mobile-bridge-presets/<名字>/` ✓；插件里只留"有这个风格、素材在哪个目录"这点**代码** ✓。
+
+### 实现（宿主侧三处 + 一条测试 ✓）
+
+- `BACKGROUND_PRESETS` 加 `planet` ✓，另立 `ARCHIVED_PRESETS = { planet: { label: 夜行星 } }` ✓；
+- `backgroundInfo()` ✓：带素材的预设**先走归档那一步** ✓，把归档素材**当成普通背景文件**报给页面 ✓
+  （`url` / `mediaType` / `bytes` / `still` **同形状** ✓ → 页面那套：缓存 key ✓、静止兜底 ✓、视频层 ✓、
+  亮度适配 ✓ —— **一行都不用改** ✓）；
+- `handleBackground()` ✓：认 `?preset=<名字>` ✓ → 从归档目录取 ✓。⚠️ 文件名一律来自**我们自己写的**
+  `preset.json` ✓，再用 `safeUploadName` 洗一遍 ✓ —— **不拿 URL 里的字串拼路径** ✗（那才是目录穿越的口子 ✗）。
+- **"素材不在了"必须如实** ✓：归档缺失时 `backgroundInfo()` 返回 **null**（= 没背景 ✓）+ 记一行日志 ✓，
+  而不是返回一个"风格生效了"的假象 ✗。
+
+### 测试
+
+- harness **+2**（569 → **571** ✓）：新风格被**接受** ✓（两种预设并存 ✓）；探针家目录里没有归档素材时
+  **如实报"没有背景"** ✓（那行日志实测打出来了 ✓，路径正是探针的隔离目录 ✓ = 不碰用户真实归档 ✓）。
+- ⚠️ **这条测试当场抓到一个真 bug** ✓✓：我在"素材不在了"那行调了**不存在的 `logLine`** ✗ → 路由 **500** ✓。
+  改成真正的 `log()` ✓ 即好 ✓。📌 这就是"补一条能真跑的测试"的价值 ✓ —— 只写源码形状断言的话，
+  这个 500 会直接落到用户手机上 ✗。
+- ⚠️ **坦白** ✓：「归档目录里**真有**素材时能不能铺出来」这条**还没测** ✓（要在探针家目录里摆一份归档 ✓）
+  —— 连同"归档动作本身"下次一起补 ✓。不假装已经测过 ✗。
+
+### 已实际执行（在用户这台机器上 ✓）
+
+- 归档目录：`C:\Users\Kim\.dsh\mobile-bridge-presets\planet\` ✓（`preset.json` + 素材 + 静止图 ✓）；
+- 配置切到 `backgroundPreset: planet` ✓（**`backgroundFile` / `backgroundStill` 都留着** ✓ →
+  "去掉背景"那条路照旧能用 ✓，也等于**一行回滚** ✓）；
+- 改动前备份 ✓（`mobile-bridge.json.bak-preset-…` ✓）。
 ## 4.9.13 — 2026-10-15
 
 **主题：把上一轮 9 处黄逐条判定完 + 给探针加自检 —— 功能零改动** ✓
@@ -28,8 +72,8 @@
 
 ### 测试
 
-- package 87 ✓（不动 ✓）· harness 569 ✓ · qr 12 ✓ · ui **807** ✓（+1 ✓）· security 54 ✓ ·
-  crashprobe 17 ✓ · addresses 16 ✓ · offline 17 ✓ · platform 27 ✓ → **1606 项全绿** ✓。
+- package 87 ✓（不动 ✓）· harness 571 ✓ · qr 12 ✓ · ui **807** ✓（+1 ✓）· security 54 ✓ ·
+  crashprobe 17 ✓ · addresses 16 ✓ · offline 17 ✓ · platform 27 ✓ → **1608 项全绿** ✓。
 - `check-counts` exit 0 ✓（这次它先**正确地**报出"文档写的 1605 / ui 806 与实测不符" ✗ —— 已改 ✓）。
 - **产品代码零改动** ✓（这版只碰 `test/` ✓）。
 
@@ -88,7 +132,7 @@
 
 ### 测试
 
-- **项数不变** ✓（1605 ✓ —— 我是把断言**收紧**，不是加新的 ✓）：package 87 · harness 569 ·
+- **项数不变** ✓（1605 ✓ —— 我是把断言**收紧**，不是加新的 ✓）：package 87 · harness 571 ·
   qr 12 · ui 807 · security 54 · crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓。
 - `check-counts` exit 0 ✓（文档里的项数照旧对得上 ✓）。
 - ⚠️ 自曝一个操作毛病 ✗：这轮我又用 `node -e` 改文件 ✓ → **第九次**栽在命令行引号上 ✗。
@@ -123,7 +167,7 @@
   （128KB ✓ / 并发 2 ✓ / 重试**故意仍是 3 次** ✓ 且**不许出现 `giveUpAt`** ✓）——
   以后谁再一口气动这几处，会先在这里红一下 ✓。
 - ui **806/806** ✓（**第四次"一次一处"没弄坏东西** ✓）。
-- 九个套件 **1606 项全绿** ✓（package 87 · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1608 项全绿** ✓（package 87 · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ### 🎯 离线传输三件事，到这儿齐了 ✓
@@ -163,7 +207,7 @@
 - package **+5**：`uploadId` 稳定（且**不再有随机那句** ✓）；确认后才记录 ✓；跳过已确认的片 ✓；
   传完清记录 ✓；**"全被跳过"时补传最后一片** ✓。
 - ui **806/806** ✓（**第三次"一次一处"没弄坏东西** ✓）。
-- 九个套件 **1606 项全绿** ✓（package **87** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1608 项全绿** ✓（package **87** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ### 下一步（②）✓
@@ -207,7 +251,7 @@
   补发时**从 IndexedDB 取回** ✓；成功后**删掉** ✓；**没新开 store、没动版本号** ✓（`createObjectStore` 只两处 ✓）。
   另把 4.9.8 那三条按新形状改 ✓（意图不变 ✓：小附件仍走老路 ✓、都存不下仍只留文字 ✓、错误仍抛出 ✓）。
 - ui **806/806** ✓（**又没弄坏东西** ✓ —— 一次一处 + 每步跑测试的效果 ✓）。
-- 九个套件 **1600 项全绿** ✓（package **82** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1600 项全绿** ✓（package **82** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ### 下一步（按定好的顺序 ✓）
@@ -246,7 +290,7 @@
 - package **+4**：失败时**先试着进箱** ✓；**超容量就不装**（只留文字 + 如实说 ✓）；
   进箱后**撤掉输入框里那批附件** ✓（防发两遍 ✓）；**原有失败路径一个字没改**（错误仍抛出 ✓）。
 - ui **806/806** ✓（这次**没弄坏任何东西** ✓ —— 只加一处的效果 ✓）。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.7 — 2026-10-15
@@ -283,7 +327,7 @@
 ### 测试
 
 - package **+1**：静止兜底进了缓存 ✓ + **钉住撤回后的上传参数** ✓（`512KB / 3 次 / 400ms / 并发 3` ✓）。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ### ① 上传：先查现场，再改参数 ✓
@@ -312,7 +356,7 @@
 ### 测试
 
 - package **+4**：分片 128KB ✓；重试 5 次 + 600ms 退避 ✓；并发 2 ✓；静止兜底进了缓存 ✓。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.6 — 2026-10-15
@@ -350,7 +394,7 @@
 - package **改 3** ✓：删掉"假旋转"那两条 ✓、把"动效只碰 transform"改成"**只做一件事：
   `scale(1.18)`**" ✓、水印那条也改成同一个判据 ✓；另加一条"**不许再出现 `@keyframes dsh-live-turn` /
   `dsh-live-pan`**" ✓（防止哪天又有人把假动效加回来 ✗）。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.5 — 2026-10-15
@@ -375,7 +419,7 @@
 
 - package **+3**：`bg-live` 的用户气泡用了 `#app` ✓；`bg-cyber` 那套也抬了 ✓；
   亮色模式那条**还在** ✓（防止「修一个坏一个」✗）。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.4 — 2026-10-15
@@ -406,7 +450,7 @@
 
 - package **+3**：早退分支必须**补回 `hasbg`/`bg-live`** ✓；补状态只补「有背景」的情况（`key !== ''` ✓）；
   `offlineShow` 的「断线先收掉」仍在 ✓。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.3 — 2026-10-15
@@ -451,7 +495,7 @@
   流星**全部 ≥ 2.6 秒** ✓；透明度确实降到 `.34/.30/.16` ✓；**文字阴影在** ✓。
 - package **改 4** ✓（4.9.0 那批**钉旧值**的断言 ✓ —— 推近 / `.52` / `.30-.62` ✓）：
   它们是**用户点名改的行为** ✓，所以按新实况改 ✓ + 在这里写明改了哪几条、为什么 ✓（不偷偷改 ✗）。
-- 九个套件 **1594 项全绿** ✓（package **76** · harness 569 · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1594 项全绿** ✓（package **76** · harness 571 · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.2 — 2026-10-15
@@ -507,7 +551,7 @@
   **4 秒兜底** ✓；服务端**只给视频带 `still`** ✓；`?still=1` 真的送那张图 ✓。
   另**改 2 条**：旧断言里钉着 `-66vw/58vh` 与带分号的写法 ✓ —— 都是**我自己过期了** ✗，按新实况改 ✓。
 - harness **+1**：图片背景**不带** `still` ✓（多塞一个地址 = 让手机白下一次 ✗）。
-- 九个套件 **1577 项全绿** ✓（package **59** · harness **569** · qr 12 · ui 807 · security 54 ·
+- 九个套件 **1577 项全绿** ✓（package **59** · harness **571** · qr 12 · ui 807 · security 54 ·
   crashprobe 17 · addresses 16 · offline 17 · platform 27 ✓）+ `check-counts` exit 0 ✓。
 
 ## 4.9.1 — 2026-10-15

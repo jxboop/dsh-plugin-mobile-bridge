@@ -1387,6 +1387,34 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('🔴 设预设会**把图片背景摘掉** ✓（预设和文件二选一 ✓，不打架 ✗）',
 		presetConfig.backgroundPreset === 'cyberpunk' && presetConfig.backgroundFile === undefined,
 		JSON.stringify({ preset: presetConfig.backgroundPreset, file: presetConfig.backgroundFile ?? null }))
+	/*
+	 * 🔴 4.10.0：**第二种预设** —— 「夜行星」✓（用户 2026-10-15：「你把这个背景归档到背景风格里面」✓）。
+	 * 它和 `cyberpunk` **不是一类** ✗：那个是 CSS 画的 ✓（不要文件 ✓）；这个是**自带素材** ✓
+	 *（素材归档在**本机** `~/.dsh/mobile-bridge-presets/<名字>/` ✓ —— 不进插件 ✓，那是用户自己的东西 ✓）。
+	 *
+	 * 这条验**"归档不在了会怎样"** ✓：必须**如实报没有背景** ✗（不许拿一个空风格糊弄 ✓，那会让用户
+	 * 以为是"风格生效了但其实什么都没铺"✗）。
+	 * ⚠️ 坦白 ✗：「归档目录里**真有**素材时能不能铺出来 + 归档动作本身」这条**还没测** ✓ ——
+	 *    要在探针家目录里摆一份归档（`preset.json` + 素材 ✓）→ **下次连同那个一起补** ✓。
+	 *    不假装已经测过 ✗。
+	 */
+	const planetSet = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'planet' }),
+	})
+	check('🔴 新风格「夜行星」被**接受** ✓（白名单里两种预设并存 ✓：CSS 的 + 自带素材的 ✓）',
+		planetSet.status === 200, String(planetSet.status))
+	const planetBoot = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('🔴 探针家目录里没有归档素材 → **如实报"没有背景"** ✓（不许糊弄成空风格 ✗）',
+		planetBoot.background === null, JSON.stringify(planetBoot.background))
+	// 立刻还原成 cyberpunk ✓ —— 免得影响下面那些假设"当前预设"的用例 ✗。
+	await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'cyberpunk' }),
+	})
+
 	const afterBoot = await fetch(`${base}/api/bootstrap`, authed)
 	const afterBootBody = await afterBoot.json()
 	check('🔴 bootstrap 里带的就是预设 ✓（手机一打开就知道要铺赛博朋克 ✓）',
