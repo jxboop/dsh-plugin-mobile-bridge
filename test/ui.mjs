@@ -3203,8 +3203,11 @@ check('说明指向了下拉框或读取状态',
 	uploadDelayMs = 25
 	const after = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
 	const lastBody = JSON.parse(after[after.length - 1].options.body)
-	check('内联被掐断后自动改走切片上传（用户不用再点一次）',
-		uploaded.length >= 1 && after.length > promptsBefore + 2, `切片 ${uploaded.length} 片 / prompt ${after.length - promptsBefore} 次`)
+	check('内联被掐断后自动改走切片上传（用户不用再点一次）'
+		+ '（4.11.2 起这些**重发的片走二进制** ✓ —— 有原始 blob 就不再 base64 ✓）',
+		uploaded.length >= 1 && after.length > promptsBefore + 2
+		&& uploaded.some((entry) => entry.binary === true),
+		`切片 ${uploaded.length} 片（二进制 ${uploaded.filter((entry) => entry.binary === true).length} 片）/ prompt ${after.length - promptsBefore} 次`)
 	check('重发时图片改成 fileRefs（不再内联），而且消息最终发出去了',
 		lastBody.images.length === 0 && lastBody.fileRefs.length === 1
 		&& $('thumbs').children.length === 0,

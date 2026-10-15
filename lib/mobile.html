@@ -6839,8 +6839,13 @@
 				for (let index = 0; index < inlineNow.length; index += 1) {
 					// 3.5.0：这条**单张**的路以前也没传 onProgress ✗ —— 内联被掐断、改成切片重发之后
 					// 屏幕上从「正在改用切片上传重发…」直接停住不动 ✓（用户看到的就是"卡住了"✗）。
+					/*
+					 * 🔴 4.11.2：**把 `blob` 一起带过去** ✓ —— 内联被隧道掐断时，这一遍要改走分片 ✓；
+					 * 有 blob 就走**二进制** ✓（`uploadInChunks` 4.11.1 已经支持 ✓），
+					 * 没有就照旧 base64 ✓（比如 canvas 压出来的那张 ✓）—— 两条路都还在 ✓。
+					 */
 					again.push(await uploadInChunks(
-						{ name: inlineNow[index].name || 'image', mediaType: inlineNow[index].mediaType, data: inlineNow[index].data },
+						{ name: inlineNow[index].name || 'image', mediaType: inlineNow[index].mediaType, data: inlineNow[index].data, blob: inlineNow[index].blob },
 						inlineNow[index].name || 'image', index + 1, inlineNow.length,
 						uploadProgressOne(inlineNow[index].name || 'image')))
 				}
@@ -7938,7 +7943,13 @@
 				flash('这张图比较大，会切片上传（慢一点，但不会再失败）。', 4000)
 				return
 			}
-			state.images.push({ mediaType, data, name: file.name || '' })
+			/*
+			 * 🔴 4.11.2：**原图模式这条也留下原始 `blob`** ✓（就是磁盘上那个文件 ✓、字节完全一样 ✓）——
+			 * 内联被掐断要改切片重发时 ✓，切片就能走**二进制** ✓（不再 base64 ✓）。
+			 * ⚠️ 只在"有 blob 时"生效 ✓（照片压过的那条**故意不加** ✗ —— 那一条的字节是 canvas 重压出来的 ✓，
+			 * 拿原始文件顶替会让"切片的"和"内联的"**不是同一张图** ✗）。
+			 */
+			state.images.push({ mediaType, data, name: file.name || '', blob: file })
 			renderThumbs()
 			return
 		}
