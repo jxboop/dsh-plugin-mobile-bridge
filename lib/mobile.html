@@ -667,16 +667,33 @@
 	 */
 	body.hasbg.bg-live #app .row.user .bubble,
 	body.hasbg.bg-live .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
-	body.bg-live .copyb { background: rgba(12,14,20,.48); border-color: rgba(255,196,120,.20); }
-	body.bg-live .tab { background: rgba(12,14,20,.46); border-color: rgba(255,196,120,.20); color: var(--muted); }
+	/*
+	 * 🔴 4.10.7：**图标那一排也要适配背景** ✓（用户 2026-10-15：「那些图标也要适配背景呀」✓）。
+	 *
+	 * 病根 ✓：上一轮我把"面板/气泡"改成走变量 ✓，但**图标/标签/输入区这一批**用的是
+	 * **另一批写死的颜色** ✗（`.48 / .46 / .44 / .46` ✓）→ 它们**完全没跟上** ✓，
+	 * 在动图背景上就是"一块块灰板子" ✗ —— 用户一眼就看出来了 ✓。
+	 *
+	 * 现在它们**走同一批变量** ✓（`--panel` / `--panel-2` ✓）→ 和面板气泡**同一个透明度** ✓；
+	 * 图标本身 ✓：用暖色文字 + **一层跟随文字的柔影** ✓（依然**不碰背景** ✗ —— 不糊、不压暗 ✓）。
+	 */
+	body.bg-live .copyb { background: var(--panel); border-color: rgba(255,196,120,.20); }
+	body.bg-live .tab { background: var(--panel); border-color: rgba(255,196,120,.20); color: var(--muted); }
 	body.bg-live .tab.on { background: rgba(255,180,84,.12); color: var(--accent); border-bottom-color: var(--accent-2); }
-	body.bg-live .iconbtn, body.bg-live #toolsToggle { background: rgba(12,14,20,.44); border-color: rgba(255,196,120,.18); color: var(--text); }
+	body.bg-live .iconbtn,
+	body.bg-live #toolsToggle,
+	body.bg-live #toolKeys > button { background: var(--panel); border-color: rgba(255,196,120,.18); color: var(--text); }
+	/* 图标字形本身：暖色 + 柔影 ✓（"看得清"靠跟随文字的阴影 ✓，不靠给背景加雾 ✗）。 */
+	body.bg-live .iconbtn,
+	body.bg-live .tab,
+	body.bg-live #toolKeys > button,
+	body.bg-live #toolsToggle { text-shadow: 0 1px 3px rgba(0,0,0,.66); }
 	body.bg-live #send, body.bg-live .go, body.bg-live .actions .go {
 		background: linear-gradient(160deg, var(--accent-2), var(--accent));
 		color: var(--accent-ink); border-color: transparent;
 	}
 	body.bg-live input, body.bg-live textarea, body.bg-live select, body.bg-live .plain {
-		background: rgba(10,12,18,.46); color: var(--text); border-color: var(--field-line);
+		background: var(--panel); color: var(--text); border-color: var(--field-line);
 	}
 	/*
 	 * 有图的背景也把流星放出来 ✓（"一定要动态" ✓ —— 推近 + 流星一起 ✓）。

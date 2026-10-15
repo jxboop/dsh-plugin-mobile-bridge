@@ -619,5 +619,26 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& page.includes('body.hasbg #sky .meteor,\n\t\tbody.hasbg #skyNear .meteor'))
 }
 
+/*
+ * 23) 🔴 **图标那一排也要适配背景**（4.10.7 ✓）。
+ * 用户 2026-10-15：「那些图标也要适配背景呀」✓ ——
+ * 病根：上一轮只把"面板/气泡"改成走变量 ✓，**图标/标签/输入区这一批还是写死的 .44~.48** ✗
+ * → 在动图背景上就是一块块灰板子 ✓（用户一眼看出 ✓）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 图标键 / 标签 / 输入区**走同一批变量** ✓（`var(--panel)` ✓ —— 不再是写死的 .44/.46/.48 ✗）',
+		page.includes('body.bg-live .tab { background: var(--panel)')
+		&& page.includes('body.bg-live #toolKeys > button { background: var(--panel)')
+		&& page.includes('body.bg-live input, body.bg-live textarea, body.bg-live select, body.bg-live .plain {\n\t\tbackground: var(--panel)'))
+	check('🔴 没有**写死的灰板子**残留 ✓（.44/.46/.48 那三个数一个都不许剩 ✗）',
+		page.includes('rgba(12,14,20,.44)') === false && page.includes('rgba(12,14,20,.46)') === false
+		&& page.includes('rgba(12,14,20,.48)') === false && page.includes('rgba(10,12,18,.46)') === false)
+	check('🔴 工具键用的选择器**是真名** ✓（`#toolKeys > button` ✓ —— 不是凭想象写的类名 ✗）',
+		page.includes('#toolKeys > button') && page.includes('class="toolkey"') === false && page.includes('.toolkey') === false)
+	check('🔴 图标字形有**跟随文字的柔影** ✓（不糊背景 ✗、不压暗背景 ✗ —— 只有这一种做法 ✓）',
+		/body\.bg-live \.iconbtn,[\s\S]{0,220}text-shadow: 0 1px 3px rgba\(0,0,0,\.66\)/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
