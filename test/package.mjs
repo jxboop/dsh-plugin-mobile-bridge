@@ -264,5 +264,34 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		badLines.length === 0, badLines.slice(0, 3).join(' ｜ ') || `${blocks.length} 块全是 ASCII ✓`)
 }
 
+/*
+ * 10) 🔴 **赛博朋克背景：够动 + 不被挡住**（4.8.1 ✓）。
+ *
+ * 现场（用户 2026-10-15：「背景没有动态感太烂了不够惊艳，而且会被挡住」✓）：
+ *   ① 上一版只有 1.7s 的网格 + 4.2s 的呼吸 ✓ → 看着几乎像静止 ✗；
+ *   ② 压暗层 .45/.68 把整屏压黑 ✓ + 气泡太实 ✓ → 背景基本被挡没了 ✗。
+ * 这几条把"修好之后的样子"钉住 ✓ —— 以后谁再把它调回去，测试就红 ✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const layers = ['dsh-aurora', 'dsh-grid-flow', 'dsh-rain', 'dsh-horizon-pulse', 'dsh-scan-drift', 'dsh-glitch']
+	check('🔴 够动：**五层以上**各自在动 ✓（光晕 / 网格 / 霓虹雨 / 地平线 / 扫描线 + 偶发故障闪 ✓）—— 上一版只有两层 ✗',
+		layers.every((name) => page.includes('@keyframes ' + name)),
+		layers.filter((name) => page.includes('@keyframes ' + name) === false).join(' ') || `${layers.length} 个动画都在 ✓`)
+	check('🔴 网格速度是调快之后的 **0.85s** ✓（上一版 1.7s 被用户判为"没有动态感" ✗ —— 别再调回去 ✓）',
+		page.includes('body.bg-cyber .scrim::before { animation: dsh-grid-flow 0.85s linear infinite; }'))
+	check('🔴 网格透明度是 **.92** ✓（上一版 .72 压太狠 ✗ —— 保读字靠压暗层和气泡底 ✓，不是把网格调暗 ✗）',
+		/body\.bg-cyber \.scrim::before \{[\s\S]*?opacity: \.92;/.test(page))
+	check('🔴 不被挡住：压暗层让到 **.20/.34** ✓（上一版 .45/.68 把背景压没了 ✗）',
+		page.includes('body.hasbg.bg-cyber #backdrop .scrim { background: linear-gradient(180deg, rgba(6,8,18,.20), rgba(6,8,18,.34)); }'))
+	check('🔴 两条刹车**盖全**所有动起来的层 ✓（4.8.1 新加了 `.scrim::after` 和 `#backdrop` 自己 ✗ —— 漏一个就是"关不掉的动画" ✗）',
+		/body\.bg-cyber\.bg-still[\s\S]{0,400}\.scrim::after[\s\S]{0,200}#backdrop\b/.test(page)
+		&& /prefers-reduced-motion: reduce[\s\S]{0,400}\.scrim::after[\s\S]{0,200}#backdrop\b/.test(page))
+	check('🔴 动画**只碰** background-position / opacity ✓（碰 filter/blur/宽高就会在手机上掉帧发热 ✗）',
+		[...page.matchAll(/@keyframes (dsh-[a-z-]+) \{([\s\S]*?)\n\t\}/g)]
+			.every(([, , body]) => /^(?:(?!filter|blur|width|height|inset|margin|padding|left|top)[\s\S])*$/.test(body)),
+		[...page.matchAll(/@keyframes (dsh-[a-z-]+)/g)].map((m) => m[1]).join(' '))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

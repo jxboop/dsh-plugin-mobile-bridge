@@ -156,12 +156,41 @@
 	 * ⚠️ 读字优先 ✗：底色压得很深 ✓，而且 `.scrim` 那层压暗**照旧在上面** ✓ ——
 	 * 背景再花也不能让对话看不清 ✓。
 	 */
+	/*
+	 * 🔴 4.8.1 重做（用户 2026-10-15：「背景没有动态感太烂了不够惊艳，而且会被挡住」✓）——
+	 * 上一版的问题（两条都认 ✓）：
+	 *   ① **动得太含蓄** ✓：1.7s 的网格 + 4.2s 的呼吸 ✓ —— 看着几乎像静止 ✗；
+	 *   ② **会被挡住** ✓：压暗层太黑（45%~68% ✓）+ 气泡太白太实 ✓，
+	 *      而最有戏的网格又正好铺在**输入栏底下** ✗ —— 用户能看见的只剩一小条 ✓。
+	 * 这一版：
+	 *   · 视觉重心**铺满整屏** ✓（光晕 / 星点 / 斜落的霓虹雨 / 更快的网格一起动 ✓）——
+	 *     气泡是半透明的 ✓，所以**隔着气泡也看得见动** ✓（这才是"有动态感"的关键 ✓）；
+	 *   · 压暗层**让开** ✓（.45/.68 → .20/.34 ✓），气泡也再透一点 ✓ —— 但**字仍然是最清楚的** ✓；
+	 *   · 动画**更快更明显** ✓，并且多一层"偶尔闪一下"的故障感 ✓（赛博朋克那味儿 ✓）。
+	 *
+	 * ⚠️ 性能底线不破 ✗：动画只碰 `background-position` / `opacity` ✓（合成层 ✓），
+	 * 不碰 `filter` / `blur` / 尺寸 / 布局 ✓ —— 手机上才不掉帧、不烫手 ✓。
+	 */
 	body.bg-cyber #backdrop {
 		background:
-			radial-gradient(130% 42% at 50% 78%, rgba(255,45,196,.40), transparent 62%),
+			/* ① 上方光晕（会慢慢漂 ✓ —— 隔着气泡也能看出在动 ✓） */
+			radial-gradient(58% 34% at 22% 14%, rgba(0,225,255,.28), transparent 62%),
+			radial-gradient(52% 30% at 80% 26%, rgba(255,45,196,.26), transparent 64%),
+			radial-gradient(46% 26% at 52% 44%, rgba(122,64,255,.22), transparent 66%),
+			/* ② 星点（两层错开 ✓，静态不闪 ✓ —— 闪的那种会晕 ✓） */
+			radial-gradient(1.4px 1.4px at 18% 22%, rgba(255,255,255,.85), transparent 100%),
+			radial-gradient(1.2px 1.2px at 72% 12%, rgba(180,240,255,.75), transparent 100%),
+			radial-gradient(1.6px 1.6px at 44% 36%, rgba(255,190,240,.70), transparent 100%),
+			/* ③ 地平线附近的底色 */
+			radial-gradient(130% 42% at 50% 78%, rgba(255,45,196,.42), transparent 62%),
 			radial-gradient(80% 30% at 50% 72%, rgba(122,64,255,.30), transparent 72%),
-			radial-gradient(70% 34% at 50% 4%, rgba(0,225,255,.16), transparent 70%),
-			linear-gradient(180deg, #03040a 0%, #070a17 46%, #160a26 74%, #1b0a2a 100%);
+			linear-gradient(180deg, #03040a 0%, #06091a 44%, #150925 72%, #1d0a2c 100%);
+		/* 光晕慢慢漂 ✓（只动 background-position ✓）—— 30s 一轮，足够明显又不躁 ✓。 */
+		animation: dsh-aurora 30s ease-in-out infinite alternate;
+	}
+	@keyframes dsh-aurora {
+		from { background-position: 0% 0%, 100% 0%, 50% 0%, 0 0, 0 0, 0 0, 50% 100%, 50% 100%, 0 0; }
+		to { background-position: 6% 4%, 94% 6%, 46% 3%, 0 0, 0 0, 0 0, 50% 100%, 50% 100%, 0 0; }
 	}
 	/*
 	 * 4.8.0：**让它动起来** ✓（用户 2026-10-15：「最好是动态的背景」✓）。
@@ -179,21 +208,30 @@
 		to { background-position: 0 0, 0 34px; }
 	}
 	@keyframes dsh-horizon-pulse {
-		0%, 100% { opacity: .82; }
+		0%, 100% { opacity: .72; }
 		50% { opacity: 1; }
 	}
 	@keyframes dsh-scan-drift {
 		from { background-position: 0 0; }
 		to { background-position: 0 3px; }
 	}
-	body.bg-cyber .scrim::before { animation: dsh-grid-flow 1.7s linear infinite; }
-	body.bg-cyber #backdrop::before { animation: dsh-horizon-pulse 4.2s ease-in-out infinite; }
-	body.bg-cyber #backdrop::after { animation: dsh-scan-drift 8s linear infinite; }
+	/*
+	 * ⚠️ 4.8.1：**速度调快、对比拉大** ✓ —— 用户说上一版"没有动态感" ✓。
+	 * 网格 1.7s → **0.85s** ✓（快一倍 ✓）；扫描线那层同时挂"漂"和"偶尔闪"两个动画 ✓
+	 *（同一元素可以挂多条 ✓，但**必须都只碰 opacity / background-position** ✗）。
+	 */
+	body.bg-cyber .scrim::before { animation: dsh-grid-flow 0.85s linear infinite; }
+	body.bg-cyber #backdrop::before { animation: dsh-horizon-pulse 3.2s ease-in-out infinite; }
+	body.bg-cyber #backdrop::after { animation: dsh-scan-drift 8s linear infinite, dsh-glitch 12s step-end infinite; }
 	body.bg-cyber.bg-still .scrim::before,
+	body.bg-cyber.bg-still .scrim::after,
+	body.bg-cyber.bg-still #backdrop,
 	body.bg-cyber.bg-still #backdrop::before,
 	body.bg-cyber.bg-still #backdrop::after { animation: none; }
 	@media (prefers-reduced-motion: reduce) {
 		body.bg-cyber .scrim::before,
+		body.bg-cyber .scrim::after,
+		body.bg-cyber #backdrop,
 		body.bg-cyber #backdrop::before,
 		body.bg-cyber #backdrop::after { animation: none; }
 	}
@@ -209,21 +247,48 @@
 	 * 64° 才既能看出"往远处收"、又真的占满下半屏 ✓。
 	 */
 	body.bg-cyber .scrim::before {
-		content: ''; position: absolute; left: -60%; right: -60%; top: 74%; bottom: -10%;
+		content: ''; position: absolute; left: -60%; right: -60%; top: 70%; bottom: -10%;
 		background-image:
-			repeating-linear-gradient(90deg, rgba(0,240,255,.46) 0 1.2px, transparent 1.2px 46px),
-			repeating-linear-gradient(0deg, rgba(255,60,210,.36) 0 1.2px, transparent 1.2px 34px);
+			repeating-linear-gradient(90deg, rgba(0,240,255,.62) 0 1.4px, transparent 1.4px 46px),
+			repeating-linear-gradient(0deg, rgba(255,60,210,.50) 0 1.4px, transparent 1.4px 34px);
 		transform: perspective(46vh) rotateX(64deg);
 		transform-origin: 50% 0%;
-		/* ⚠️ 第一版是 .85 ✓ —— 拍出来网格"抢戏" ✗（霓虹线比对话还显眼 ✓）。
-		   压到 .72 之后：一眼能看出是赛博朋克 ✓，但视线仍先落在字上 ✓。 */
-		opacity: .72;
+		/* ⚠️ 4.8.1：.72 → **.92** ✓（用户说不够惊艳 ✓ —— 网格本来就是这张图的骨架 ✓，
+		   压太狠就没了 ✓；真正保读字的是**压暗层 + 气泡底** ✓，不是把网格弄暗 ✓）。 */
+		opacity: .92;
 	}
 	/* 细扫描线：只当质感 ✓（很淡 ✓ —— 读字优先 ✗）。 */
 	body.bg-cyber #backdrop::after {
 		content: ''; position: absolute; inset: 0;
 		background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px);
 		opacity: .45;
+	}
+	/*
+	 * 4.8.1：**斜落的霓虹雨** ✓ —— 上一层"往下掉的光丝" ✓。
+	 * 45° 的重复线 + 动画位移 ✓（还是只动 background-position ✓）——
+	 * 这是"一眼就看出在动"的主力 ✓（比网格那层显眼得多 ✓）。
+	 */
+	body.bg-cyber .scrim::after {
+		content: ''; position: absolute; inset: -20% -20% -20% -20%;
+		background-image: repeating-linear-gradient(74deg,
+			rgba(0,229,255,.30) 0 1px, transparent 1px 26px,
+			rgba(255,45,196,.22) 0 27px, transparent 27px 58px);
+		animation: dsh-rain 1.5s linear infinite;
+		opacity: .55;
+	}
+	@keyframes dsh-rain {
+		from { background-position: 0 0; }
+		to { background-position: 0 58px; }
+	}
+	/*
+	 * 4.8.1：**偶尔闪一下** ✓（故障感 ✓）—— 12 秒里只有极短两下 ✓，
+	 * 平时完全不出现 ✓（不做成一直闪 ✗：那是干扰，不是惊艳 ✓）。
+	 */
+	@keyframes dsh-glitch {
+		0%, 92%, 100% { opacity: .45; }
+		92.6% { opacity: .18; }
+		93.2% { opacity: .62; }
+		93.8% { opacity: .30; }
 	}
 	/*
 	 * 4.8.0：**界面风格跟背景协调** ✓（用户 2026-10-15：「还有界面风格要跟背景协调」✓）。
@@ -278,9 +343,18 @@
 	 * 只写 `body.bg-cyber .bubble`（0,2,1 ✓）时实测**还是偏灰** ✓（预览里看出来的 ✓），
 	 * 抬这一级才稳 ✓。**注意别用 `!important`** ✗ —— 那会让以后所有主题都改不动它 ✓。
 	 */
-	body.hasbg.bg-cyber .bubble { background: rgba(12,18,36,.70); border-color: rgba(0,229,255,.20); }
+	body.hasbg.bg-cyber .bubble { background: rgba(10,15,30,.56); border-color: rgba(0,229,255,.24); }
 	body.hasbg.bg-cyber .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
 	body.bg-cyber .copyb { background: rgba(10,16,32,.55); border-color: rgba(0,229,255,.20); }
+	/*
+	 * 🔴 4.8.1：**压暗层让开** ✓（用户：「会被挡住」✓）——
+	 * 上一版 .45/.68 的黑纱把整张背景压掉一半 ✓，墙上再好看也看不见 ✓。
+	 * 现在 .20/.34 ✓（背景清清楚楚 ✓），**保读字改交给气泡自己的底色** ✓ ——
+	 * 因为"字在气泡里" ✓，气泡不透明就够了 ✓，不需要把**整屏**都压黑 ✓。
+	 * ⚠️ 这是**取舍** ✓：背景要惊艳、字要清楚 ✓ —— 两者靠"分层"同时成立 ✓，
+	 * 不是把背景调暗 ✗（那等于回到上一版 ✓）。
+	 */
+	body.hasbg.bg-cyber #backdrop .scrim { background: linear-gradient(180deg, rgba(6,8,18,.20), rgba(6,8,18,.34)); }
 	/*
 	 * ⚠️ 交互控件**一个一个明确接管** ✓ —— 不追着亮色模式里那些老规则跑 ✗
 	 *（它们散在四个 `@media (prefers-color-scheme: light)` 块里 ✓，一处漏掉就是一个"白底白字看不见" ✗ ——
