@@ -367,17 +367,18 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 图片背景**会动** ✓（4.9.3 起是**慢速旋转** ✓ —— 用户要「星球在转」✓，不是推近 ✗）',
-		page.includes('body.hasbg.bg-live #backdrop img') && page.includes('@keyframes dsh-live-turn'))
-	check('🔴 动效只碰 transform ✓（手机上不掉帧 ✓）',
-		/from \{ transform: scale\(1\.18\) rotate\(-1\.83deg\); \}[\s\S]{0,120}to \{ transform: scale\(1\.18\) rotate\(1\.83deg\); \}/.test(page))
+	check('🔴 **不再自己编动效** ✓（4.9.6 撤掉假旋转/假推近 ✗ —— 用户：「你就不能按原图来吗」✓，动交给**原素材** ✓）',
+		page.includes('@keyframes dsh-live-turn') === false && page.includes('@keyframes dsh-live-pan') === false
+		&& page.includes('body.hasbg.bg-live #backdrop img'))
+	check('🔴 静止兜底那张图**只做一件事**：`scale(1.18)` ✓（4.9.6 起没有任何动画 ✗ —— 动效归原素材 ✓）',
+		/body\.hasbg\.bg-live #backdrop img \{\s*transform: scale\(1\.18\);\s*\}/.test(page))
 	/*
 	 * 水印：这台机器**没有 ffmpeg / jpegtran** ✗（无损裁 JPEG 的工具一个都没有 ✓），
 	 * 重新编码一定掉画质 ✗ —— 而用户要求"画质不变、不要压缩、不要更改" ✓。
 	 * 所以改成**画面层面裁**：scale ≥ 1.18 + **顶边为锚** ✓ → 底部约 15% 推出屏幕 ✓，文件一个字节不动 ✓。
 	 */
-	check('🔴 水印靠**显示裁掉** ✓（scale 恒 ≥ 1.18 ✓ —— 旋转也露不出水印 ✓，文件不改 ✓）',
-		page.includes('transform-origin: 50% 42%') && /from \{ transform: scale\(1\.18\) rotate\(-1\.83deg\)/.test(page))
+	check('🔴 水印靠**显示裁掉** ✓（`scale(1.18)` 把那条带推出屏幕 ✓，文件一个字节不动 ✓）',
+		/body\.hasbg\.bg-live #backdrop img \{\s*transform: scale\(1\.18\);\s*\}/.test(page))
 	check('🔴 暖金色调 ✓ + **更透明** ✓（气泡 .50 / 面板 .52 ✓ —— 用户要"透明能够适配这张图"✓）',
 		/body\.hasbg\.bg-live \{[\s\S]*?--accent: #ffb454/.test(page)
 		&& page.includes('body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50)'))
@@ -424,12 +425,8 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 动效是**旋转**不是推近 ✓（上一版 Ken Burns 推近 ✗ —— 用户要的是"星球在转" ✓）',
-		page.includes('@keyframes dsh-live-turn') && page.includes('rotate(-1.83deg)') && page.includes('rotate(1.83deg)')
-		&& page.includes('dsh-live-turn 60s ease-in-out infinite alternate'))
-	check('🔴 旋转时**四角不露黑** ✓（`scale(1.18)` 必须还在 ✓ —— 顺便挡住水印 ✓）',
-		/body\.hasbg\.bg-live #backdrop img \{[\s\S]{0,160}\}/.test(page)
-		&& /@keyframes dsh-live-turn \{\s*from \{ transform: scale\(1\.18\)/.test(page))
+	check('🔴 静止兜底那张图仍然 `scale(1.18)` ✓ —— 它的作用**不是动效** ✗，而是把那张 JPEG 的**水印带推出屏幕** ✓（文件不动 ✓）',
+		/body\.hasbg\.bg-live #backdrop img \{\s*transform: scale\(1\.18\);\s*\}/.test(page))
 	const durs = [...page.matchAll(/dur: ([0-9.]+), delay/g)].map((m) => Number(m[1]))
 	check('🔴 流星**放慢**了 ✓（全部 ≥ 2.6 秒 ✓ —— 上一版 1.2~2.0 秒被用户判为"太快" ✗）',
 		durs.length >= 12 && durs.every((d) => d >= 2.6),
