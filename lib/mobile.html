@@ -6962,7 +6962,14 @@
 	async function prepareRefs(files) {
 		if (files.length === 0) return []
 		const refs = []
-		const totalChunks = files.reduce((sum, file) => sum + Math.max(1, Math.ceil(file.data.length / CHUNK_BYTES)), 0)
+		/*
+		 * 4.12.0：片数按**真实字节**算 ✓ —— 文件那条现在只带 `blob` ✓（不再整份 base64 ✓），
+		 * 只读 `data.length` 会把它算成 0 片 ✗（进度就永远停在 0 ✓）。
+		 */
+		const fileBytes = (file) => Number(file?.blob?.size ?? 0) > 0
+			? Number(file.blob.size)
+			: String(file?.data ?? '').length
+		const totalChunks = files.reduce((sum, file) => sum + Math.max(1, Math.ceil(fileBytes(file) / CHUNK_BYTES)), 0)
 		const label = files.length > 1 ? `${files.length} 个附件` : files[0].name
 		let doneChunks = 0
 		let shownAt = 0
@@ -7050,8 +7057,20 @@
 	const HOST_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
 	/** 单张图上限（原文件字节）。超过就先压一压，不然 base64 会顶爆请求。 */
 	const MAX_IMAGE_BYTES = 8 * 1024 * 1024
-	/** 视频/其它文件上限（原文件字节）。 */
-	const MAX_FILE_BYTES = 28 * 1024 * 1024
+	/**
+	 * 视频/其它文件上限（原文件字节）。
+	 *
+	 * 🔴 4.12.0：**28 MB → 120 MB** ✓（与服务端上限对齐 ✓）——
+	 * 用户 2026-10-15：「继续」→「你都做完吧」✓。
+	 * 病根 ✗：**手机随便录一段视频就是 60~100 MB** ✓ → 以前**在客户端就被挡掉** ✗
+	 *（连试都不试 ✓）= 用户说的"**很难上传**" ✓✓；而他那段 5.3MB 的刚好在 28MB 之下 ✓
+	 * → 发出去了、却在弱网里断了 ✓ = "**总是失败**" ✓✓。两句话是同一个上限的两个方向 ✓。
+	 * ⚠️ **为什么现在才敢放宽** ✗：以前客户端要**把整份文件读成 base64** ✓（28MB 文件的内存峰值 50MB+ ✗），
+	 * 放宽就等于把"标签页被杀"的风险一起放进去 ✗；而 4.11.x 起**分片改走二进制** ✓
+	 *（`blob.slice` 直接从磁盘流式读 ✓），每片的内存与文件大小**无关** ✓✓ → 上限才敢跟着服务端走 ✓。
+	 * 📌 这一条的依据是现成的 ✓：上面给**音频**放宽时早就写着"服务端 120 MB 且走分片，放宽是安全的" ✓。
+	 */
+	const MAX_FILE_BYTES = 120 * 1024 * 1024
 	/**
 	 * 音频单独放宽到 80 MB：一节课（45~90 分钟）的录音是几十兆，按 28 MB 卡会把整节课挡住。
 	 * 服务端上限 120 MB 且走分片上传，所以这里放宽是安全的；代价只是传得慢（上行 20~70 KB/s）。
@@ -7973,14 +7992,14 @@
 		state.files.push({
 			name: file.name || 'file',
 			mediaType: type === '' ? 'application/octet-stream' : type,
-			data: await readBase64(file),
 			/*
-			 * 🔴 4.11.1：**留下原始 Blob** ✓（就是手机磁盘上那个文件句柄 ✓）。
-			 * 目的：分片时可以直接 `blob.slice(a,b)` 当请求体发 ✓ —— 浏览器**自己从磁盘流式读** ✓ →
-			 * **每一片不再 base64** ✓（少花 33% 流量 ✓，也少一次整片的内存拷贝 ✓）。
-			 * ⚠️ 这一步**只加属性、没有任何地方读它** ✗ → **行为零变化** ✓（施工单第 1 步 ✓）；
-			 *    `data`（base64）**先留着** ✓ —— 预览和离线队列还在用它 ✓，
-			 *    等 ②-b 把它们也改成 Blob/对象 URL 之后再撤 ✓（**一次只改一处** ✓）。
+			 * 🔴 4.12.0：**不再整份读成 base64** ✓（这是"上限能到 120MB"的前提 ✓）。
+			 * 病根 ✗：以前这里 `data: await readBase64(file)` ✓ —— 一个 120MB 的视频会变成
+			 * **160MB 的字符串**存在内存里 ✓ → 低配手机上**标签页直接被系统杀掉** ✗✗。
+			 * 现在只带**磁盘上那个 Blob** ✓（一个句柄 ✓，几乎不占内存 ✓）→
+			 * 分片时 `blob.slice(a,b)` **直接从磁盘流式读** ✓（4.11.1 起的二进制路 ✓）。
+			 * ⚠️ 文件/视频/录音**从不内联** ✓（内联只走 `images` ✓），所以这里不需要 base64 ✓。
+			 * 照片那两条**照旧读 base64** ✓ —— 它们要内联进任务 ✓（那是协议要求 ✓）。
 			 */
 			blob: file,
 		})
@@ -9208,6 +9227,16 @@
 	 * （`outboxAdd` 现在会回真假 ✓）。
 	 */
 	function weakCanStore(files) {
+		/*
+		 * ⚠️ 判据是"**只有 blob、没有 base64**" ✗ —— 不是"有 blob 就拒" ✗。
+		 * 我第一版写成"见到 blob 就返回 false" ✓ → **把照片也拒了** ✗：
+		 * 照片条目**同时**带 `data` ✓（内联要用 ✓）和 `blob` ✓（分片要用 ✓），
+		 * localStorage 存得下它 ✓（存的是 `data` 那段 JSON ✓）→ 于是"弱网模式先发文字 ✓、
+		 * 附件进箱子"整条**不生效**了 ✗ —— 被 ui 三条用例当场抓住 ✓✓。
+		 * 真正必须走 IDB 的只有：`blob` 在 ✓、`data` 空 ✓（4.12.0 起**文件/视频/录音**就是这样 ✓）——
+		 * 那种条目 `JSON.stringify` 会变成一个 `{}` ✗ = **静默丢数据** ✗。
+		 */
+		if (files.some((file) => file?.blob instanceof Blob && String(file?.data ?? '') === '')) return false
 		const bytes = files.reduce((sum, file) => sum + String(file?.data ?? '').length, 0)
 		return bytes > 0 && bytes <= 1.2 * 1024 * 1024
 	}

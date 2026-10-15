@@ -668,5 +668,28 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('blob: inlineNow[index].blob'))
 }
 
+/*
+ * 25) 🔴 **上限提到 120MB（③）—— 前提是"文件那条不再整份 base64"**（4.12.0 ✓）。
+ * 用户 2026-10-15：「你都做完吧」✓。
+ * 这两件事**必须一起** ✓：上限一提 ✓，如果还整份读 base64 ✗，
+ * 120MB 的文件会变成 **160MB 的字符串**留在内存里 ✓ → 低配手机上**标签页被系统杀掉** ✗✗。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const clientCap = Number(/const MAX_FILE_BYTES = (\d+) \* 1024 \* 1024/.exec(page)?.[1] ?? 0)
+	const serverCap = Number(/const MAX_UPLOAD_BYTES = (\d+) \* 1024 \* 1024/.exec(host)?.[1] ?? 0)
+	check('🔴 客户端上限 = **120MB** ✓，而且**不超过服务端** ✓（服务端 120MB ✓ —— 客户端比它大就是"传到一半被拒" ✗）',
+		clientCap === 120 && serverCap === 120 && clientCap <= serverCap, `客户端 ${clientCap} / 服务端 ${serverCap}`)
+	check('🔴 **文件/视频/录音那条不再读 base64** ✓（只带 `blob: file` ✓）—— 否则 120MB 会变成 160MB 字符串 ✗✗',
+		/state\.files\.push\(\{\s*\n\s*name: file\.name \|\| 'file',\s*\n\s*mediaType: type === '' \? 'application\/octet-stream' : type,[\s\S]{0,900}?\n\s*blob: file,\s*\n\s*\}\)/.test(page)
+		&& /state\.files\.push\(\{[\s\S]{0,700}?data: await readBase64\(file\),[\s\S]{0,200}?\n\s*blob: file,/.test(page) === false)
+	check('🔴 队列与进度都认 `blob.size` ✓（只按 `data.length` 会把文件算成 0 片 ✗ / 当成 0 字节 ✗）',
+		page.includes('Number(file?.blob?.size ?? 0) > 0')
+		&& page.includes("file?.blob instanceof Blob && String(file?.data ?? '') === ''"))
+	check('🔴 **只有"只有 blob、没有 base64"的才拒绝进 localStorage** ✓（照片同时有两样 ✓，一律拒会把弱网模式整条打掉 ✗）',
+		page.includes("if (files.some((file) => file?.blob instanceof Blob && String(file?.data ?? '') === '')) return false"))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
