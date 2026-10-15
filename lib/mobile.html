@@ -355,6 +355,97 @@
 	 * 不是把背景调暗 ✗（那等于回到上一版 ✓）。
 	 */
 	body.hasbg.bg-cyber #backdrop .scrim { background: linear-gradient(180deg, rgba(6,8,18,.20), rgba(6,8,18,.34)); }
+
+	/*
+	 * 🔴 4.8.2 **月亮 + 流星**（用户 2026-10-15：「这流星雨就是线啊，你好歹把他改成流星的模样，
+	 * 最好再加上好看的月亮…而且可以流星雨划过对话框，更有感觉」✓）。
+	 *
+	 * 为什么还是**画**、不是找一张图 ✗（用户说"网上找到模仿或者直接用" ✓，我选了前者 ✓，理由说清 ✓）：
+	 *   ① 一张月亮/星空的图动辄几百 KB ✓ —— 这个背景的全部卖点就是"零流量、任何分辨率都清晰" ✓，
+	 *      塞一张位图等于把自己最好的那点优势扔掉 ✗；
+	 *   ② 找到的图**授权说不清** ✗（能用的大多是 CC0/公有领域 ✓，但那要逐张核 ✓，
+	 *      而且以后换一张就得重新核一遍 ✓）；
+	 *   ③ CSS 画的**矢量** ✓：同一份代码在 720p 和 2K 上都锐利 ✓，还能跟着主题配色走 ✓。
+	 *   📌 如果哪天你就是想要**真照片**的月亮 ✓ —— 说一声 ✓，我去找公有领域的（NASA 那种 ✓）
+	 *      打包进插件 ✓。这条我不自作主张 ✗。
+	 *
+	 * 流星**不是线** ✓（用户点出的毛病 ✗）：每一颗 = **亮核**（`::after` 的发光圆点 ✓）
+	 * + **渐隐的拖尾**（`linear-gradient` 从透明到白 ✓）+ 头部方向一致 ✓。
+	 * 关键在"头亮、尾散" ✓：一条等宽的线看着就是划线 ✗，有核有尾才像流星 ✓。
+	 */
+	#sky { display: none; }
+	body.bg-cyber #sky {
+		display: block;
+		position: fixed; inset: 0; z-index: 2;
+		/* ⚠️ 划过归划过，**绝不拦点击** ✗ —— 这层永远不吃事件 ✓。 */
+		pointer-events: none;
+		/* 只加光、不减光 ✓：压在文字上时是"提亮" ✓，不会把字压花 ✗。 */
+		mix-blend-mode: screen;
+	}
+	/* ---------- 月亮 ---------- */
+	#sky .moon {
+		position: absolute; top: 6%; right: 13%; width: 78px; height: 78px; border-radius: 50%;
+		background:
+			radial-gradient(circle at 36% 30%, #ffffff 0%, #eef4ff 38%, #cfdcf7 66%, #a9bce4 100%);
+		box-shadow:
+			0 0 26px 8px rgba(170,210,255,.30),
+			0 0 74px 26px rgba(120,170,255,.18),
+			inset -7px -9px 18px rgba(86,106,158,.42);
+	}
+	/* 环形山 + 一点明暗交界 ✓（太细会糊成一团 ✓，所以只有四个大块 ✓）。 */
+	#sky .moon::after {
+		content: ''; position: absolute; inset: 0; border-radius: 50%;
+		background:
+			radial-gradient(11px 11px at 63% 66%, rgba(112,134,186,.34), transparent 72%),
+			radial-gradient(7px 7px at 41% 57%, rgba(112,134,186,.28), transparent 72%),
+			radial-gradient(5px 5px at 59% 35%, rgba(112,134,186,.24), transparent 72%),
+			radial-gradient(14px 14px at 29% 31%, rgba(255,255,255,.34), transparent 72%);
+	}
+	/* 月晕：慢慢呼吸 ✓（只动 opacity ✓）。 */
+	#sky .moon::before {
+		content: ''; position: absolute; inset: -46%; border-radius: 50%;
+		background: radial-gradient(circle, rgba(150,200,255,.22) 0%, rgba(120,170,255,.10) 42%, transparent 70%);
+		animation: dsh-moon-glow 7.5s ease-in-out infinite;
+	}
+	@keyframes dsh-moon-glow {
+		0%, 100% { opacity: .55; transform: scale(.96); }
+		50% { opacity: 1; transform: scale(1.04); }
+	}
+	/* ---------- 流星 ---------- */
+	#sky .meteor {
+		position: absolute; width: var(--len, 170px); height: 2px; border-radius: 999px;
+		background: linear-gradient(90deg,
+			rgba(255,255,255,0) 0%, rgba(190,235,255,.16) 42%, rgba(225,245,255,.62) 82%, #ffffff 100%);
+		transform: rotate(31deg) translate3d(0, 0, 0);
+		opacity: 0;
+		animation: dsh-meteor var(--dur, 2.4s) linear var(--delay, 0s) infinite;
+	}
+	/* 亮核：流星"有头"就靠这个 ✓（尺寸跟着 --scale 走 ✓，大小颗都有 ✓）。 */
+	#sky .meteor::after {
+		content: ''; position: absolute; right: -4px; top: 50%;
+		width: calc(7px * var(--scale, 1)); height: calc(7px * var(--scale, 1));
+		margin-top: calc(-3.5px * var(--scale, 1)); border-radius: 50%;
+		background: radial-gradient(circle, #ffffff 0%, rgba(200,242,255,.92) 42%, rgba(190,235,255,0) 72%);
+		box-shadow: 0 0 calc(12px * var(--scale, 1)) calc(3px * var(--scale, 1)) rgba(170,235,255,.55);
+	}
+	/*
+	 * 一条流星的一生 ✓：淡入 → 划过 → 淡出 ✓（大部分时间是不在的 ✓ ——
+	 * 十几颗错开延迟 ✓，所以屏幕上总有几颗在飞、又不会糊成一片 ✓）。
+	 * 只动 `transform` / `opacity` ✓（合成层 ✓，手机上不掉帧 ✓）。
+	 */
+	@keyframes dsh-meteor {
+		0% { transform: rotate(31deg) translate3d(0, 0, 0); opacity: 0; }
+		4% { opacity: 1; }
+		62% { opacity: .95; }
+		100% { transform: rotate(31deg) translate3d(74vw, 74vh, 0); opacity: 0; }
+	}
+	/* 刹车：静下来 / 系统减弱动态 → **流星不飞了** ✓（月亮留着 ✓ —— 它本来就基本静止 ✓）。 */
+	body.bg-cyber.bg-still #sky .meteor { display: none; }
+	body.bg-cyber.bg-still #sky .moon::before { animation: none; }
+	@media (prefers-reduced-motion: reduce) {
+		body.bg-cyber #sky .meteor { display: none; }
+		body.bg-cyber #sky .moon::before { animation: none; }
+	}
 	/*
 	 * ⚠️ 交互控件**一个一个明确接管** ✓ —— 不追着亮色模式里那些老规则跑 ✗
 	 *（它们散在四个 `@media (prefers-color-scheme: light)` 块里 ✓，一处漏掉就是一个"白底白字看不见" ✗ ——
@@ -1160,6 +1251,15 @@
 
 <!-- 用户自己挑的背景（视频或图）。没配就整层不显示，页面保持原来的样子。 -->
 <div id="backdrop"><div class="scrim"></div></div>
+<!--
+	4.8.2「星空」层 ✓（用户 2026-10-15：「这流星雨就是线啊…最好再加上好看的月亮…
+	而且可以流星雨划过对话框，更有感觉」✓）：
+	**月亮 + 流星**都画在 CSS 里 ✓（不用图片 ✓ —— 见下面 CSS 注释里为什么 ✓）。
+	⚠️ 它刻意在**内容之上**（z-index 2 ✓ > `#app` 的 1 ✓）—— 所以流星会**从对话框上面划过** ✓；
+	但**仍然在面板之下**（面板 z-index 更高 ✓），而且 `pointer-events: none` ✓
+	（划过归划过 ✓，**绝不挡点按** ✗ —— 点了没反应是项目铁律里最不许的事 ✓）。
+-->
+<div id="sky" aria-hidden="true"></div>
 
 <!-- 看大图：真 URL，长按可存进手机相册 -->
 <div id="viewer">
@@ -5301,7 +5401,53 @@
 	 * 原来的样子 —— 背景是装饰，绝不能因为它让界面用不了。
 	 */
 	let backdropKey = ''
+	/*
+	 * 🔴 4.8.2：把「星空」搭出来 ✓（月亮 + 流星 ✓）。
+	 *
+	 * ⚠️ 参数写成**固定表** ✓，不用 `Math.random()` ✗ —— 随机会让"截图对不上""问题复现不了" ✓
+	 *（这一整天在预览里吃了不少"看不出来是不是改坏了"的亏 ✓）。表里 12 颗：
+	 * 起点铺在左上到中上 ✓（所以会**划过对话框** ✓），长短 / 速度 / 延迟 / 大小都错开 ✓。
+	 */
+	const SKY_METEORS = [
+		{ left: '-6%', top: '2%', len: 190, dur: 2.3, delay: 0, scale: 1 },
+		{ left: '12%', top: '10%', len: 140, dur: 2.9, delay: 0.7, scale: 0.8 },
+		{ left: '30%', top: '4%', len: 230, dur: 2.1, delay: 1.5, scale: 1.15 },
+		{ left: '48%', top: '14%', len: 160, dur: 3.2, delay: 2.4, scale: 0.9 },
+		{ left: '4%', top: '22%', len: 120, dur: 3.6, delay: 3.1, scale: 0.7 },
+		{ left: '38%', top: '26%', len: 200, dur: 2.6, delay: 4.2, scale: 1.05 },
+		{ left: '58%', top: '6%', len: 175, dur: 2.8, delay: 5.0, scale: 0.95 },
+		{ left: '20%', top: '36%', len: 150, dur: 3.4, delay: 5.9, scale: 0.85 },
+		{ left: '66%', top: '20%', len: 210, dur: 2.4, delay: 6.6, scale: 1.1 },
+		{ left: '-2%', top: '44%', len: 130, dur: 3.9, delay: 7.4, scale: 0.75 },
+		{ left: '44%', top: '40%', len: 185, dur: 3.0, delay: 8.3, scale: 1 },
+		{ left: '74%', top: '30%', len: 165, dur: 3.3, delay: 9.1, scale: 0.9 },
+	]
+
+	let skyBuilt = false
+	function buildSky() {
+		if (skyBuilt === true) return
+		skyBuilt = true
+		const layer = $('sky')
+		if (layer === null) return
+		const moon = document.createElement('div')
+		moon.className = 'moon'
+		layer.appendChild(moon)
+		for (const one of SKY_METEORS) {
+			const node = document.createElement('i')
+			node.className = 'meteor'
+			node.style.setProperty('--len', one.len + 'px')
+			node.style.setProperty('--dur', one.dur + 's')
+			node.style.setProperty('--delay', one.delay + 's')
+			node.style.setProperty('--scale', String(one.scale))
+			node.style.left = one.left
+			node.style.top = one.top
+			layer.appendChild(node)
+		}
+	}
+
 	function applyBackdrop(info) {
+		// 4.8.2：星空（月亮 + 流星）按需搭一次 ✓（隐藏与否由 CSS 的 `body.bg-cyber` 决定 ✓）。
+		buildSky()
 		const layer = $('backdrop')
 		/*
 		 * 4.7.0：**自带预设**（赛博朋克 ✓）—— 它是 **CSS 画的** ✓，没有 url、也没有字节数 ✓，

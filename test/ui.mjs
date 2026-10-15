@@ -4815,6 +4815,20 @@ await wait(40)
 	check('🔴 页面当场铺上赛博朋克 ✓（body 上有 `.bg-cyber` ✓ —— CSS 画的网格 ✓）',
 		window.document.body.classList.contains('bg-cyber') && window.document.body.classList.contains('hasbg'),
 		`bg-cyber=${window.document.body.classList.contains('bg-cyber')} hasbg=${window.document.body.classList.contains('hasbg')}`)
+	/*
+	 * 4.8.2：**月亮 + 流星** ✓（用户：「这流星雨就是线啊…最好再加上好看的月亮」✓）——
+	 * 钉"真搭出来了" ✓（1 个月亮 + 12 颗流星 ✓），而且要**有头有尾** ✓（核 + 尾两个元素都在 ✓）。
+	 */
+	check('🔴 星空真的搭出来了 ✓（1 个月亮 + 12 颗流星 ✓）',
+		$('sky').querySelectorAll('.moon').length === 1 && $('sky').querySelectorAll('.meteor').length === 12,
+		`月亮 ${$('sky').querySelectorAll('.moon').length} / 流星 ${$('sky').querySelectorAll('.meteor').length}`)
+	check('🔴 流星**大小 / 速度 / 延迟各不相同** ✓（一样的话就是"复制粘贴的线" ✗）',
+		new Set([...$('sky').querySelectorAll('.meteor')].map((node) => node.style.getPropertyValue('--dur'))).size >= 8
+		&& new Set([...$('sky').querySelectorAll('.meteor')].map((node) => node.style.getPropertyValue('--scale'))).size >= 4,
+		`速度 ${new Set([...$('sky').querySelectorAll('.meteor')].map((node) => node.style.getPropertyValue('--dur'))).size} 种`)
+	check('🔴 星空层**不吃点击** ✓（划过对话框 ≠ 挡住按钮 ✓ —— `pointer-events: none` ✓）',
+		window.getComputedStyle($('sky')).pointerEvents === 'none',
+		window.getComputedStyle($('sky')).pointerEvents)
 	check('面板上写明「当前是赛博朋克」✓', $('bgNow').textContent.includes('赛博朋克'), $('bgNow').textContent.trim())
 	/*
 	 * 4.8.0：**动态** ✓（用户：「最好是动态的背景」✓）—— 默认就是动的 ✓，面板上那个键是刹车 ✓。

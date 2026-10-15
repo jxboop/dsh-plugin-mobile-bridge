@@ -293,5 +293,41 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		[...page.matchAll(/@keyframes (dsh-[a-z-]+)/g)].map((m) => m[1]).join(' '))
 }
 
+/*
+ * 11) 🔴 **月亮 + 流星（不是线）**（4.8.2 ✓）。
+ * 用户 2026-10-15：「这流星雨就是线啊，你好歹把他改成流星的模样，最好再加上好看的月亮…
+ * 而且可以流星雨划过对话框，更有感觉」✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 有星星那一层 ✓（`#sky` ✓ —— 月亮和流星都在这儿 ✓）', page.includes('<div id="sky"'))
+	check('🔴 流星**有头**：亮核是独立一层 ✓（`::after` 的发光圆点 ✓）—— 上一版就是一条等宽的线 ✗',
+		/#sky \.meteor::after \{[\s\S]*?radial-gradient\(circle, #ffffff/.test(page))
+	check('🔴 流星**有尾**：拖尾是**渐隐**的 ✓（从透明到白 ✓）—— 等宽实线看着就是划线 ✗',
+		/#sky \.meteor \{[\s\S]*?linear-gradient\(90deg,[\s\S]*?rgba\(255,255,255,0\)[\s\S]*?#ffffff 100%\)/.test(page))
+	/*
+	 * ⚠️ 这里第一版我写成 `page.match(/#sky \.moon::after \{[\s\S]*?radial-gradient/g).length >= 4` ✗ ——
+	 * **非贪婪匹配到第一个 radial-gradient 就收尾** ✓，永远只能数到 1 ✓（断言当场红 ✓，等于自己抓自己 ✓）。
+	 * 正确写法：先把**整块**抠出来 ✓，再在块里数 ✓。
+	 */
+	const moonCraters = /#sky \.moon::after \{([\s\S]*?)\n\t\}/.exec(page)?.[1] ?? ''
+	check('🔴 有月亮 ✓，而且**不是个白圆** ✓（四块环形山 + 内阴影 ✓）',
+		page.includes('#sky .moon {') && (moonCraters.match(/radial-gradient/g) ?? []).length >= 4
+		&& page.includes('inset -7px -9px 18px'),
+		`环形山 ${(moonCraters.match(/radial-gradient/g) ?? []).length} 块`)
+	check('🔴 **划过对话框** ✓：这一层在内容**之上**（z-index 2 > `#app` 的 1 ✓）',
+		/z-index: 2;[\s\S]{0,200}pointer-events: none/.test(page))
+	check('🔴 但**绝不拦点击** ✗ —— `pointer-events: none` ✓（划过归划过，点了必须有反应 ✓）',
+		/body\.bg-cyber #sky \{[\s\S]*?pointer-events: none/.test(page))
+	check('🔴 流星参数是**固定表** ✓，不用 `Math.random()` ✗（随机会让截图对不上、问题复现不了 ✓）',
+		page.includes('const SKY_METEORS = [') && /SKY_METEORS[\s\S]{0,40}Math\.random/.test(page) === false)
+	check('🔴 刹车管到流星 ✓（静下来 / 减弱动态 → `.meteor` 直接不显示 ✓，月亮留着 ✓）',
+		page.includes('body.bg-cyber.bg-still #sky .meteor { display: none; }')
+		&& page.includes('body.bg-cyber #sky .meteor { display: none; }'))
+	check('🔴 流星只动 transform / opacity ✓（手机上才不掉帧 ✓）',
+		/@keyframes dsh-meteor \{[\s\S]*?\n\t\}/.exec(page)?.[0] !== undefined
+		&& /filter|blur|width:|height:|margin:/.test(/@keyframes dsh-meteor \{[\s\S]*?\n\t\}/.exec(page)[0]) === false)
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
