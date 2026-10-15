@@ -319,8 +319,8 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	check('🔴 流星把"轨迹"和"朝向"拆成两层 ✓（外层 translate + 内层 rotate ✓ —— 上一版混在一起才显得奇怪 ✗）',
 		/#sky \.meteor \{[\s\S]*?translate3d\(var\(--dx\), var\(--dy\)/.test(page)
 		&& /#sky \.meteor \.streak \{[\s\S]*?transform: rotate\(var\(--ang\)\)/.test(page))
-	check('🔴 斜向下：方向是**算出来的** ✓（`--dx` 负、`--dy` 正 ✓ 且 `--ang` 对得上 ✓ —— 不是凑的 ✗）',
-		page.includes("const SKY_METEOR_ANG = '139deg'") && page.includes("const SKY_METEOR_DX = '-66vw'") && page.includes("const SKY_METEOR_DY = '58vh'"))
+	check('🔴 斜向下：方向是**算出来的** ✓（`--dx` 负、`--dy` 正 ✓ 且 `--ang` 对得上 ✓ —— 4.9.2 起同用 vmax ✓）',
+		page.includes("const SKY_METEOR_ANG = '150deg'") && page.includes("const SKY_METEOR_DX = '-104vmax'") && page.includes("const SKY_METEOR_DY = '60vmax'"))
 	check('🔴 月亮**搬到背景层**了 ✓（`#backdrop .moon` ✓）而且是**半透明** ✓（用户：「改成透明的放背景里」✓）',
 		/body\.bg-cyber #backdrop \.moon \{[\s\S]*?opacity: \.72;/.test(page) && page.includes('#sky .moon') === false)
 	check('🔴 月亮**不是个白球** ✓：月海 + 环形山 + **偏心的月相暗影** ✓（`::after` ✓ —— 这一层是"像不像真的"的分水岭 ✓）',
@@ -387,6 +387,35 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	check('🔴 图片背景也有流星 ✓（"一定要是动态" ✓），刹车也管到它们 ✓',
 		page.includes('body.hasbg #sky { display: block') && page.includes('body.bg-still #sky .meteor { display: none; }')
 		&& page.includes('body.bg-still #backdrop img { animation: none; }'))
+}
+
+/*
+ * 13) 🔴 **动图：兜底 + 自愈 + 角度是真的**（4.9.2 ✓）。
+ * 用户 2026-10-15：「动图不能存手机上吗，每次都要好久」「流星应该从右侧斜向下划到左侧屏幕…
+ * 感觉流星像是在往下坠落」「一刷新动图就不见了」✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const server = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	check('🔴 流星轨迹**同一单位（vmax）** ✓ —— 上一版 `-66vw / 58vh` 单位不同 ✗，在竖屏上实际被拉成约 62°（像坠落 ✗）',
+		page.includes("const SKY_METEOR_DX = '-104vmax'") && page.includes("const SKY_METEOR_DY = '60vmax'")
+		&& page.includes("const SKY_METEOR_ANG = '150deg'"))
+	check('🔴 轨迹真的是**从右往左**（30° 浅斜 ✓）：dx 负 + dy 正 ✓，且尾巴朝向 180°−30° = 150° ✓ 与轨迹对齐 ✓',
+		page.includes("const SKY_METEOR_DX = '-104vmax'") && page.includes("const SKY_METEOR_ANG = '150deg'"))
+	check('🔴 起点在**右侧** ✓（12 颗的 x 都 ≥ 70% ✓ —— 才叫"从右侧划过来" ✓）',
+		[...page.matchAll(/\{ x: '(\d+)%', y: '/g)].length >= 12
+		&& [...page.matchAll(/\{ x: '(\d+)%', y: '/g)].every((m) => Number(m[1]) >= 70))
+	check('🔴 缓存**校验字节数** ✓ 对不上就删掉重下 ✓（读到"存了一半"的缓存是"刷新就不见了"的元凶之一 ✗）',
+		/const expect = Number\(info\.bytes\) \|\| 0/.test(page) && /cached\.byteLength === expect/.test(page)
+		&& /store\.delete\(key\)/.test(page))
+	check('🔴 视频挂了**退回静止图** ✓ 而不是把背景抹掉 ✗（`still` + `showStill` + 只有它也挂才 `conceal` ✓）',
+		page.includes('const showStill = () =>') && page.includes('if (stillNode !== null && showStill()) return'))
+	check('🔴 4 秒还没播起来就**先顶静止图** ✓（弱网下不用盯着黑屏等 ✓ = "每次都要好久"的观感 ✓）',
+		page.includes('window.setTimeout(() => { if (shown === false) showStill() }, 4000)'))
+	check('🔴 服务端会**把静止兜底一起给**手机 ✓（视频才给 ✓，配了但文件不在就不发 ✗）',
+		server.includes('const backgroundStill =') && server.includes('...(still === null ? {} : { still })'))
+	check('🔴 `?still=1` 真的送那张图 ✓（手机先铺它秒出 ✓，视频再换上 ✓）',
+		server.includes('const wantStill =') && server.includes('stillName'))
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)

@@ -426,17 +426,30 @@
 	 * 于是"斜向下"这件事是**算出来的** ✓，不是凑出来的 ✓。
 	 * 另外：全部同方向 ✓（真实流星雨就是一个辐射点发出来的 ✓）、匀速 ✓（`linear` ✓）、更快 ✓（1.1~2.0s ✓）。
 	 */
+	/*
+	 * 🔴 4.9.2：**轨迹用同一单位算** ✓（用户 2026-10-15：「流星应该从右侧斜向下划到左侧屏幕，但是你这做的一点都不逼真，
+	 * 而且感觉流星像是在往下坠落」✓）。
+	 * 根因 ✗：上一版写 `--dx: -66vw; --dy: 58vh` ✓ —— **两个单位不一样** ✗：
+	 * 手机屏又高又窄（390×844 ✓），66vw=257px、58vh=489px ✓ → 屏幕上实际角度 = atan(489/257) ≈ **62°** ✗
+	 *（我以为写的是 41° ✓）→ 当然像"往下坠落" ✗。
+	 * 现在两个量都用 **vmax**（同一个单位 ✓）→ 角度是**真的** ✓：
+	 *   `--dx: -104vmax`、`--dy: 60vmax` → atan(60/104) ≈ **30°** ✓（浅斜 ✓ 从右往左 ✓）；
+	 *   拖尾朝向 `--ang: 150deg` ✓（= 180° − 30° ✓，和轨迹严格对齐 ✓）。
+	 * 起点也挪到**右侧**（x 70%~115% ✓）→ 真的是"**从右侧划到左侧**" ✓。
+	 */
 	#sky .meteor {
 		position: absolute; left: var(--x); top: var(--y);
 		animation: dsh-meteor-fly var(--dur) linear var(--delay) infinite;
 		opacity: 0;
 	}
 	#sky .meteor .streak {
-		display: block; width: var(--len); height: 2px; border-radius: 999px;
+		display: block; width: var(--len); height: 1.6px; border-radius: 999px;
 		transform: rotate(var(--ang));
 		transform-origin: 100% 50%;
+		/* 真流星的尾巴：靠近头**最亮**、往后**又长又淡** ✓（加一段中间过渡 ✓ 比两段式更像真的 ✓）。 */
 		background: linear-gradient(90deg,
-			rgba(255,255,255,0) 0%, rgba(190,235,255,.18) 44%, rgba(228,247,255,.70) 84%, #ffffff 100%);
+			rgba(255,255,255,0) 0%, rgba(180,225,255,.10) 30%, rgba(200,235,255,.30) 62%,
+			rgba(232,248,255,.78) 87%, #ffffff 100%);
 	}
 	/* 亮核：流星"有头"就靠这个 ✓（尺寸跟着 --scale 走 ✓，大小颗都有 ✓）。 */
 	#sky .meteor .streak::after {
@@ -5454,7 +5467,18 @@
 		try {
 			const cached = await idbRun('readonly', (store) => store.get(key))
 			if (cached instanceof ArrayBuffer && cached.byteLength > 0) {
-				return URL.createObjectURL(new Blob([cached], { type: info.mediaType }))
+				/*
+				 * 🔴 4.9.2：**必须校验字节数** ✓（用户 2026-10-15：「一刷新动图就不见了」✓）。
+				 * 上次要是**只存了一半**（存的时候页面被刷掉/关掉 ✓），这里 `byteLength > 0` 就认 ✓
+				 * → 每次都用那份坏的 ✓ → 视频永远加载失败 ✗ → 而且**自己好不了** ✗
+				 *（钥匙是 `url+bytes` ✓，只要文件不变就一直是同一个钥匙 ✓）。
+				 * 现在：长度对不上就**当场删掉**再走网络 ✓ = 自愈 ✓。
+				 */
+				const expect = Number(info.bytes) || 0
+				if (expect === 0 || cached.byteLength === expect) {
+					return URL.createObjectURL(new Blob([cached], { type: info.mediaType }))
+				}
+				try { await idbRun('readwrite', (store) => store.delete(key)) } catch { /* 删不掉也就这一次多下一次 */ }
 			}
 		} catch { /* 没本地缓存（或不让存）：走网络 */ }
 		const response = await fetch(info.url, { credentials: 'same-origin' })
@@ -5513,24 +5537,28 @@
 	 *   所以每颗的 `--ang` 都是 **139deg** ✓：拖尾按这个角旋转 ✓，**尾巴朝向 = 飞行方向** ✓。
 	 *   长短 / 速度 / 延迟 / 大小错开 ✓，但**方向不散** ✓ —— 散开看着就乱 ✗。
 	 */
+	/**
+	 * 🔴 4.9.2：流星表（起点在**右侧** ✓、轨迹用 **vmax** 保证角度是真的 30° ✓）。
+	 * 12 颗：起点 x 从 70% 到 118% ✓（右侧进来 ✓），y 从 -10% 到 62% ✓（覆盖整个竖屏 ✓）。
+	 */
 	const SKY_METEORS = [
-		{ x: '82%', y: '-6%', len: 190, dur: 1.5, delay: 0, scale: 1 },
-		{ x: '64%', y: '4%', len: 140, dur: 1.9, delay: 0.6, scale: 0.8 },
-		{ x: '94%', y: '10%', len: 230, dur: 1.3, delay: 1.2, scale: 1.15 },
-		{ x: '50%', y: '12%', len: 160, dur: 2.0, delay: 1.9, scale: 0.9 },
-		{ x: '76%', y: '22%', len: 120, dur: 1.7, delay: 2.6, scale: 0.7 },
-		{ x: '36%', y: '24%', len: 200, dur: 1.6, delay: 3.4, scale: 1.05 },
-		{ x: '88%', y: '32%', len: 175, dur: 1.8, delay: 4.1, scale: 0.95 },
-		{ x: '22%', y: '34%', len: 150, dur: 1.4, delay: 4.9, scale: 0.85 },
-		{ x: '70%', y: '44%', len: 210, dur: 1.2, delay: 5.6, scale: 1.1 },
-		{ x: '10%', y: '6%', len: 130, dur: 2.0, delay: 6.3, scale: 0.75 },
-		{ x: '58%', y: '36%', len: 185, dur: 1.5, delay: 7.1, scale: 1 },
-		{ x: '44%', y: '2%', len: 165, dur: 1.9, delay: 7.9, scale: 0.9 },
+		{ x: '104%', y: '-8%', len: 200, dur: 1.6, delay: 0, scale: 1 },
+		{ x: '88%', y: '2%', len: 150, dur: 2.0, delay: 0.7, scale: 0.8 },
+		{ x: '116%', y: '14%', len: 240, dur: 1.4, delay: 1.4, scale: 1.15 },
+		{ x: '78%', y: '22%', len: 170, dur: 1.9, delay: 2.1, scale: 0.9 },
+		{ x: '110%', y: '30%', len: 130, dur: 1.7, delay: 2.8, scale: 0.7 },
+		{ x: '84%', y: '38%', len: 210, dur: 1.5, delay: 3.6, scale: 1.05 },
+		{ x: '120%', y: '46%', len: 185, dur: 1.8, delay: 4.3, scale: 0.95 },
+		{ x: '74%', y: '52%', len: 160, dur: 1.3, delay: 5.1, scale: 0.85 },
+		{ x: '100%', y: '60%', len: 220, dur: 1.2, delay: 5.8, scale: 1.1 },
+		{ x: '92%', y: '-16%', len: 140, dur: 2.0, delay: 6.5, scale: 0.75 },
+		{ x: '112%', y: '6%', len: 195, dur: 1.5, delay: 7.3, scale: 1 },
+		{ x: '80%', y: '66%', len: 175, dur: 1.9, delay: 8.0, scale: 0.9 },
 	]
-	/** 全表同一个方向 ✓（139° ✓ —— 见上面那段推导 ✓）。 */
-	const SKY_METEOR_ANG = '139deg'
-	const SKY_METEOR_DX = '-66vw'
-	const SKY_METEOR_DY = '58vh'
+	/** 30° 浅斜、从右往左 ✓（**同单位 vmax** ✓ —— 换屏幕尺寸角度也不变 ✓）。 */
+	const SKY_METEOR_ANG = '150deg'
+	const SKY_METEOR_DX = '-104vmax'
+	const SKY_METEOR_DY = '60vmax'
 
 	let skyBuilt = false
 	function buildSky() {
@@ -5627,10 +5655,46 @@
 			document.body.classList.remove('bg-live')
 			backdropKey = ''
 		}
-		node.addEventListener('error', conceal)
+		/*
+		 * 🔴 4.9.2：**视频挂了就退回静止图** ✓（用户 2026-10-15：「一刷新动图就不见了」✓）——
+		 * 以前这里一遇 `error` 就 `conceal()` ✓：**直接把背景抹掉** ✗。
+		 * 而现在知道会有"读到半截缓存"这种事（见 `backdropSource` 的校验 ✓），
+		 * 一旦撞上就**永远**读那份坏的 ✓ → 用户每次刷新都是"没有背景" ✗，自己好不了 ✗。
+		 * 现在：先退回**同一张图的静止版**（服务端会把 `still` 一起给过来 ✓）✓，
+		 * 有东西可看总比"什么都没有"强 ✓；`still` 也挂就才收起 ✓。
+		 */
+		const stillNode = info.still !== undefined && info.still !== null && typeof info.still.url === 'string'
+			? document.createElement('img')
+			: null
+		const showStill = () => {
+			if (stillNode === null || stillNode.isConnected === true) return false
+			stillNode.setAttribute('aria-hidden', 'true')
+			stillNode.addEventListener('load', reveal)
+			stillNode.src = info.still.url
+			layer.insertBefore(stillNode, layer.firstChild)
+			return true
+		}
+		const onError = () => {
+			// ① 视频/图挂 → 有静止版就先顶上 ✓（`reveal` 里会把 `hasbg`/`bg-live` 挂上 ✓）
+			if (stillNode !== null && showStill()) return
+			// ② 连静止版都没有（或它也挂了）→ 才收起背景 ✓
+			conceal()
+		}
+		node.addEventListener('error', onError)
+		if (stillNode !== null) stillNode.addEventListener('error', conceal)
 		if (info.kind === 'video') {
-			node.addEventListener('playing', reveal)
-			node.addEventListener('loadeddata', reveal)
+			const upgrade = () => {
+				// 视频能播了 → 把静止那张撤掉 ✓（两张叠着会互相盖 ✓）。
+				if (stillNode !== null && stillNode.isConnected === true) stillNode.remove()
+				reveal()
+			}
+			node.addEventListener('playing', upgrade)
+			node.addEventListener('loadeddata', upgrade)
+			/*
+			 * 兜底闹钟：4 秒还没信儿（弱网/解码慢 ✓）→ **先把静止图顶上去** ✓，
+			 * 视频什么时候能播再换 ✓。用户不会盯着黑屏等 ✗（这正是"每次都要好久"的观感来源 ✓）。
+			 */
+			window.setTimeout(() => { if (shown === false) showStill() }, 4000)
 		} else {
 			node.addEventListener('load', reveal)
 		}

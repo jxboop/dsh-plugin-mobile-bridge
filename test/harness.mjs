@@ -1433,6 +1433,22 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	 * ⚠️ **没有预设时，「动 / 静」必须被拒** ✓ —— 静默成功就等于"按了没反应" ✗（这正是项目铁律要防的 ✓）。
 	 * 放在"清掉背景"之后测 ✓：此刻确实没有预设 ✓。
 	 */
+	/*
+	 * 4.9.2：**动图的静止兜底** ✓（用户 2026-10-15：「一刷新动图就不见了」「每次都要好久」✓）——
+	 * 背景是视频时，bootstrap 里要**多带一张静止图** ✓（手机先铺它秒出 ✓）；`?still=1` 要真能取到 ✓。
+	 */
+	const stillSet = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ name: 'my-bg.png' }),
+	})
+	check('（前置）先把背景设回一张图 ✓', stillSet.status === 200, String(stillSet.status))
+
+	const restartBoot = await fetch(`${base}/api/bootstrap`, authed)
+	const restartBody = await restartBoot.json()
+	check('🔴 图片背景**不带** `still` ✓（只有视频才需要兜底 ✓，多塞一个地址等于让手机白下一次 ✗）',
+		restartBody.background?.still === undefined, JSON.stringify(restartBody.background?.still ?? null))
+
 	const motionNoPreset = await fetch(`${base}/api/background`, {
 		method: 'POST',
 		headers: { ...authed.headers, 'content-type': 'application/json' },
