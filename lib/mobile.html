@@ -163,6 +163,40 @@
 			radial-gradient(70% 34% at 50% 4%, rgba(0,225,255,.16), transparent 70%),
 			linear-gradient(180deg, #03040a 0%, #070a17 46%, #160a26 74%, #1b0a2a 100%);
 	}
+	/*
+	 * 4.8.0：**让它动起来** ✓（用户 2026-10-15：「最好是动态的背景」✓）。
+	 * 三个动画都只碰「合成层」能廉价处理的东西 ✓（`background-position` / `opacity` ✓）——
+	 * 不碰 `filter` / `blur` / 布局属性 ✗：那类在手机上会掉帧 + 发热 + 耗电 ✓（背景再好看也不值 ✓）。
+	 *   · 地面网格**往眼前流**（横线按自己的重复周期 34px 无缝滚动 ✓ —— 周期对上才不会"跳一下" ✗）；
+	 *   · 地平线**呼吸**（4 秒一轮的辉光强弱 ✓）；
+	 *   · 扫描线**慢慢漂**（8 秒 3px ✓，几乎察觉不到、但屏幕"活"着 ✓）。
+	 * ⚠️ 两条**必须留着**的刹车 ✗：
+	 *   ① `prefers-reduced-motion: reduce` —— 系统里关了动态效果就**一律不动** ✓（有人会晕 ✓，这是无障碍 ✓）；
+	 *   ② `body.bg-still` —— 面板上的「让它静下来」开关 ✓（手机省电 ✓）。
+	 */
+	@keyframes dsh-grid-flow {
+		from { background-position: 0 0, 0 0; }
+		to { background-position: 0 0, 0 34px; }
+	}
+	@keyframes dsh-horizon-pulse {
+		0%, 100% { opacity: .82; }
+		50% { opacity: 1; }
+	}
+	@keyframes dsh-scan-drift {
+		from { background-position: 0 0; }
+		to { background-position: 0 3px; }
+	}
+	body.bg-cyber .scrim::before { animation: dsh-grid-flow 1.7s linear infinite; }
+	body.bg-cyber #backdrop::before { animation: dsh-horizon-pulse 4.2s ease-in-out infinite; }
+	body.bg-cyber #backdrop::after { animation: dsh-scan-drift 8s linear infinite; }
+	body.bg-cyber.bg-still .scrim::before,
+	body.bg-cyber.bg-still #backdrop::before,
+	body.bg-cyber.bg-still #backdrop::after { animation: none; }
+	@media (prefers-reduced-motion: reduce) {
+		body.bg-cyber .scrim::before,
+		body.bg-cyber #backdrop::before,
+		body.bg-cyber #backdrop::after { animation: none; }
+	}
 	/* 地平线：一条亮线 + 双层辉光 ✓（赛博朋克那张图的"骨架"就在这条线 ✓）。 */
 	body.bg-cyber #backdrop::before {
 		content: ''; position: absolute; left: 0; right: 0; top: 74%; height: 2px;
@@ -191,6 +225,86 @@
 		background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px);
 		opacity: .45;
 	}
+	/*
+	 * 4.8.0：**界面风格跟背景协调** ✓（用户 2026-10-15：「还有界面风格要跟背景协调」✓）。
+	 *
+	 * 换上赛博朋克预设的那一刻 ✓，整套配色一起换到同一个调子 ✓：
+	 *   主色 = **霓虹青** ✓、副色 = **品红** ✓、面板压成"夜色玻璃" ✓、描边带一层冷霓虹 ✓。
+	 * 这样按钮、页签、气泡、输入框、选中的那一条……全都跟着变 ✓
+	 *（它们本来就吃 `--accent` / `--panel` 这些变量 ✓ —— **不用去一个个改组件** ✓）。
+	 *
+	 * ⚠️ 三条纪律 ✗：
+	 *   ① **只覆盖颜色变量** ✓ —— 不动布局、不动字号、不动间距 ✓（那些跟背景没关系，动了就是白改 ✓）；
+	 *   ② 选择器用 `body.hasbg.bg-cyber`（特异性 0,2,0 ✓）压过 `body.hasbg` 那条 ✓ ——
+	 *      "有背景时把面板压实"是**顺序敏感**的 ✓，光靠写在后面容易哪天被挪位置就失效 ✗；
+	 *   ③ **不改 `--err` / `--warn` / `--ok`** ✓ —— 红黄绿是"状态语义" ✓，
+	 *      为了好看把它们染成霓虹青，就等于让用户分不清"成功 / 失败" ✗。
+	 */
+	body.hasbg.bg-cyber {
+		/* ⚠️ 文字色**必须一起改** ✗ —— 这是我在预览里抓到的真 bug ✓：
+		   手机系统是**亮色**时，页面那条 `@media (prefers-color-scheme: light) body.hasbg`
+		   把面板设成**白色** ✓、文字设成**深蓝** ✓；我只改了面板（改深 ✓）却没改文字 ✓
+		   → **深色字压在深色面板上** ✓，整个界面糊成一片（截图里就是这样 ✓）。
+		   所以这里把文字/背景也钉成夜色 ✓ —— **赛博朋克本来就是夜景 ✓，配浅色界面才叫不协调** ✓。 */
+		--bg: #070a16;
+		--bg-2: #0b1020;
+		--text: #eaf2ff;
+		--muted: #9fb3d0;
+		--accent: #00e5ff;
+		--accent-2: #ff2dc4;
+		--accent-ink: #04060f;
+		--panel: rgba(10,15,30,.74);
+		--panel-2: rgba(20,26,52,.66);
+		--line: rgba(0,229,255,.18);
+		--field-line: rgba(0,229,255,.22);
+		--code-bg: rgba(6,12,24,.60);
+		--code-line: rgba(0,229,255,.45);
+		--code-name: #7ff0ff;
+		--think-line: rgba(0,229,255,.35);
+		/* 用户那条气泡：品红底 + 霓虹边 ✓（和背景的紫红呼应 ✓，但仍然一眼分得清"这是我说的" ✓）。 */
+		--user-bubble: rgba(255,45,196,.20);
+		--user-border: rgba(255,45,196,.42);
+		--glass-edge: inset 0 1px 0 rgba(0,229,255,.16);
+		--glass-shadow: 0 12px 30px rgba(0,229,255,.10), 0 2px 10px rgba(0,0,0,.45);
+	}
+	/*
+	 * ⚠️ 亮色模式里还有几条**硬编码的白底** ✓（`.bubble` / `.copyb` ✓）——
+	 * 光改变量管不到它们 ✗。这些选择器特异性都在 0,1,0 以下 ✓，
+	 * 所以 `body.bg-cyber ...`（0,2,x ✓）能稳稳压过 ✓，**媒体查询不影响特异性** ✓。
+	 */
+	/*
+	 * ⚠️ 气泡这里要**再抬一级特异性**（`body.hasbg.bg-cyber .bubble` = 0,3,1 ✓）——
+	 * 亮色模式里那条 `body.hasbg` 把面板变量设成白色 ✓，而气泡吃的是变量 ✓；
+	 * 只写 `body.bg-cyber .bubble`（0,2,1 ✓）时实测**还是偏灰** ✓（预览里看出来的 ✓），
+	 * 抬这一级才稳 ✓。**注意别用 `!important`** ✗ —— 那会让以后所有主题都改不动它 ✓。
+	 */
+	body.hasbg.bg-cyber .bubble { background: rgba(12,18,36,.70); border-color: rgba(0,229,255,.20); }
+	body.hasbg.bg-cyber .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
+	body.bg-cyber .copyb { background: rgba(10,16,32,.55); border-color: rgba(0,229,255,.20); }
+	/*
+	 * ⚠️ 交互控件**一个一个明确接管** ✓ —— 不追着亮色模式里那些老规则跑 ✗
+	 *（它们散在四个 `@media (prefers-color-scheme: light)` 块里 ✓，一处漏掉就是一个"白底白字看不见" ✗ ——
+	 *  预览里页签和发送键就是这么瞎掉的 ✓）。这几条特异性都是 0,2,x ✓，稳压亮色模式那些 0,1,x ✓。
+	 */
+	body.bg-cyber .tab { background: rgba(10,16,32,.60); border-color: rgba(0,229,255,.18); color: var(--muted); }
+	body.bg-cyber .tab.on { background: rgba(0,229,255,.10); color: var(--accent); border-bottom-color: var(--accent-2); }
+	body.bg-cyber .iconbtn, body.bg-cyber #toolsToggle { background: rgba(10,16,32,.55); border-color: rgba(0,229,255,.18); color: var(--text); }
+	body.bg-cyber #send, body.bg-cyber .go, body.bg-cyber .actions .go {
+		background: linear-gradient(160deg, var(--accent-2), var(--accent));
+		color: var(--accent-ink); border-color: transparent;
+	}
+	body.bg-cyber input, body.bg-cyber textarea, body.bg-cyber select, body.bg-cyber .plain {
+		background: rgba(8,14,28,.58); color: var(--text); border-color: var(--field-line);
+	}
+	body.bg-cyber input::placeholder, body.bg-cyber textarea::placeholder { color: var(--muted); opacity: .75; }
+	/* 主按钮（发送 / 各种 go）：加一层霓虹辉光 ✓ —— 纯装饰，不加也不影响可用 ✓。 */
+	body.hasbg.bg-cyber .go,
+	body.hasbg.bg-cyber #send {
+		box-shadow: 0 0 18px rgba(0,229,255,.35), 0 2px 10px rgba(0,0,0,.4);
+	}
+	/* 选中的页签：品红下划线 ✓（和地平线同色 ✓）。 */
+	body.hasbg.bg-cyber .tab.on { border-bottom-color: var(--accent-2); }
+
 	body.hasbg { background: #05060d; }
 	body.hasbg #backdrop { display: block; }
 	body.hasbg #gate, body.hasbg #app { position: relative; z-index: 1; }
@@ -1559,8 +1673,11 @@
 					<p class="hint" id="bgNow">当前：没有背景</p>
 				</div>
 				<div class="actions">
-					<!-- 4.7.0：自带的赛博朋克背景 ✓（**CSS 画的** ✓ —— 不用传图、不占流量、任何分辨率都锐利 ✓）。 -->
+					<!-- 4.7.0：自带的赛博朋克背景 ✓（**CSS 画的** ✓ —— 不用传图、不占流量、任何分辨率都锐利 ✓）。
+					     4.8.0：**它默认是动的** ✓（网格往眼前流 / 地平线呼吸 / 扫描线漂 ✓）——
+					     这个键是"刹车" ✓（手机省电、或者看久了晕 ✓）。 -->
 					<button id="bgCyber">🌀 赛博朋克（自带）</button>
+					<button id="bgMotion">🐢 让它静下来</button>
 					<button class="go" id="bgPick">选图片 / 动图 / 视频</button>
 					<button id="bgClear">去掉背景</button>
 				</div>
@@ -5120,6 +5237,8 @@
 			backdropKey = 'preset:' + info.preset
 			layer.querySelectorAll('video, img').forEach((node) => node.remove())
 			document.body.classList.add('bg-cyber', 'hasbg')
+			// 4.8.0：**动 / 静**跟着配置走 ✓（`motion === false` 才静 ✓ —— 缺省是动 ✓，用户就是要动态 ✓）。
+			document.body.classList.toggle('bg-still', info.motion === false)
 			return
 		}
 		document.body.classList.remove('bg-cyber')
@@ -5203,15 +5322,43 @@
 		// （`preset:cyberpunk` = 自带预设 ✓，`url:bytes` = 用户自己传的图/视频 ✓）。
 		const isPreset = backdropKey.startsWith('preset:')
 		$('bgNow').textContent = isPreset
-			? '当前：赛博朋克（自带，不用传图 ✓）'
+			? '当前：赛博朋克（自带，不用传图 ✓）' + (window.document.body.classList.contains('bg-still') ? ' · 已静下来' : ' · 动着')
 			: hasBackdrop ? '当前：已设置（背景文件在电脑上）' : '当前：没有背景'
 		if (hasBackdrop) show($('bgClear'))
 		else hide($('bgClear'))
+		// 4.8.0：动/静那个键只在念预设时有意义 ✓（图片/视频背景它管不着 ✓）。
+		$('bgMotion').textContent = window.document.body.classList.contains('bg-still') ? '▶ 让它动起来' : '🐢 让它静下来'
+		if (isPreset) show($('bgMotion'))
+		else hide($('bgMotion'))
 	}
 
 	$('bgBtn').addEventListener('click', () => { renderBgSheet(); show($('bgopen')) })
 	$('bgBack').addEventListener('click', () => { hide($('bgopen')) })
 	$('bgPick').addEventListener('click', () => $('fileBg').click())
+	/*
+	 * 4.8.0：**动 / 静的刹车** ✓（用户 2026-10-15：「最好是动态的背景」✓ —— 默认就是动的 ✓，
+	 * 这个键给"手机想省电 / 看久了晕"的场合 ✓）。
+	 * ⚠️ 只在念预设那会儿有用 ✗：选了图片/视频背景时它自己会藏起来 ✓（视频本来就会动 ✓，说静也静不下来 ✗）。
+	 */
+	$('bgMotion').addEventListener('click', () => {
+		const still = window.document.body.classList.contains('bg-still')
+		flash(still ? '让它动起来…' : '让它静下来…')
+		void (async () => {
+			try {
+				const body = await api('api/background', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ motion: still }),
+				})
+				applyBackdrop(body.background ?? null)
+				hasBackdrop = body.background !== null && body.background !== undefined
+				renderBgSheet()
+				flash(still ? '背景动起来了 ✓' : '背景静下来了 ✓（省电）')
+			} catch (error) {
+				flash('切换失败：' + String(error?.message ?? error), 3000)
+			}
+		})()
+	})
 	/*
 	 * 4.7.0：一键换上自带的赛博朋克背景 ✓ ——
 	 * 服务端只认白名单里的 `cyberpunk` ✓，设它会**自动摘掉**图片背景 ✓（二选一 ✓，不打架 ✓）。

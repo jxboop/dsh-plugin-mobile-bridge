@@ -858,7 +858,15 @@ async function stubFetch(input, options = {}) {
 			// ⚠️ 一定要**独立判断** ✗：我第一版把它嵌进了 `body.clear === true` 里面 ✓ →
 			// 点「赛博朋克」时根本没走到这儿 ✗（测试当场抓到 ✓）。
 			if (body.preset === 'cyberpunk') {
-				backdropInfo = { preset: 'cyberpunk', kind: 'preset' }
+				backdropInfo = { preset: 'cyberpunk', kind: 'preset', motion: true }
+				return jsonResponse({ ok: true, background: backdropInfo })
+			}
+			// 4.8.0：动 / 静 ✓（和真宿主同形状 ✓：回包里带 motion ✓）。
+			if (typeof body.motion === 'boolean') {
+				if (backdropInfo === null || backdropInfo.preset === undefined) {
+					return jsonResponse({ error: '「动 / 静」只对自带背景有效', needPreset: true }, 400)
+				}
+				backdropInfo = { ...backdropInfo, motion: body.motion }
 				return jsonResponse({ ok: true, background: backdropInfo })
 			}
 			if (body.preset === 'nope') return jsonResponse({ error: '不认识的背景预设', presets: ['cyberpunk'] }, 400)
@@ -4808,6 +4816,28 @@ await wait(40)
 		window.document.body.classList.contains('bg-cyber') && window.document.body.classList.contains('hasbg'),
 		`bg-cyber=${window.document.body.classList.contains('bg-cyber')} hasbg=${window.document.body.classList.contains('hasbg')}`)
 	check('面板上写明「当前是赛博朋克」✓', $('bgNow').textContent.includes('赛博朋克'), $('bgNow').textContent.trim())
+	/*
+	 * 4.8.0：**动态** ✓（用户：「最好是动态的背景」✓）—— 默认就是动的 ✓，面板上那个键是刹车 ✓。
+	 */
+	check('🔴 换上之后**默认是动的** ✓（body 上没有 .bg-still ✓ —— 用户要的就是动态 ✓，不该默认静着 ✗）',
+		window.document.body.classList.contains('bg-still') === false,
+		`bg-still=${window.document.body.classList.contains('bg-still')}`)
+	bgRequests.length = 0
+	click($('bgMotion'))
+	await wait(220)
+	check('🔴 点「让它静下来」→ 发 `motion: false` ✓ 而且 body 上真的加了 `.bg-still` ✓（那把刹车真的接上了 ✓）',
+		bgRequests.length >= 1 && bgRequests[bgRequests.length - 1].motion === false
+		&& window.document.body.classList.contains('bg-still'),
+		JSON.stringify(bgRequests[bgRequests.length - 1] ?? null))
+	check('静下来之后面板上的字变成「▶ 让它动起来」✓（状态看得见 ✓）',
+		$('bgMotion').textContent.includes('动起来'), $('bgMotion').textContent.trim())
+	bgRequests.length = 0
+	click($('bgMotion'))
+	await wait(220)
+	check('🔴 再点一下 → 发 `motion: true` ✓ 而且 `.bg-still` 被摘掉 ✓（能来回切 ✓）',
+		bgRequests.length >= 1 && bgRequests[bgRequests.length - 1].motion === true
+		&& window.document.body.classList.contains('bg-still') === false,
+		JSON.stringify(bgRequests[bgRequests.length - 1] ?? null))
 	// 去掉背景：**必须把预设也摘掉** ✓（不然 CSS 那层会一直留着 ✗）。
 	click($('bgClear'))
 	await wait(220)

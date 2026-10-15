@@ -1392,6 +1392,31 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('🔴 bootstrap 里带的就是预设 ✓（手机一打开就知道要铺赛博朋克 ✓）',
 		afterBootBody.background?.preset === 'cyberpunk', JSON.stringify(afterBootBody.background))
 
+	/*
+	 * 4.8.0：**动 / 静** ✓（用户 2026-10-15：「最好是动态的背景」✓）——
+	 * 默认动 ✓；这个开关只对自带预设有效 ✓（图片静态、视频本来就会动 ✗）→ 没预设时要**说清** ✓，不能静默成功 ✗。
+	 */
+	const motionOff = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ motion: false }),
+	})
+	const motionOffBody = await motionOff.json()
+	check('🔴 「让它静下来」→ 200 ✓ 回包带 motion:false ✓（页面据此加 .bg-still ✓）',
+		motionOff.status === 200 && motionOffBody.background?.motion === false, JSON.stringify(motionOffBody.background))
+	const motionConfig = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('🔴 静止这个选择**写进配置** ✓（重启也还在 ✓）',
+		motionConfig.backgroundMotion === false, JSON.stringify(motionConfig.backgroundMotion ?? null))
+	const motionOn = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ motion: true }),
+	})
+	const motionOnConfig = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('🔴 再点回「动起来」→ **键被删掉** ✓（不留"等于默认值"的僵尸键 ✓）',
+		(await motionOn.json()).background?.motion === true && motionOnConfig.backgroundMotion === undefined,
+		JSON.stringify(motionOnConfig.backgroundMotion ?? null))
+
 	const clearPreset = await fetch(`${base}/api/background`, {
 		method: 'POST',
 		headers: { ...authed.headers, 'content-type': 'application/json' },
@@ -1403,6 +1428,19 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		clearPreset.status === 200 && clearBody.background === null
 		&& clearedConfig.backgroundPreset === undefined && clearedConfig.backgroundFile === undefined,
 		JSON.stringify({ preset: clearedConfig.backgroundPreset ?? null, file: clearedConfig.backgroundFile ?? null }))
+
+	/*
+	 * ⚠️ **没有预设时，「动 / 静」必须被拒** ✓ —— 静默成功就等于"按了没反应" ✗（这正是项目铁律要防的 ✓）。
+	 * 放在"清掉背景"之后测 ✓：此刻确实没有预设 ✓。
+	 */
+	const motionNoPreset = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ motion: false }),
+	})
+	check('🔴 没有自带背景时，「动 / 静」→ 400 并说明只对自带背景有效 ✓（不静默成功 ✗）',
+		motionNoPreset.status === 400 && String((await motionNoPreset.json()).error).includes('自带背景'),
+		String(motionNoPreset.status))
 
 	/*
 	 * ⚠️ **必须还原成上一步那张图片背景** ✓ —— 我第一版这一段跑完就留了个"什么都没有" ✗，
