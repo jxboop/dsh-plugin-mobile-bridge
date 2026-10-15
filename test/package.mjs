@@ -463,5 +463,22 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& /offlineShow[\s\S]{0,900}classList\.remove\('hasbg'\)/.test(page))
 }
 
+/*
+ * 16) 🔴 **用户气泡的配色不能被亮色模式盖掉**（4.9.5 ✓）。
+ * 用户 2026-10-15：「而且一发信息对话框颜色又变回去了」✓。
+ * 根因：亮色模式里有一条 `body.hasbg .row.user .bubble`（0,3,1 ✓）**写在后面** ✓，
+ * 和主题那条**特异性一样** ✗ → 顺序决定 → **它赢** ✗ → 自己发出去的气泡永远是默认浅蓝 ✓。
+ * 修法：主题那条用 `#app` 抬到 **0,4,1** ✓（**不靠挪顺序** ✗ —— 顺序最容易被下次编辑弄坏 ✓）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 `bg-live` 的用户气泡用了 `#app` 抬特异性 ✓（0,4,1 > 亮色模式那条 0,3,1 ✓）',
+		page.includes('body.hasbg.bg-live #app .row.user .bubble'))
+	check('🔴 `bg-cyber` 那套也一起抬了 ✓（同一个坑 ✗ —— 两套主题不能只修一个 ✓）',
+		page.includes('body.hasbg.bg-cyber #app .row.user .bubble'))
+	check('🔴 亮色模式那条**还在** ✓（它本身是对的 ✗ —— 只是不能盖过主题 ✓）',
+		page.includes('body.hasbg .row.user .bubble { background: rgba(170,208,255,.62); }'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

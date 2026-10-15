@@ -331,6 +331,8 @@
 	 * 抬这一级才稳 ✓。**注意别用 `!important`** ✗ —— 那会让以后所有主题都改不动它 ✓。
 	 */
 	body.hasbg.bg-cyber .bubble { background: rgba(10,15,30,.56); border-color: rgba(0,229,255,.24); }
+	/* 4.9.5：用户气泡同样要抬特异性 ✓（原因见下面 `bg-live` 那一处的长注释 ✓ —— 亮色模式那条写在后面 ✗）。 */
+	body.hasbg.bg-cyber #app .row.user .bubble,
 	body.hasbg.bg-cyber .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
 	body.bg-cyber .copyb { background: rgba(10,16,32,.55); border-color: rgba(0,229,255,.20); }
 	/*
@@ -572,6 +574,14 @@
 	body.hasbg.bg-live .hint, body.hasbg.bg-live .sheetbar { text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 	/* 亮色模式那几条硬编码白底也要接管 ✓（不然又是"白底白字看不见" ✗）。 */
 	body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50); border-color: rgba(255,196,120,.22); }
+	/*
+	 * ⚠️ 4.9.5：这里的**用户气泡**必须用 `#app` 再抬一级特异性（0,4,1 ✓）✗——
+	 * 亮色模式里有一条 `body.hasbg .row.user .bubble`（0,3,1 ✓）**写在后面** ✓，
+	 * 和我原版那条**一样高** ✗ → 按"谁写在后面谁赢" ✓ → **它赢** ✗ →
+	 * 用户自己发出去的那条气泡永远是默认浅蓝 ✗（"**一发信息对话框颜色就变回去**" ✓✓）。
+	 * 📌 不靠"把我这条挪到后面" ✗ —— 顺序这种东西哪天被人一挪就坏 ✓；**特异性钉死**才稳 ✓。
+	 */
+	body.hasbg.bg-live #app .row.user .bubble,
 	body.hasbg.bg-live .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
 	body.bg-live .copyb { background: rgba(12,14,20,.48); border-color: rgba(255,196,120,.20); }
 	body.bg-live .tab { background: rgba(12,14,20,.46); border-color: rgba(255,196,120,.20); color: var(--muted); }
