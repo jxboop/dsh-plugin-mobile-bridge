@@ -386,9 +386,9 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/body\.hasbg\.bg-live #backdrop img \{\s*transform: scale\(1\.18\);\s*\}/.test(page))
 	check('🔴 暖金色调 ✓ + **更透明** ✓（气泡 .50 / 面板 .52 ✓ —— 用户要"透明能够适配这张图"✓）',
 		/body\.hasbg\.bg-live \{[\s\S]*?--accent: #ffb454/.test(page)
-		&& page.includes('body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50)'))
+		&& page.includes('background: var(--bubble, rgba(16,18,26,.20))'))
 	check('🔴 下半压得更重 ✓（那张图下半是亮水面 ✓ —— 4.9.3 起 .24 → .60 ✓：更透，但下重上轻 ✓）',
-		page.includes('rgba(8,9,14,.24) 0%, rgba(8,9,14,.24) 46%, rgba(8,9,14,.60) 100%'))
+		page.includes('rgba(8,9,14,.12) 0%, rgba(8,9,14,.12) 46%, rgba(8,9,14,.40) 100%'))
 	check('🔴 图片背景也有流星 ✓（"一定要是动态" ✓），刹车也管到它们 ✓',
 		page.includes('body.hasbg #sky { display: block') && page.includes('body.bg-still #sky .meteor { display: none; }')
 		&& page.includes('body.bg-still #backdrop img { animation: none; }'))
@@ -437,8 +437,8 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		durs.length >= 12 && durs.every((d) => d >= 2.6),
 		`${durs.length} 颗，最短 ${Math.min(...durs)}s / 最长 ${Math.max(...durs)}s`)
 	check('🔴 文字框**更透明** ✓（面板 .34 / 气泡 .34 / 工具键 .28 ✓ —— 上一版 .52/.50 ✗）',
-		page.includes('--panel: rgba(12,14,22,.34)') && page.includes('--panel-2: rgba(24,26,36,.30)')
-		&& page.includes('rgba(255,180,84,.16)'))
+		page.includes('--panel: rgba(12,14,22,.18)') && page.includes('--panel-2: rgba(24,26,36,.16)')
+		&& page.includes('rgba(255,180,84,.10)') && page.includes('--bubble: rgba(16,18,26,.20)'))
 	check('🔴 透明还能看清：**文字阴影**在 ✓（不靠把背景压暗 ✗ —— 阴影跟着字走 ✓，背景不受损 ✓）',
 		page.includes('text-shadow: 0 1px 3px rgba(0,0,0,.78), 0 0 14px rgba(0,0,0,.5)'))
 }

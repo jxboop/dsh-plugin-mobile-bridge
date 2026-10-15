@@ -552,21 +552,33 @@
 		--accent: #ffb454;
 		--accent-2: #ffd9a0;
 		--accent-ink: #26170a;
-		--panel: rgba(12,14,22,.34);
-		--panel-2: rgba(24,26,36,.30);
+		/*
+		 * 🔴 4.10.3：**再透一档** ✓（用户 2026-10-15：「对话框还是不够透明看到背景」✓）。
+		 * 上一档是 .34 / .30 / .16 / 纱 .24-.60 ✓ —— 用户还是觉得挡着背景 ✓。
+		 * 这一档：面板 **.18**、二级面板 **.16**、用户气泡 **.10**、输入区更透 ✓；
+		 * 压暗的纱也大幅让开（**.12 / .12 / .40** ✓ —— 底下那点深色留着 ✓，
+		 * 因为屏幕下方是亮水面 ✓，字最容易糊 ✓）。
+		 * ⚠️ "透"和"读得清"是一对矛盾 ✗ —— 这版**不靠压暗** ✓，
+		 * 靠下面那条**文字阴影**（跟着字走 ✓，背景一点不受损 ✓）+
+		 * 给气泡里加一层**很淡的底**（`backdrop-filter` 模糊 ✓ —— 背景还在、字却立起来了 ✓）。
+		 */
+		--panel: rgba(12,14,22,.18);
+		--panel-2: rgba(24,26,36,.16);
 		--line: rgba(255,196,120,.18);
 		--field-line: rgba(255,196,120,.22);
-		--code-bg: rgba(8,10,16,.30);
+		--code-bg: rgba(8,10,16,.18);
 		--code-line: rgba(255,196,120,.35);
 		--code-name: #ffd9a0;
 		--think-line: rgba(255,196,120,.28);
-		--user-bubble: rgba(255,180,84,.16);
+		--user-bubble: rgba(255,180,84,.10);
+		/* 4.10.3：助手气泡的底（原来写死在 `.bubble` 那条里 ✗ —— 调变量调不到它 ✓）。 */
+		--bubble: rgba(16,18,26,.20);
 		--user-border: rgba(255,196,120,.38);
 		--glass-edge: inset 0 1px 0 rgba(255,214,160,.18);
 		--glass-shadow: 0 10px 26px rgba(0,0,0,.34);
 	}
 	body.hasbg.bg-live #backdrop .scrim {
-		background: linear-gradient(180deg, rgba(8,9,14,.24) 0%, rgba(8,9,14,.24) 46%, rgba(8,9,14,.60) 100%);
+		background: linear-gradient(180deg, rgba(8,9,14,.12) 0%, rgba(8,9,14,.12) 46%, rgba(8,9,14,.40) 100%);
 	}
 	/* 透明界面的"清晰"靠**文字阴影** ✓（不是靠把背景压暗 ✗）。 */
 	body.hasbg.bg-live .bubble,
@@ -577,7 +589,21 @@
 	body.hasbg.bg-live h1, body.hasbg.bg-live h2, body.hasbg.bg-live h3,
 	body.hasbg.bg-live .hint, body.hasbg.bg-live .sheetbar { text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 	/* 亮色模式那几条硬编码白底也要接管 ✓（不然又是"白底白字看不见" ✗）。 */
-	body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50); border-color: rgba(255,196,120,.22); }
+	/*
+	 * 🔴 4.10.3：**这才是"对话框不够透明"的真凶** ✗（用户 2026-10-15：「对话框还是不够透明看到背景」✓）。
+	 * 这条**助手气泡**一直是**写死的 `rgba(16,18,26,.50)`** ✗ ——
+	 * 我前几轮调的 `--panel` / `--user-bubble` 那些变量 ✓ **它一个都没用** ✓✓
+	 * → 所以"面板变透了"用户却看不见变化 ✓（他看的就是这条 ✓）。
+	 * 现在：颜色**走变量** ✓（以后调一处就够 ✓）+ **加一层轻微背景模糊** ✓ ——
+	 * 这是"透"和"读得清"同时成立的正解 ✓：背景**还在**（模糊了但看得见 ✓），
+	 * 字面上的对比度却上来了 ✓（比"把背景压暗"好得多 ✗）。
+	 */
+	body.hasbg.bg-live .bubble {
+		background: var(--bubble, rgba(16,18,26,.20));
+		border-color: rgba(255,196,120,.22);
+		-webkit-backdrop-filter: blur(7px);
+		backdrop-filter: blur(7px);
+	}
 	/*
 	 * ⚠️ 4.9.5：这里的**用户气泡**必须用 `#app` 再抬一级特异性（0,4,1 ✓）✗——
 	 * 亮色模式里有一条 `body.hasbg .row.user .bubble`（0,3,1 ✓）**写在后面** ✓，
