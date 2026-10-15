@@ -488,16 +488,19 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
 	/*
-	 * ⚠️ 4.9.7：这里本来有"128KB / 重试 5 次 / 并发 2"三条断言 ✓ —— 那是我为弱网改的三处 ✓，
-	 * 结果**把上传整条路弄坏了** ✗（ui 十条红 ✓）→ 三处**全部撤回** ✓。
-	 * 断言也跟着改成 **钉住"撤回后的已知good值"** ✓：这样以后谁（包括我 ✗）再动这三个数，
-	 * 会先在这里红一下 ✓，而不是悄悄上线 ✓。
+	 * ⚠️ 4.9.11：这条从"钉住撤回后的**旧值**"（512KB / 3）✓ 改成"钉住**逐处验证过的新值**" ✓ ——
+	 * 过程值得记 ✗：①并发 3→2 ✓ 单独跑绿 ✓；②片长 512KB→128KB ✓ 再单独跑绿 ✓；
+	 * ③重试 3→5 次 + 6 秒封顶 ✗ → **ui 4 条红** ✓（`分片:24` 证明分片本身没问题 ✓，
+	 * 红的是失败路径的**时序期望** ✗）→ **只撤这一处** ✓。
+	 * 📌 4.9.7 三处一起改 → 十条红、分不清 ✗；这次逐处验 → **一眼看出是哪一处** ✓。
 	 */
-	check('🔴 撤回之后：分片仍是 **512KB** ✓、重试 **3 次 / 400ms** ✓、并发 **3** ✓（弱网那版改坏了 ✗，已撤 ✓）',
-		page.includes('const CHUNK_BYTES = 512 * 1024')
+	check('🔴 上传参数（**逐处验证过** ✓）：片 **128KB** ✓、并发 **2** ✓、重试**故意仍是 3 次 / 400ms** ✓'
+		+ '（第③处试过、把 ui 弄红 ✗ → 只撤它 ✓，要动得连测试期望一起重做 ✓）',
+		page.includes('const CHUNK_BYTES = 128 * 1024')
+		&& page.includes('const CHUNK_PARALLEL = 2')
 		&& page.includes('for (let tries = 0; tries < 3; tries += 1)')
 		&& page.includes('setTimeout(resolve, 400 * (tries + 1))')
-		&& page.includes('const CHUNK_PARALLEL = 3'))
+		&& page.includes('const giveUpAt') === false)
 	check('🔴 静止兜底也**进了缓存** ✓（原来直接给 url ✗ → 每次重下 141KB ✓）',
 		/const showStill = \(\) => \{[\s\S]{0,900}backdropSource\(info\.still\)/.test(page))
 }
