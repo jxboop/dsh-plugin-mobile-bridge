@@ -7486,11 +7486,34 @@
 	 * 以 CHUNK_PARALLEL 条同时在飞、按偏移写 —— 谁先到都行。每片失败重试 2 次
 	 * （同一片同尺寸，不能中途改尺寸，否则偏移全错）。
 	 */
+	/**
+	 * 🔴 4.9.10：**断点续传的"记住"** ✓（用户 2026-10-15：「ok」= 按 1→3→2 继续 ✓，这一步是 ③ ✓）。
+	 *
+	 * 现场问题 ✗：`uploadInChunks` 里的 `uploadId` **每次调用都是随机新生成的** ✓ →
+	 * 传了一半断了、重试时服务端那边**从零另开一份** ✗ → 前面传的片全白费 ✓（弱网下这是致命的 ✓）。
+	 *
+	 * 两根柱子 ✓：
+	 *   · **同一个文件用同一个 `uploadId`** ✓（用"名字 + 字节数 + 开头一小段内容"拼出稳定钥匙 ✓
+	 *     —— 带上内容那几位是为了避免"两个不同文件恰好同名同大小"撞车 ✗）；
+	 *   · 客户端记住**哪些片已经被服务端确认** ✓（`uploadResume` ✓）→ 重试时**直接跳过** ✓，
+	 *     进度照常从 0 走到 N ✓（用户看到的还是"x/y 片"✓，只是快多了 ✓）。
+	 *
+	 * ⚠️ 全部传完之后**把记录清掉** ✓：那份上传在服务端已经"完结" ✓，
+	 * 之后再发同一个文件必须**重新完整传一遍** ✗（否则会拼出一个缺片的坏文件 ✗✗）。
+	 */
+	const uploadResume = new Map()
+
 	async function uploadInChunks(entry, label, position, count, onProgress) {
-		const uploadId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 		const bytes = base64ToBytes(entry.data)
 		const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES))
-		const sendChunk = async (index) => {
+		// 稳定钥匙 ✓（服务端按 uploadId 归拢分片 ✓ —— 同一个钥匙 = 接着上次那份继续 ✓）。
+		const resumeId = 'u' + String(entry.name ?? '') + ':' + String(bytes.length) + ':' + String(entry.data ?? '').slice(0, 48)
+		const uploadId = resumeId
+		const acked = uploadResume.get(resumeId) ?? new Set()
+		uploadResume.set(resumeId, acked)
+		const sendChunk = async (index, force) => {
+			// 已经确认过的片**不再重传** ✓（这就是"续传"本身 ✓）；`force` 例外 ✓（见下面"拿路径"那段 ✓）。
+			if (force !== true && acked.has(index) === true) return null
 			const slice = bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES)
 			let lastError = null
 			/*
@@ -7502,7 +7525,7 @@
 			 */
 			for (let tries = 0; tries < 3; tries += 1) {
 				try {
-					return await api('api/upload', {
+					const done = await api('api/upload', {
 						method: 'POST',
 						headers: { 'content-type': 'application/json' },
 						body: JSON.stringify({
@@ -7518,6 +7541,9 @@
 							data: bytesToBase64(slice),
 						}),
 					})
+					// 4.9.10：这片**服务端已经收下了** ✓ → 记下来 ✓（下次重试跳过它 ✓ = 续传 ✓）。
+					acked.add(index)
+					return done
 				} catch (error) {
 					lastError = error
 					await new Promise((resolve) => setTimeout(resolve, 400 * (tries + 1)))
@@ -7563,10 +7589,25 @@
 				}
 			}
 			await Promise.all(Array.from({ length: Math.min(CHUNK_PARALLEL, Math.max(0, total - 1)) }, worker))
+			/*
+			 * 🔴 4.9.10：**"全被跳过"时要补最后一片** ✓ —— 上次所有片都确认了、只差最后的响应丢了 ✗，
+			 * 这次就会把全部片跳过 ✓ → `last` 还是 null ✗ → 拿不到服务端给的**路径** ✗ → 发出去的消息
+			 * 会引用一个空路径 ✗。所以强制重传**最后一片** ✓（按偏移写，重传同一片是幂等的 ✓），
+			 * 用它拿回 `{ path, done: true }` ✓。
+			 */
+			if (last === null && total > 0) last = await sendChunk(total - 1, true)
+			// 4.9.10：**全部传完就把续传记录清掉** ✓ —— 那份上传在服务端已经完结 ✓，
+			// 之后再发同一个文件必须**重新完整传一遍** ✗（否则会拼出一个缺片的坏文件 ✗✗）。
+			uploadResume.delete(resumeId)
 			reportToBridge('upload-done',
 				`${label}（第 ${position}/${count} 条）${total} 片全传完 → ${last?.path ?? '(服务端没回路径)'}`, bytes.length)
 			return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
 		} catch (error) {
+			/*
+			 * 4.9.10：**断了就留着记录** ✓ —— 重试时从"已经确认的那几片"之后接着传 ✓（这就是续传 ✓）。
+			 * ⚠️ 上报里那句"传到 x/y 片"用的是 `done` ✓（**累计确认数** ✓，跳过的那几片也算 ✓）——
+			 * 续传之后这个数会**一开始就比较大** ✓，这是对的 ✓（那些片确实已经在服务端了 ✓）。
+			 */
 			reportToBridge('upload-aborted',
 				`${label}（第 ${position}/${count} 条）传到 ${done}/${total} 片断了：${String(error?.message ?? error)}`, bytes.length)
 			throw error

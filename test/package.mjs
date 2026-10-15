@@ -544,5 +544,25 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& (page.match(/createObjectStore\(/g) ?? []).length === 2)
 }
 
+/*
+ * 20) 🔴 **断点续传**（4.9.10 ✓）。
+ * 用户 2026-10-15：「ok」= 按 1→3→2 继续 ✓，这一步是 ③ ✓。
+ * 现场病根 ✗：`uploadId` **每次调用都随机新生成** ✓ → 断了一半再重试，服务端**从零另开一份** ✗。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 `uploadId` 对同一个文件**是稳定的** ✓（名字 + 字节数 + 内容开头 ✓）—— 不再是随机值 ✗（那等于每次都从头来 ✓）',
+		/const resumeId = 'u' \+ String\(entry\.name[\s\S]{0,200}const uploadId = resumeId/.test(page)
+		&& /const uploadId = Date\.now\(\)\.toString\(36\) \+ Math\.random/.test(page) === false)
+	check('🔴 已确认的片**记下来** ✓（`acked.add(index)` ✓，成功那一步之后才记 ✓）',
+		/acked\.add\(index\)[\s\S]{0,80}return done/.test(page))
+	check('🔴 重试时**跳过**已确认的片 ✓（`force` 例外 ✓）—— 这就是"续传"本身 ✓',
+		/if \(force !== true && acked\.has\(index\) === true\) return null/.test(page))
+	check('🔴 传完**清掉记录** ✓（否则同一个文件再发一次会拼出缺片的坏文件 ✗）',
+		/uploadResume\.delete\(resumeId\)/.test(page))
+	check('🔴 **"全被跳过"时补传最后一片拿路径** ✓（否则 `last` 为 null ✗ → 消息引用空路径 ✗）',
+		/if \(last === null && total > 0\) last = await sendChunk\(total - 1, true\)/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
