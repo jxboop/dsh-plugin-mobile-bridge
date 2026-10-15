@@ -5643,8 +5643,18 @@
 		/*
 		 * 4.7.0：**自带预设**（赛博朋克 ✓）—— 它是 **CSS 画的** ✓，没有 url、也没有字节数 ✓，
 		 * 所以钥匙要单独算 ✓（不然"从图片切到预设"会被当成没变、不重画 ✗）。
+		 *
+		 * 🔴🔴 4.10.1：**这里必须排除"带素材的预设"** ✗（用户 2026-10-15：
+		 * 「刚刚放上去的动态图呢，怎么回到以前的风格了？」✓ —— 这是我 4.10.0 引入的 bug ✗）。
+		 * 归档风格（「夜行星」✓）会带 `preset` **和** `archived: true` ✓ —— 老代码只看 `preset` ✓
+		 * → 把它当成"CSS 画的那种" ✗ → **加上 `bg-cyber`** ✓✓ → 于是：**赛博朋克回来了、视频永远不铺** ✗
+		 *（现象正是"回到以前的风格"✓）。
+		 * 现在：**只有不带素材的**（`archived !== true` ✓）才走这条 CSS 路 ✓；
+		 * 带素材的**落到下面那条正常媒体路** ✓（url / 静止兜底 / 视频层全都照旧 ✓）。
 		 */
-		if (info !== null && info !== undefined && typeof info.preset === 'string' && info.preset !== '') {
+		const isCssPreset = info !== null && info !== undefined && typeof info.preset === 'string'
+			&& info.preset !== '' && info.archived !== true
+		if (isCssPreset === true) {
 			backdropKey = 'preset:' + info.preset
 			layer.querySelectorAll('video, img').forEach((node) => node.remove())
 			document.body.classList.add('bg-cyber', 'hasbg')
@@ -5654,6 +5664,13 @@
 		}
 		document.body.classList.remove('bg-cyber')
 		document.body.classList.remove('bg-live')
+		/*
+		 * 🔴 4.10.1：**把"赛博朋克"那套类也摘掉** ✗ —— 老代码只在 `conceal()` 里摘 ✓，
+		 * 所以"赛博朋克 → 带素材的风格（夜行星 ✓）"这条路会**两套叠着** ✗：
+		 * cyberpunk 的霓虹地平线/网格 + 视频层同时生效 ✓（画面上就是一团乱 ✓）。
+		 * 走 CSS 预设那条路时下面会**重新加回来** ✓，所以这里可以放心摘 ✓。
+		 */
+		document.body.classList.remove('bg-cyber', 'bg-still')
 		const key = info === null || info === undefined ? '' : String(info.url) + ':' + String(info.bytes)
 		if (key === backdropKey) {
 			/*

@@ -572,5 +572,20 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/if \(last === null && total > 0\) last = await sendChunk\(total - 1, true\)/.test(page))
 }
 
+/*
+ * 21) 🔴 **带素材的预设不能被当成 CSS 预设**（4.10.1 ✓，用户报的真 bug ✗）。
+ * 用户 2026-10-15：「刚刚放上去的动态图呢，怎么回到以前的风格了？」✓
+ * 根因：4.10.0 我在归档信息里带了 `preset: 'planet'` ✓，而页面**只看 `preset`** 就当成
+ * "CSS 画的那种"（赛博朋克 ✓）→ 加上 `bg-cyber` ✗ → **赛博朋克回来了、视频永远不铺** ✗。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 只有**不带素材**的预设才走 CSS 那条路 ✓（`archived !== true` ✓ —— 否则"夜行星"会被当成赛博朋克 ✗）',
+		/const isCssPreset = [\s\S]{0,220}info\.archived !== true/.test(page)
+		&& /if \(isCssPreset === true\) \{/.test(page))
+	check('🔴 切背景时**摘掉 `bg-cyber` / `bg-still`** ✓（否则"赛博朋克 → 夜行星"两套叠着 ✗）',
+		/document\.body\.classList\.remove\('bg-cyber', 'bg-still'\)/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
