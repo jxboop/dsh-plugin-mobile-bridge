@@ -441,5 +441,27 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('text-shadow: 0 1px 3px rgba(0,0,0,.78), 0 0 14px rgba(0,0,0,.5)'))
 }
 
+/*
+ * 15) 🔴 **"一发消息动图就没了"**（4.9.4 ✓）。
+ * 用户 2026-10-15：「而且一发消息动图就没了」✓。
+ * 根因：断线时 `offlineShow()` 有意 `remove('hasbg')` ✓；重连后再调 `applyBackdrop` ✓
+ * 却因为"钥匙没变"被**早退**挡掉 ✗ → `hasbg` 再也回不来 ✓，直到整页刷新 ✓。
+ * 发消息常带一次连接抖动 ✓ → 现象就是"一发消息就没了" ✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 钥匙一样时**不再无脑早退** ✓ —— 会顺手把 `hasbg` / `bg-live` 补回来 ✓（否则断线一次背景就永久消失 ✗）',
+		/if \(key === backdropKey\) \{[\s\S]{0,700}classList\.contains\('hasbg'\) === false[\s\S]{0,200}classList\.add\('hasbg'\)/.test(page))
+	check('🔴 补状态只补「刚才确实显示过」的情况 ✓（`key !== \'\' && backdropShown === true` ✓ —— '
+		+ '从没铺过就补 = 露出视频的整块黑 ✗，ui 那条「一上来不铺」会当场红 ✓）',
+		/if \(key !== '' && backdropShown === true && document\.body\.classList\.contains\('hasbg'\) === false\)/.test(page))
+	check('🔴 「铺过没有」这个标记**在 reveal 里置真、conceal 里置假** ✓（不然它永远不动 = 假标记 ✗）',
+		/const reveal = \(\) => \{[\s\S]{0,200}backdropShown = true/.test(page)
+		&& /const conceal = \(\) => \{[\s\S]{0,200}backdropShown = false/.test(page))
+	check('🔴 `offlineShow` 那条"断线先收掉背景"仍然保留 ✓（素材取不到时留着就是黑屏 ✓ —— 不是把它删掉 ✗）',
+		page.includes("// 背景素材这时候多半也取不到 —— 留着它就是\"黑屏\"本身，先收掉。")
+		&& /offlineShow[\s\S]{0,900}classList\.remove\('hasbg'\)/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

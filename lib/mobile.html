@@ -5546,6 +5546,13 @@
 	 * 原来的样子 —— 背景是装饰，绝不能因为它让界面用不了。
 	 */
 	let backdropKey = ''
+	/**
+	 * 4.9.4：**"铺过没有"** ✓ —— 4.9.4 那个修复需要区分两件事 ✗（一版没分清，被 ui 那条
+	 * "宿主给了背景也不会一上来就铺（视频还在加载时那是一整块黑）"当场抓住 ✓）：
+	 *   · 刚才**还显示着**、被断线收掉了 ✓ → 重连时要**补回来** ✓（"一发消息就没了" ✓）；
+	 *   · **从没铺过**、媒体还没加载完 ✓ → **绝不能补** ✗（那会露出视频的整块黑 ✓ = 黑屏 ✗）。
+	 */
+	let backdropShown = false
 	/*
 	 * 🔴 4.8.3：星空参数 ✓（月亮搬到 `#backdrop` 里了 ✓，这里只剩流星 ✓）。
 	 *
@@ -5634,7 +5641,22 @@
 		document.body.classList.remove('bg-cyber')
 		document.body.classList.remove('bg-live')
 		const key = info === null || info === undefined ? '' : String(info.url) + ':' + String(info.bytes)
-		if (key === backdropKey) return
+		if (key === backdropKey) {
+			/*
+			 * 🔴 4.9.4：**钥匙一样 ≠ 背景还在** ✓（用户 2026-10-15：「一发消息动图就没了」✓）——
+			 * 断线那一下 `offlineShow()` 会 `remove('hasbg')` ✓（有意为之 ✓：素材取不到时留着就是黑屏 ✓），
+			 * 可**重连之后**页面会再调一次 `applyBackdrop(body.background)` ✓ ——
+			 * 那时钥匙**没变** ✓ → 被这条"早退"直接挡掉 ✗ → `hasbg` **再也加不回来** ✗ →
+			 * 背景一直没了 ✓，直到整页刷新才恢复 ✓。而发一条消息往往就带一次连接抖动 ✓
+			 * → 现象正是「**一发消息动图就没了**」✓✓。
+			 * 现在：钥匙一样时**顺手把状态补回来** ✓（元素还在 DOM 里 ✓，加回类就恢复了 ✓）。
+			 */
+			if (key !== '' && backdropShown === true && document.body.classList.contains('hasbg') === false) {
+				document.body.classList.add('hasbg')
+				if (info.kind === 'video' || info.kind === 'image') document.body.classList.add('bg-live')
+			}
+			return
+		}
 		backdropKey = key
 		layer.querySelectorAll('video, img').forEach((node) => node.remove())
 		if (key === '') {
@@ -5661,15 +5683,19 @@
 		const reveal = () => {
 			if (shown === true) return
 			shown = true
+			// 4.9.4：记下"**真的铺上去过**" ✓ —— 重连时才知道该不该补回来 ✓（见 `backdropShown` 的说明 ✓）。
+			backdropShown = true
 			document.body.classList.add('hasbg')
 			/*
 			 * 4.9.0：**图片/视频背景**都要"活"起来 ✓（用户：「一定要是动态图片装上去」✓）——
-			 * `bg-live` 挂上之后：图片会缓慢推近（Ken Burns ✓）、暖色主题生效 ✓、流星放出来 ✓。
+			 * `bg-live` 挂上之后：图片会缓慢旋转（4.9.3 起 ✓）、暖色主题生效 ✓、流星放出来 ✓。
 			 */
 			document.body.classList.add('bg-live')
 		}
 		const conceal = () => {
 			shown = false
+			// 4.9.4：收掉了就不再算"铺过" ✓ —— 否则下次重连会把一个从没显示过的背景硬铺上去 ✗（黑屏 ✓）。
+			backdropShown = false
 			document.body.classList.remove('hasbg')
 			document.body.classList.remove('bg-live')
 			backdropKey = ''
