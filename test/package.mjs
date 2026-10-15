@@ -502,5 +502,24 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/const showStill = \(\) => \{[\s\S]{0,900}backdropSource\(info\.still\)/.test(page))
 }
 
+/*
+ * 18) 🔴 **附件传失败不再白丢（离线传输）**（4.9.8 ✓）。
+ * 用户 2026-10-15：「上传图片视频很难上传，而且总是失败你可以搞一个离线传输」✓。
+ * ⚠️ 上一版（4.9.7）我一次改三处、把上传整条路弄坏 ✗ → 这次**只加一处** ✓，
+ *    而且**不动原有失败路径** ✓（错误照旧抛出去 ✓）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 上传失败时**先试着进离线箱** ✓（`prepared.catch` + `outboxAdd({…files: stuck})` ✓ —— 有网自动补发 ✓）',
+		/prepared\.catch\(\(error\) => \{[\s\S]{0,1400}outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: stuck \}\)/.test(page))
+	check('🔴 **存不下就别装** ✓：超出箱子容量（`weakCanStore` ✓ 上限约 1 MB ✓）时只把**文字**留住 ✓ + 如实说附件没留住 ✓',
+		/weakCanStore\(stuck\) === true[\s\S]{0,900}else if \(body !== ''\)/.test(page)
+		&& page.includes('附件太大，手机上的离线箱存不下'))
+	check('🔴 **进箱之后把输入框里那批附件撤掉** ✓（不撤的话用户再点一次发送就发两遍 ✗）',
+		/outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: stuck \}\) === true[\s\S]{0,400}state\.images = \[\]/.test(page))
+	check('🔴 **原有失败路径一个字没改** ✓（错误仍然抛出去 ✓ → 下面那条"失败 + 重试"照旧 ✓）',
+		/prepared\.catch[\s\S]{0,1600}throw error\n\t\t\}\)\.then\(\(fileRefs\) => \{/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

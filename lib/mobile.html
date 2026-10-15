@@ -6590,7 +6590,43 @@
 		// 2.11.0 ★11：这段抽成了 `prepareRefs()` ✓ —— 弱网模式把附件**延后**发时，
 		// 补发那条路（离线发件箱）也得会传附件 ✓，不能只有 send() 会 ✗。
 		const prepared = weakDeferred === true ? Promise.resolve([]) : prepareRefs(files)
-		prepared.then((fileRefs) => {
+		/*
+		 * 🔴 4.9.8：**附件传失败不再白丢** ✓（用户 2026-10-15：「上传图片视频很难上传，而且总是失败，
+		 * 你可以搞一个离线传输」✓）。
+		 * 现场（`mobile-bridge.log` ✓）：一个 5.3MB 的 .mov 两次都是 **0/11 片就断** ✓ ——
+		 * 而 `prepareRefs()` 一抛错 ✓，整条发送就断了 ✓，**文件从手上消失** ✗（只能重新选 ✓）。
+		 *
+		 * 这一改**只加不减** ✓（不动原来任何一步 ✗ —— 上次一口气改三处、把上传整条路弄坏 ✓，
+		 * 教训记在 CHANGELOG 4.9.7 ✓）：
+		 *   · **能进离线箱就进箱** ✓（复用 2.7.0 那套 ✓：`outboxAdd` + `outboxFlush` 自动补发 + 幂等 requestId ✓；
+		 *     箱子本来就支持带附件的条目 ✓，`outboxFlush` 会**先把附件传上去**再发这条 ✓）；
+		 *   · **箱子放不下**（>1.2MB ✓，localStorage 的硬限制 ✓）→ **文字单独进箱** ✓
+		 *     （绝不让用户白打一段话 ✗）+ **如实说附件没留住** ✓；
+		 *   · 然后把错误**照样抛出去** ✓ → 下面原有的"失败 + 重试"那条路一个字都不改 ✓。
+		 */
+		prepared.catch((error) => {
+			const stuck = images.concat(files)
+			if (stuck.length === 0) throw error
+			const clientId = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
+			if (weakCanStore(stuck) === true) {
+				if (outboxAdd({ clientId, sessionId: target, text: body, images: [], fileRefs: [], files: stuck }) === true) {
+					// 进箱了 → 输入框里那批附件**撤掉** ✓（留着的话再点一次发送就发两遍 ✗）。
+					state.images = []
+					state.files = []
+					renderThumbs()
+					toast('附件没传上去：已收进「离线发件箱」✓ 网络好了自动重发（顶上横幅点一下可立刻试 ✓）', 6000)
+				}
+			} else if (body !== '') {
+				// 存不下附件 → **至少把话留住** ✓，并且**明说附件没留住** ✗（不装 ✓）。
+				if (outboxAdd({ clientId, sessionId: target, text: body, images: [], fileRefs: [], files: [] }) === true) {
+					text.value = ''
+					toast('附件太大，手机上的离线箱存不下（上限约 1 MB）—— 这句话先收着了 ✓，附件等网络好点再传一次 ✓', 8000)
+				}
+			} else {
+				toast('附件没传上去（网络太弱）—— 页面别关，等信号好一点再点「重试」✓', 7000)
+			}
+			throw error
+		}).then((fileRefs) => {
 			// 一次发送用一个固定 requestId：隧道抖一下自动重试时复用它，
 			// 宿主对同一个 id 是幂等的 —— 重试不会变成两条消息。
 			const clientId = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
