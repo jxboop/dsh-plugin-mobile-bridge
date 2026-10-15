@@ -3099,6 +3099,35 @@
 		swipe.decided = true
 	}
 
+	/**
+	 * 🔴 4.6.1（用户 2026-10-15：「左滑默认返回上一步」✓）：
+	 * 有东西可以返回时（工具面板 / 纸开着 ✓），**左右滑 = 只返回上一步** ✓ ——
+	 * 不再"先把面板关掉、顺手把底下的页也翻了" ✗（那是**一下跳两步** ✓，
+	 * 用户看到的是"我就想退回去，怎么一下跑别处去了" ✗）。
+	 *
+	 * 返回 `true` = 这一下手势被"返回"吃掉了 ✓（`swipeEnd` 就别再翻页 ✓）。
+	 * ⚠️ 两条老守卫**照原样搬过来** ✓（不能因为改了手势就把它们丢了 ✗）：
+	 *   · 正在录音：面板上就是停止键 ✓，滑走就够不着了 ✓ —— 不让走，**而且要说明原因** ✓；
+	 *   · 生图里写了提示词：草稿不能悄悄丢 ✗ —— 和 `goPage` 同一套，先问一句 ✓。
+	 */
+	function swipeBackOneStep() {
+		const panel = openToolPanel()
+		if (panel === null) return false
+		/*
+		 * ⚠️ **"本身是一页"的那些不在此列** ✗ —— 录音面板就是页签栏上的一页 ✓
+		 *（`currentPage()` 直接把它算作 'rec' ✓）。要是连它也"返回上一步"吃掉 ✓，
+		 * **余额就再也划不到了** ✗ —— 而"页签栏上看得见的都要能划到"是用户 2026-10-11 亲口提的 ✓。
+		 * 所以：录音面板交给下面的换页逻辑 ✓（它自己那两条守卫在 `goPage` 里 ✓）。
+		 */
+		if (panel === $('recopen')) return false
+		if (panel === $('genopen')) {
+			const draft = String($('genPrompt')?.value ?? '').trim() + String($('genSeed')?.value ?? '').trim()
+			if (draft !== '' && window.confirm('生图里写的还没发出去，确定离开？') === false) return true
+		}
+		hide(panel)
+		return true
+	}
+
 	function swipeEnd(event) {
 		const wasLive = swipe.live
 		const decided = swipe.decided
@@ -3110,6 +3139,8 @@
 		if (touch === undefined) return
 		const dx = touch.clientX - swipe.x
 		if (Math.abs(dx) < 60) return   // 幅度不够：当点击，别翻页
+		// 4.6.1：有面板/纸开着 → 这一下只"返回上一步" ✓（不再顺手翻页 ✗）。
+		if (swipeBackOneStep()) return
 		swipeGo(dx < 0 ? 1 : -1)
 	}
 

@@ -4047,9 +4047,15 @@ check('说明指向了下拉框或读取状态',
 		`gen=${window.getComputedStyle($('genopen')).display}`)
 	window.confirm = () => { confirmAnswer = true; return confirmAnswer }
 	await swipe({ x: 300, y: 400 }, { x: 120, y: 400 })
-	check('确认之后：生图面板收起、真的翻到下一页',
-		window.getComputedStyle($('genopen')).display === 'none' && newOpen() === true,
-		`gen=${window.getComputedStyle($('genopen')).display} new=${newOpen()}`)
+	/*
+	 * ⚠️ 4.6.1 行为变更（用户 2026-10-15：「左滑默认返回上一步」✓）：
+	 * 原来这条钉的是"确认之后**生图面板收起、真的翻到下一页**" ✓（一下两步 ✗）。
+	 * 现在：生图是**工具面板** ✓ → 左右滑**只返回上一步**（关掉它 ✓），**不再顺手翻页** ✗。
+	 * ⚠️ 但"翻页"这件事**没被搞坏** ✓ —— 下面紧接着那一段会单独验"面板关掉之后照样换页" ✓。
+	 */
+	check('🔴 确认之后：生图面板收起 ✓ 而且**不再顺手翻页** ✓（4.6.1：滑一下只返回一步 ✓）',
+		window.getComputedStyle($('genopen')).display === 'none' && newOpen() === false && activeTab() === 'task',
+		`gen=${window.getComputedStyle($('genopen')).display} new=${newOpen()} active=${activeTab()}`)
 	$('genPrompt').value = ''
 	click($('newBack'))
 	await wait(40)
@@ -4181,9 +4187,22 @@ check('说明指向了下拉框或读取状态',
 			activeTab() === atTask && window.getComputedStyle($('sessopen')).display !== 'none',
 			`active=${activeTab()} panel=${window.getComputedStyle($('sessopen')).display}`)
 		await swipe({ x: 300, y: 400 }, { x: 120, y: 400 }, { target: $('sessopen') })
-		check('列表上的空白处左右滑：照样换页（原本的滑动换页没被这一版搞坏）',
-			activeTab() === atTask && newOpen() === true && window.getComputedStyle($('sessopen')).display === 'none',
+		/*
+		 * ⚠️ 4.6.1 行为变更（用户 2026-10-15：「左滑默认返回上一步」✓）：
+		 * 会话列表是**工具面板** ✓ → 左右滑现在**只把它关掉**（返回上一步 ✓），**不翻页** ✗。
+		 * 原来这条钉的是"照样换页" ✓ —— 那时候"面板收起 + 翻页"是一步做完的 ✗（一下两步 ✓）。
+		 */
+		check('🔴 列表上左右滑 = **返回上一步** ✓（列表关掉 ✓、页不换 ✓）',
+			activeTab() === atTask && window.getComputedStyle($('sessopen')).display === 'none' && newOpen() === false,
 			`active=${activeTab()} new=${newOpen()} panel=${window.getComputedStyle($('sessopen')).display}`)
+		/*
+		 * 🔴 紧接着验**翻页本身没被搞坏** ✓ —— 这正是 4.6.1 最容易犯的错 ✗：
+		 * 把"返回"加进手势以后，**页签栏上那几页还得照样能划到** ✓（用户 2026-10-11 的要求 ✓）。
+		 */
+		await swipe({ x: 300, y: 400 }, { x: 120, y: 400 }, { target: $('view-task') })
+		check('🔴 面板都关掉之后，左右滑**照样换页** ✓（4.6.1 没把滑动换页搞坏 ✓）',
+			activeTab() === atTask && newOpen() === true,
+			`active=${activeTab()} new=${newOpen()}`)
 		click($('newBack'))
 		await wait(40)
 		// 收尾：把这一版加的三份本地数据清干净，免得影响后面的用例。
