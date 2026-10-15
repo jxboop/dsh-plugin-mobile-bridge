@@ -6604,7 +6604,7 @@
 		 *     （绝不让用户白打一段话 ✗）+ **如实说附件没留住** ✓；
 		 *   · 然后把错误**照样抛出去** ✓ → 下面原有的"失败 + 重试"那条路一个字都不改 ✓。
 		 */
-		prepared.catch((error) => {
+		prepared.catch(async (error) => {
 			const stuck = images.concat(files)
 			if (stuck.length === 0) throw error
 			const clientId = 'q' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)
@@ -6616,11 +6616,31 @@
 					renderThumbs()
 					toast('附件没传上去：已收进「离线发件箱」✓ 网络好了自动重发（顶上横幅点一下可立刻试 ✓）', 6000)
 				}
-			} else if (body !== '') {
-				// 存不下附件 → **至少把话留住** ✓，并且**明说附件没留住** ✗（不装 ✓）。
-				if (outboxAdd({ clientId, sessionId: target, text: body, images: [], fileRefs: [], files: [] }) === true) {
+			} else if (stuck.length > 0 || body !== '') {
+				/*
+				 * 🔴 4.9.9：**大附件也能先存着** ✓（用户：「ok」= 按 1→3→2 继续 ✓，这一步是 ①大文件队列 ✓）。
+				 * 4.9.8 只做到"进不去箱子就只留文字" ✓ —— 但用户那段 **5.3MB 的视频**正是进不去的那类 ✗。
+				 * 现在多一条腿 ✓：**把文件字节放 IndexedDB** ✓（容量比 localStorage 大一个量级 ✓），
+				 * 离线箱里只留一个**几字节的标记** ✓（`filesInIdb: true` ✓）→ localStorage 一点压力都没有 ✓。
+				 *
+				 * ⚠️ **不新开 objectStore** ✗（那要动数据库版本号 ✓，容易连累背景缓存 ✗✗）——
+				 * 直接复用已有的 `BG_STORE` ✓，键加 `outbox:` 前缀 ✓
+				 * （背景那边只清 `bg:` 前缀的键 ✓，两边互不干扰 ✓）。
+				 */
+				const inIdb = await queueFilesForOutbox(clientId, stuck)
+				const queued = inIdb === true
+					? outboxAdd({ clientId, sessionId: target, text: body, images: [], fileRefs: [], files: [], filesInIdb: true })
+					: (stuck.length === 0 ? false : outboxAdd({ clientId, sessionId: target, text: body, images: [], fileRefs: [], files: [] }))
+				if (queued === true) {
+					state.images = []
+					state.files = []
+					renderThumbs()
 					text.value = ''
-					toast('附件太大，手机上的离线箱存不下（上限约 1 MB）—— 这句话先收着了 ✓，附件等网络好点再传一次 ✓', 8000)
+					toast(inIdb === true
+						? '附件没传上去：**整批收进「离线发件箱」了** ✓（连大视频也存下了 ✓）网络好了自动重发 ✓'
+						: '附件太大，手机上也存不下（IndexedDB 都没塞进去 ✗）—— 这句话先收着了 ✓，附件等网络好点再传一次 ✓', 8000)
+				} else {
+					toast('附件没传上去（网络太弱）—— 页面别关，等信号好一点再点「重试」✓', 7000)
 				}
 			} else {
 				toast('附件没传上去（网络太弱）—— 页面别关，等信号好一点再点「重试」✓', 7000)
@@ -8933,6 +8953,35 @@
 		return bytes > 0 && bytes <= 1.2 * 1024 * 1024
 	}
 
+	/**
+	 * 🔴 4.9.9：把**附件字节**放进 IndexedDB ✓（离线箱里只留标记 ✓）。
+	 *
+	 * 为什么用 `BG_STORE` 而不是新开一个 store ✗：新 store 要**动数据库版本号** ✓，
+	 * 而版本升级一旦被别的标签页挡住（`onblocked` ✗）就可能连**背景缓存**一起受影响 ✗✗ ——
+	 * 这里只是要一块"能放大东西的地方" ✓，`BG_STORE` 本来就是干这个的 ✓（背景只是它的一个用户 ✓）。
+	 * 键加 `outbox:` 前缀 ✓：背景那边的清理只删 `bg:` 开头的键 ✓，**互不干扰** ✓。
+	 *
+	 * 返回 `true` = 真的存下了 ✓（存不下就返回 false ✓，调用方会退回"只留文字"✓，绝不假装 ✓）。
+	 */
+	async function queueFilesForOutbox(clientId, files) {
+		if (typeof indexedDB === 'undefined' || indexedDB === null) return false
+		if (Array.isArray(files) === false || files.length === 0) return false
+		try {
+			await idbRun('readwrite', (store) => store.put({ clientId, files }, 'outbox:' + clientId))
+			// 立刻读回来核对一遍 ✓（配额/无痕模式下 put 有时"成功"但其实没落盘 ✗）。
+			const back = await idbRun('readonly', (store) => store.get('outbox:' + clientId))
+			return back !== null && back !== undefined && Array.isArray(back.files) && back.files.length === files.length
+		} catch {
+			return false
+		}
+	}
+
+	/** 补发成功之后，把 IndexedDB 里那份字节删掉 ✓（不然手机会越堆越多 ✗）。 */
+	function dropQueuedFiles(clientId) {
+		if (typeof indexedDB === 'undefined' || indexedDB === null) return
+		idbRun('readwrite', (store) => store.delete('outbox:' + clientId)).catch(() => { /* 删不掉就留着，下次还会覆盖 ✓ */ })
+	}
+
 	/** 弱网模式：附件进箱子等着 ✓（存不下就返回 false，调用方会退回"一起发"✓）。 */
 	function outboxAddFiles({ clientId, sessionId, files }) {
 		const item = { clientId, sessionId, text: '', images: [], fileRefs: [], files }
@@ -8957,9 +9006,20 @@
 		try {
 			for (const item of [...outbox.items]) {
 				try {
-					// ★11：箱子里可能装的是**附件**（弱网模式留下的 ✓）→ 先把它们传上去拿路径 ✓。
+					/*
+					 * ★11：箱子里可能装的是**附件**（弱网模式留下的 ✓）→ 先把它们传上去拿路径 ✓。
+					 * 🔴 4.9.9：**大附件的字节在 IndexedDB 里** ✓（`filesInIdb: true` ✓，箱子里只有标记 ✓）——
+					 * 这里先把它取回来 ✓，取不到就退回箱子自带的那份 ✓（老条目还有 `files` ✓）。
+					 */
 					const itemFiles = Array.isArray(item.files) ? item.files : []
-					const refs = itemFiles.length > 0 ? await prepareRefs(itemFiles) : (item.fileRefs ?? [])
+					let useFiles = itemFiles
+					if (item.filesInIdb === true) {
+						try {
+							const back = await idbRun('readonly', (store) => store.get('outbox:' + item.clientId))
+							if (back !== null && back !== undefined && Array.isArray(back.files) && back.files.length > 0) useFiles = back.files
+						} catch { useFiles = itemFiles }
+					}
+					const refs = useFiles.length > 0 ? await prepareRefs(useFiles) : (item.fileRefs ?? [])
 					await api('api/prompt', {
 						method: 'POST',
 						headers: { 'content-type': 'application/json' },
@@ -8970,10 +9030,12 @@
 						}),
 					})
 					outboxRemove(item.clientId)
-					toast(itemFiles.length > 0 ? `弱网模式：${itemFiles.length} 个附件补发成功 ✓` : '离线发件箱：发出 1 条 ✓', 2400)
+					if (item.filesInIdb === true) dropQueuedFiles(item.clientId)
+					toast(useFiles.length > 0 ? `离线发件箱：${useFiles.length} 个附件补发成功 ✓` : '离线发件箱：发出 1 条 ✓', 2400)
 				} catch (error) {
 					if (isOfflineError(error)) break           // 还是没网 → 停手，等下一次 ✓
 					outboxRemove(item.clientId)                // 服务端明确拒绝 → 别一直卡着箱子 ✗
+					if (item.filesInIdb === true) dropQueuedFiles(item.clientId)
 					toast('有一条没能补发（' + String(error?.message ?? '') + '）', 3000)
 				}
 			}

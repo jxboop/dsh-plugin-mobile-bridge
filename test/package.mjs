@@ -510,15 +510,38 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 上传失败时**先试着进离线箱** ✓（`prepared.catch` + `outboxAdd({…files: stuck})` ✓ —— 有网自动补发 ✓）',
-		/prepared\.catch\(\(error\) => \{[\s\S]{0,1400}outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: stuck \}\)/.test(page))
-	check('🔴 **存不下就别装** ✓：超出箱子容量（`weakCanStore` ✓ 上限约 1 MB ✓）时只把**文字**留住 ✓ + 如实说附件没留住 ✓',
-		/weakCanStore\(stuck\) === true[\s\S]{0,900}else if \(body !== ''\)/.test(page)
-		&& page.includes('附件太大，手机上的离线箱存不下'))
+	check('🔴 上传失败时**先试着进离线箱** ✓（小附件走 localStorage 那条老路 ✓：`files: stuck` ✓ —— 有网自动补发 ✓）',
+		/prepared\.catch\(async \(error\) => \{[\s\S]{0,2600}outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: stuck \}\)/.test(page))
+	check('🔴 **大附件改走 IndexedDB** ✓（4.9.9 ✓ —— 4.9.8 那种"太大就只留文字"✗ 升级成"连视频也存下" ✓）',
+		/const inIdb = await queueFilesForOutbox\(clientId, stuck\)/.test(page)
+		&& page.includes("filesInIdb: true"))
+	check('🔴 **都存不下时仍然只留文字 + 如实说** ✓（`inIdb === false` 那条兜底 ✓ —— 不装 ✓）',
+		/const queued = inIdb === true[\s\S]{0,900}outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: \[\] \}\)/.test(page)
+		&& page.includes('这句话先收着了'))
 	check('🔴 **进箱之后把输入框里那批附件撤掉** ✓（不撤的话用户再点一次发送就发两遍 ✗）',
-		/outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: stuck \}\) === true[\s\S]{0,400}state\.images = \[\]/.test(page))
+		/if \(queued === true\) \{[\s\S]{0,400}state\.images = \[\]/.test(page))
 	check('🔴 **原有失败路径一个字没改** ✓（错误仍然抛出去 ✓ → 下面那条"失败 + 重试"照旧 ✓）',
-		/prepared\.catch[\s\S]{0,1600}throw error\n\t\t\}\)\.then\(\(fileRefs\) => \{/.test(page))
+		/prepared\.catch[\s\S]{0,3200}throw error\n\t\t\}\)\.then\(\(fileRefs\) => \{/.test(page))
+}
+
+/*
+ * 19) 🔴 **大附件也能先存着（IndexedDB 队列）**（4.9.9 ✓）。
+ * 用户 2026-10-15：「ok」= 按 1→3→2 继续 ✓，这一步是 ①大文件队列 ✓
+ *（他要传的那段 5.3MB 视频，localStorage 的 1.2MB 上限根本装不下 ✗）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 大附件写进 **IndexedDB** ✓（`queueFilesForOutbox` ✓），而且**写完立刻读回来核对** ✓（配额/无痕下 put 有时"成功"其实没落盘 ✗）',
+		page.includes('async function queueFilesForOutbox') && page.includes("idbRun('readonly', (store) => store.get('outbox:' + clientId))"))
+	check('🔴 离线箱里的条目**只留标记**（`filesInIdb: true` + `files: []` ✓）—— 字节不进 localStorage ✓（那才是 1.2MB 上限的来源 ✗）',
+		/outboxAdd\(\{ clientId, sessionId: target, text: body, images: \[\], fileRefs: \[\], files: \[\], filesInIdb: true \}\)/.test(page))
+	check('🔴 补发时**从 IndexedDB 取回** ✓，取不到就退回箱子自带那份 ✓（老条目仍可用 ✓）',
+		/if \(item\.filesInIdb === true\) \{[\s\S]{0,400}store\.get\('outbox:' \+ item\.clientId\)/.test(page))
+	check('🔴 补发成功后**删掉** IndexedDB 那份 ✓（不然手机会越堆越多 ✗）',
+		/if \(item\.filesInIdb === true\) dropQueuedFiles\(item\.clientId\)/.test(page))
+	check('🔴 **没有新开 objectStore、没动数据库版本号** ✓（版本升级被别的标签页挡住会连累背景缓存 ✗✗ —— 复用 `BG_STORE` + `outbox:` 前缀 ✓）',
+		page.includes('const objectStore') === false && /createObjectStore\([A-Z_]+\)/g.test(page)
+		&& (page.match(/createObjectStore\(/g) ?? []).length === 2)
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
