@@ -166,6 +166,9 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	}
 	const ps1 = targets.filter((rel) => rel.toLowerCase().endsWith('.ps1'))
 	const bomNotPs1 = targets.filter((rel) => rel.toLowerCase().endsWith('.ps1') === false && hasBom(rel))
+	/* 4.9.13 复查判定：这条**只有否定式** ✓，但**正向证据在同文件更早处** ✓ ——
+	 * 「每个 .ps1 都带 UTF-8 BOM」那条用的**正是同一个探针**（都读文件头三字节 ✓）：
+	 * 探针若坏成"永远返回 false" ✗，那边**立刻红** ✓ → 所以这一条不会静默绿 ✓。 */
 	check('BOM 只出现在 .ps1 上（别处带 BOM = 用 PS 文本管道写过的白噪声 ✗）',
 		bomNotPs1.length === 0, bomNotPs1.join(', ') || `非 .ps1 的 ${targets.length - ps1.length} 个文件都没有 BOM ✓`)
 }
@@ -348,6 +351,8 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/body\.hasbg #sky \{[^}]*z-index: 0;/.test(page))
 	check('🔴 但仍然**绝不拦点击** ✓（pointer-events: none ✓）',
 		/body\.hasbg #sky \{[^}]*pointer-events: none/.test(page))
+	/* 4.9.13 复查判定：**不是自证** ✓ —— 正则只负责**数** ✓，门槛是**字面常量 12** ✓；
+	 * 表被删或格式变了 → 数不到 12 → 会**红** ✗，不静默绿 ✓。 */
 	check('🔴 流星参数是**固定表** ✓（12 颗都在 ✓），不用 `Math.random()` ✗（随机会让截图对不上 ✓）',
 		page.includes('const SKY_METEORS = [') && (page.match(/\{ x: '[+-]?\d+%', y: '/g) ?? []).length >= 12
 		&& /SKY_METEORS[\s\S]{0,40}Math\.random/.test(page) === false,

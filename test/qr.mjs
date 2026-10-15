@@ -200,6 +200,8 @@ if (decode === null) {
 	const svg = qrSvg('https://example.ts.net/0123456789abcdef/')
 	const qr = qrMatrix('https://example.ts.net/0123456789abcdef/')
 	const extent = (qr.size + 8) * 4
+	/* 4.9.13 复查判定：**不是自证** ✓ —— 期望的尺寸是**测试自己传进去的那个 extent** ✓、
+	 * path 条数是**字面常量 1** ✓；取不到时 0 不等于 1 → 会**红** ✗。 */
 	check('SVG 自带命名空间 + 尺寸 + 一个 path（不用 canvas、放大不糊）',
 		svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg"') && svg.includes(`width="${extent}"`) && (svg.match(/<path /g) ?? []).length === 1,
 		svg.slice(0, 90))

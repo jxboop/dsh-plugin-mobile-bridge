@@ -3376,6 +3376,18 @@ check('说明指向了下拉框或读取状态',
  */
 {
 	const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>')).replace(/\/\*[\s\S]*?\*\//g, '')
+	/*
+	 * 🔴 4.9.13 冷视角复查（黄 · negative-only ✓）：下面那条**只有否定式** ✗ ——
+	 * 如果"取 style 块 + 正则"这段**自己坏掉** ✓（比如 `<style>`/`</style>` 的位置变了 ✓），
+	 * 它永远拿不到东西 ✓ → 永远是 null ✓ → **永远绿** ✗，而页面里其实可能已经用了
+	 * `content-visibility` ✓（那正是会造成"往上滚时位置被顶回去"的东西 ✗）。
+	 * 修法：给这个**探针自己做一次自检** ✓ —— 拿一段**确定含**该属性的 CSS 试一次 ✓，
+	 * 探针必须先能**找到**它 ✓，然后"真页面里找不到"才算数 ✓（本项目处理探针的一贯写法 ✓）。
+	 */
+	const probeFound = /([^{}]*)\{[^{}]*content-visibility[^{}]*\}/.exec('a{color:red} b{content-visibility:auto} c{display:block}')
+	check('探针自检：**确定含** content-visibility 的 CSS 必须先被找到 ✓（找不到 = 探针坏了 ✗，下面那条就不算数 ✓）',
+		probeFound !== null && css.length > 1000,
+		`探针命中=${probeFound === null ? 'null ✗' : probeFound[0].slice(0, 30)} · style 块 ${css.length} 字节`)
 	const rule = /([^{}]*)\{[^{}]*content-visibility[^{}]*\}/.exec(css)
 	// 治本的选择：**一处都不用**。content-visibility 会让没渲染过的块按估算高度参与
 	// scrollHeight，"往上滚进历史时位置被顶回去"就是它造成的；而按 key 复用节点之后，
@@ -6688,6 +6700,8 @@ await wait(40)
 		say(freezeCases[index], 710 + index)
 		await wait(140)
 		const after = $('log').textContent
+		/* 4.9.13 复查判定：**不是自证** ✓ —— 期望的文字来自**测试自己的输入**（那个 freezeCases 数组 ✓）
+		 *（不是页面的产物 ✓）；而且还要求 after 不等于 before ✓（"什么都没渲染"会红 ✗）。 */
 		check(`P0 回归：孤立竖线行「${freezeCases[index].split('\n')[1]}」照常渲染、**不许死循环** ✓✗（修之前这里整页冻死 ✓）`,
 			after !== before && after.includes(freezeCases[index].split('\n').filter((line) => line !== '')[0]),
 			`渲染后长度 ${after.length}（前 ${before.length}）`)

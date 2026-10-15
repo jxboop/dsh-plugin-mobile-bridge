@@ -1573,6 +1573,8 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	{
 		const navStart = swBody.indexOf("request.mode === 'navigate'")
 		const navBranch = navStart < 0 ? '' : swBody.slice(navStart, navStart + 900)
+		/* 4.9.13 复查判定：**不是自证** ✓ —— 比的是**字面常量**（fetch(request) / ./ / catch ✓）
+		 * 再加**出现的先后顺序** ✓；取不到东西时 includes 为假 → 会**红** ✗，不会静默绿 ✓。 */
 		check('页面导航是网络优先：先 fetch，缓存只兜断网',
 			navBranch.includes('fetch(request)') && navBranch.includes("caches.match('./')")
 			&& navBranch.includes('catch')
@@ -3377,6 +3379,8 @@ async function readInteraction(reader) {
 	check('诊断包**限量**：日志一大就真的截断 ✓（出现"更早的内容省略了"），整份仍然有界（< 200 KB ✓）',
 		bigDiag.includes('更早的内容省略了') && bigDiag.length < 200 * 1024,
 		`${Math.round(bigDiag.length / 1024)} KB；含截断标记=${bigDiag.includes('更早的内容省略了')}`)
+	/* 4.9.13 复查判定：**不是自证** ✓ —— 期望值是**测试自己手里那个 cookie** ✓（与被测产物无关 ✓）；
+	 * 而且 cookie 为空时"包含空串"恒真 → 这条会**红** ✗，不静默绿 ✓。 */
 	check('诊断包里也**没有**页面的登录令牌 ✗（它要发出去 ✓）',
 		bigDiag.includes(cookie.split('=').slice(1).join('=')) === false)
 }
