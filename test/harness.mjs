@@ -1133,6 +1133,65 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	check('分片尺寸不符直接拒（不许静默写歪）', badSize.status === 400, String(badSize.status))
 }
 
+/*
+ * 🔴 4.11.0：**二进制分片**（手机把 `file.slice(a,b)` 直接当请求体发 ✓，浏览器自己从磁盘流式读 ✓）
+ * —— 目的是**不进内存、也不再多花 33% 流量** ✓（base64 的代价 ✓）。
+ * 这里和上面那条**一模一样地验** ✓（乱序 ✓、第 0 片最后到 ✓、逐字节比对 ✓、尺寸不符要拒 ✓），
+ * 因为两条路**共用同一份写入逻辑** ✓（`writePositionedChunk` ✓）—— 哪一边退化都该被抓 ✓。
+ * 元数据走**请求头** ✓（文件名是用户的东西 ✓，不塞进 query/日志 ✗）。
+ */
+{
+	const chunkBytes = 64 * 1024
+	const pieces = ['W', 'X', 'Y', 'Z'].map((ch) => Buffer.alloc(chunkBytes, ch))
+	const size = chunkBytes * pieces.length
+	const total = pieces.length
+	const headersFor = (id, index) => ({
+		cookie,
+		'content-type': 'application/octet-stream',
+		'x-upload-id': id,
+		'x-upload-index': String(index),
+		'x-upload-total': String(total),
+		'x-upload-size': String(size),
+		'x-upload-chunk-bytes': String(chunkBytes),
+		'x-upload-name': 'binary.bin',
+		'x-upload-type': 'application/octet-stream',
+	})
+	const put = (index) => fetch(`${base}/api/upload`, { method: 'POST', headers: headersFor('binary-probe', index), body: pieces[index] })
+	const results = []
+	// 仍然乱序，而且第 0 片最后到 ✓ —— 二进制入口必须走到**同一份**定位写逻辑 ✓。
+	for (const index of [3, 0, 2, 1]) results.push(await put(index))
+	const bodies = await Promise.all(results.map((res) => res.json().catch(() => ({}))))
+	const doneOne = bodies.find((entry) => entry?.done === true)
+	check('🔴 二进制分片也能收齐 ✓（乱序 + 第 0 片最后到 ✓）', doneOne?.done === true, JSON.stringify(bodies).slice(0, 200))
+	const assembledBinary = doneOne?.path === undefined ? null : await readFile(doneOne.path)
+	check('🔴 二进制拼回来的内容**一字不差** ✓（这条不过 = 手机发视频会得到坏文件 ✗）',
+		assembledBinary !== null && Buffer.compare(assembledBinary, Buffer.concat(pieces)) === 0,
+		assembledBinary === null ? '(没拿到路径)' : `${assembledBinary.length} 字节`)
+	const badBinary = await fetch(`${base}/api/upload`, {
+		method: 'POST',
+		headers: {
+			cookie, 'content-type': 'application/octet-stream',
+			'x-upload-id': 'binary-bad', 'x-upload-index': '0', 'x-upload-total': '2',
+			'x-upload-size': String(chunkBytes * 2), 'x-upload-chunk-bytes': String(chunkBytes),
+			'x-upload-name': 'x.bin', 'x-upload-type': 'application/octet-stream',
+		},
+		body: Buffer.from('too short'),
+	})
+	check('🔴 二进制分片尺寸不符同样直接拒 ✓（不许静默写歪 ✗ —— 确认二进制入口真接到了那段判断 ✓）',
+		badBinary.status === 400, String(badBinary.status))
+	const stillJson = await fetch(`${base}/api/upload`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify({
+			uploadId: 'binary-compat', index: 0, total: 1, size: 5, chunkBytes: 64 * 1024,
+			name: 'tiny.bin', mediaType: 'application/octet-stream', data: Buffer.from('hello').toString('base64'),
+		}),
+	})
+	const stillJsonBody = await stillJson.json().catch(() => ({}))
+	check('🔴 老的 JSON 分片**照旧能收** ✓（向后兼容 ✓ —— 手机上缓存的旧页面还在用这条路 ✓）',
+		stillJson.status === 200 && stillJsonBody.done === true, `${stillJson.status} ${JSON.stringify(stillJsonBody).slice(0, 80)}`)
+}
+
 /* --- 视频：桥自动抽帧交给模型（用户 2026-10-09："加一个读取视频的功能"）------ */
 /*
  * 模型看不了视频。以前手机发来视频只给一个路径，得 agent 自己去 ffmpeg；现在桥直接抽帧：
