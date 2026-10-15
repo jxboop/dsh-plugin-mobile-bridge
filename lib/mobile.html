@@ -7930,7 +7930,15 @@
 						const smaller = await shrinkImage(blob, 1280, 0.75)
 						const smallData = await readBase64(smaller)
 						if (smallData.length <= 2 * 1024 * 1024) {
-							state.images.push({ mediaType: 'image/jpeg', data: smallData, name: file.name || '' })
+							/*
+							 * 🔴 4.11.3：**压过的这张也带上 `blob`** ✓ —— `smaller` 本来就是 Blob ✓
+							 *（`shrinkImage` 用 `canvas.toBlob` ✓，转不出来时**兜底返回原文件** ✓），
+							 * 而 `smallData` 就是**从它读出来的** ✓ → 两者**字节一致** ✓✓
+							 *（4.11.2 我担心的"切片的和发出去的不是同一张"在这里**不成立** ✓，
+							 *  因为源头就是同一个 blob ✓）。
+							 * 于是内联被掐断改切片时 ✓，这张也能走**二进制** ✓（不再 base64 ✓）。
+							 */
+							state.images.push({ mediaType: 'image/jpeg', data: smallData, name: file.name || '', blob: smaller })
 							renderThumbs()
 							flash('这张图比较大，已经压过了（手机上看着没差别）。', 3500)
 							return

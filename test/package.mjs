@@ -647,5 +647,26 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/body\.bg-live \.iconbtn,[\s\S]{0,220}text-shadow: 0 1px 3px rgba\(0,0,0,\.66\)/.test(page))
 }
 
+/*
+ * 24) 🔴 **每一张附件都带着"原始字节的句柄"**（4.11.2 / 4.11.3 ✓）。
+ * 用户 2026-10-15：「继续」= 按 ①→②→③ 走 ✓。
+ * 判据核心 ✓：**凡是能拿到原始 Blob 的地方都必须带上它** ✓ ——
+ * 这样"分片"那条路才能走二进制 ✓（不进内存 ✓、不多花 33% 流量 ✓）。
+ * ⚠️ 而且是**三处都要** ✓：文件/视频/音频 ✓、原图模式的照片 ✓、**压过的照片** ✓ ——
+ * 少一处，那条路就悄悄退回 base64 ✗（用户看不出来 ✓，但白花三分之一流量 ✗）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 三处附件都带 `blob` ✓（文件/视频/音频 ✓、原图照片 ✓、**压过的照片** ✓）',
+		page.includes('blob: file,')
+		&& page.includes("state.images.push({ mediaType, data, name: file.name || '', blob: file })")
+		&& page.includes("state.images.push({ mediaType: 'image/jpeg', data: smallData, name: file.name || '', blob: smaller })"))
+	check('🔴 `shrinkImage` 返回的**就是 Blob** ✓（`canvas.toBlob` ✓ + 转不出来时兜底返回原文件 ✓）',
+		/const blob = await new Promise\(\(resolve\) => canvas\.toBlob\(resolve, 'image\/jpeg', quality\)\)/.test(page)
+		&& page.includes('return blob === null ? file : blob'))
+	check('🔴 内联失败重发时**把 blob 一起带过去** ✓（不然压缩图那张又退回 base64 ✗）',
+		page.includes('blob: inlineNow[index].blob'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
