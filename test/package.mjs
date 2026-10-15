@@ -12,7 +12,7 @@
  *   package/lib/mobile.html   package/lib/index.js   package/package.json
  *   package/README.md         package/cordis.patch.yml        ← 就这些
  *
- * 而 `lib/index.js` 第 29 行是 `import { collectAddresses } from './addresses.js'`
+ * 而 `lib/index.js` 文件开头那几行是 `import { collectAddresses } from './addresses.js'`
  * —— 于是插件一加载就报找不到模块，手机页面打不开、一直转圈。
  * `lib/icons/*` 也一样漏了（图标 404）。
  *

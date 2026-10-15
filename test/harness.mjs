@@ -313,7 +313,7 @@ const services = {
 	/** 记录"切模型"的请求（2.4.0）。 */
 	selectedModels: [],
 	/*
-	 * 3.5.0「目标」：上游查实（**活契约** ✓，`cordis_inspect_query` ✓）——
+	 * 3.5.0「目标」：上游查实（**活契约** ✓，`面板/服务查询接口` ✓）——
 	 *   · `agents.get(sessionId)` → **活着的** agent（`{ id }` ✓）—— 是"查"不是"唤醒" ✓；
 	 *   · `goals.get(agent)` → `GoalView | undefined` ✓
 	 *     （字段照契约 ✓：objective / phase / roundsStarted / maxGoalRounds / activation / revision / updatedAt ✓）。
@@ -2668,7 +2668,7 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	const ipv4Bad = ipv4All.filter((ip) => ip !== '0.0.0.0')
 	/*
 	 * ⚠️ 4.3.0 检修（`self-derived` 判据点过一次 ✓）：域名那半句原来用
-	 * `(installHtml.match(...) || []).every(...)` ✓ —— **一个域名都没匹配到时它恒真** ✗。
+	 * 「先取数组再直接逐条判」的写法 ✓ —— **一个域名都没匹配到时它恒真** ✗。
 	 * 现在先取出来、**要求至少有一个**（文案里本来就有仓库地址 ✓），再逐个别名（只放行 github.com ✓）。
 	 */
 	const htmlDomains = installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []
@@ -4121,9 +4121,18 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 	await writeConfig2({ panels: true })
 	const on = await (await fetch(`${base}/api/panels`, authed)).json()
 	const ids = (on.panels ?? []).map((panel) => panel.id).sort()
-	check('打开后列出两个自带示例 ✓（便签 + 计时 ✓，都标着 builtin ✓）',
+	/*
+	 * ⚠️ 4.9.12 冷视角复查（橙 · vacuous-every ✓）：右边原来直接
+	 * 「筛一遍再逐条判」的写法 ✗ —— 筛完的数组一旦是空的 ✓，逐条判**恒真** ✓
+	 *（比如 `ids` 里根本没有 `notes`/`timer` 时 ✓）→ 判据静默失效 ✗。
+	 * 现在**先把"筛出来的条数"钉住**（`named.length === 2` ✓）再逐条判 ✓。
+	 */
+	const named = on.panels.filter((panel) => ids.includes(panel.id))
+	check('打开后列出两个自带示例 ✓（便签 + 计时 ✓，都标着 builtin ✓）'
+		+ '（原来「筛完再逐条判」筛空就恒真 ✗ —— 已钉住条数 ✓）',
 		on.enabled === true && ids.includes('notes') && ids.includes('timer')
-		&& on.panels.filter((panel) => ids.includes(panel.id)).every((panel) => panel.builtin === true && typeof panel.icon === 'string' && panel.icon !== ''),
+		&& named.length === 2
+		&& named.every((panel) => panel.builtin === true && typeof panel.icon === 'string' && panel.icon !== ''),
 		JSON.stringify(on).slice(0, 140))
 
 	/*
@@ -4295,11 +4304,21 @@ check('logout also clears the token on disk', Object.keys(afterLogoutTokens).len
 		(await week('?days=999')).body?.days === 30)
 	check('这周学了什么：`days` **下限夹取**与**兜底** ✓（-5 → 1 ✓、abc → 7 ✓）',
 		(await week('?days=-5')).body?.days === 1 && (await week('?days=abc')).body?.days === 7)
-	check('这周学了什么：每条都带 **`idShort`** ✓（实测这台宿主的列表**不带标题** ✓ → 手机靠它认人 ✓）',
-		(await week('?days=9999')).body?.items?.every((item) => String(item.idShort ?? '').length > 0
-			&& String(item.idShort).includes('session-') === false) === true
-		|| (await week('?days=7')).body?.items?.length === 0,
-		'（列表为空时不算失败 ✓ —— 桩里的行可能没有 updatedAt ✓）')
+	/*
+	 * ⚠️ 4.9.12 冷视角复查（橙 · escape-hatch ✓）：这条原来是
+	 * `items.every(...) === true || items.length === 0` ✗ —— **一个空列表就能让它恒真** ✓，
+	 * 也就是"判据静默失效" ✗（列表真的变成空的，它照样绿 ✓）。
+	 * 改成**先把条数钉住**（`items.length > 0` ✓），再逐条判 ✓：
+	 *   · 真拿不到数据 → **当场红** ✓（而不是悄悄绿 ✓）—— 空列表本身就是要查的事 ✓；
+	 *   · 桩里那几行没有 `updatedAt` 的顾虑 ✗ 与"列表空不空"无关 ✓（那条判据只看 `idShort` ✓）。
+	 */
+	const weekRows = (await week('?days=9999')).body?.items ?? []
+	check('这周学了什么：列表**非空** ✓、且每条都带 **`idShort`** ✓（手机靠它认人 ✓）'
+		+ '（原来「空列表也绿」✗ —— 判据会静默失效 ✓）',
+		weekRows.length > 0
+		&& weekRows.every((item) => String(item.idShort ?? '').length > 0
+			&& String(item.idShort).includes('session-') === false),
+		`${weekRows.length} 条，idShort 样例=${JSON.stringify(weekRows.slice(0, 3).map((item) => item.idShort))}`)
 }
 
 /*

@@ -1,14 +1,14 @@
 /**
  * Screenshot the phone page in a real browser, authenticated.
  *
- *   node shot.mjs <url> <pin> <out.png> [width] [height] [waitMs] [clickSelector]
+ *   node shot.mjs <url> <pin> <out.png> [width] [height] [waitMs] [第 7 个参数（进页面后先点的那个选择器 ✓）]
  *
  * Launches headless Edge with CDP, mints a session token through the bridge's
  * own login endpoint, plants it as a cookie, then captures the rendered page at
  * a phone viewport. Cookie planting avoids driving the PIN form, which would
  * make every capture a different length.
  *
- * `clickSelector` (optional) clicks one element by selector before capturing —
+ * `第 7 个参数（进页面后先点的那个选择器 ✓）` (optional) clicks one element by selector before capturing —
  * that is how you capture the screen *behind* a first-run sheet like #welcomeGo.
  *
  * ⚠️ 这个脚本只允许动**它自己 spawn 出来的那个 Edge**（`edge.kill()`）。
