@@ -335,10 +335,19 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	check('🔴 「非常丑的那些斜线」没了 ✓，而月亮和流星还在 ✓（星空层里只剩流星 ✓ —— 月亮在背景层 ✓）',
 		page.includes('<div id="sky"') && page.includes('body.bg-cyber #backdrop .moon {')
 		&& page.includes('#sky .meteor .streak {'))
-	check('🔴 **划过对话框** ✓：这一层在内容**之上**（z-index 2 > `#app` 的 1 ✓）',
-		/z-index: 2;[\s\S]{0,200}pointer-events: none/.test(page))
-	check('🔴 但**绝不拦点击** ✗ —— `pointer-events: none` ✓（划过归划过，点了必须有反应 ✓）',
-		/body\.bg-cyber #sky \{[\s\S]*?pointer-events: none/.test(page))
+	check('🔴 那一层仍然是**独立的一层** ✓（`position: fixed` + 铺满 ✓ —— 4.9.1 起它在内容**之下** ✓）',
+		/#sky \{[\s\S]{0,200}position: fixed; inset: 0; z-index: 0;/.test(page))
+	/*
+	 * ⚠️ 4.9.1：用户 2026-10-15「流星放在文字下面」✓ —— 这条从"**在内容之上**（z-index 2 ✓）"
+	 * 改成"**在内容之下、背景之上**" ✓。三明治不能弄错 ✗：
+	 *   `#sky` 必须是 **0**（= 背景层 ✓，DOM 在后面所以画在纱之上 ✓）而**不能是 1** ✗
+	 *（1 会和 `#app` 平级 ✓，那时谁在上面就看 DOM 顺序了 ✓ —— 这种"靠顺序"的东西最容易哪天被挪一下就坏 ✗）；
+	 * 也**不能是 -1 或更低** ✗ —— 那样会掉到背景/纱底下 ✓，流星直接看不见 ✓（"改没了"比"盖住字"更糟 ✗）。
+	 */
+	check('🔴 流星在**文字下面** ✓（`#sky` 的 z-index 是 **0** ✓ —— 背景 0 / 内容 1 ✓，隔着气泡还看得见 ✓）',
+		/body\.hasbg #sky \{[^}]*z-index: 0;/.test(page))
+	check('🔴 但仍然**绝不拦点击** ✓（pointer-events: none ✓）',
+		/body\.hasbg #sky \{[^}]*pointer-events: none/.test(page))
 	check('🔴 流星参数是**固定表** ✓（12 颗都在 ✓），不用 `Math.random()` ✗（随机会让截图对不上 ✓）',
 		page.includes('const SKY_METEORS = [') && (page.match(/\{ x: '[+-]?\d+%', y: '/g) ?? []).length >= 12
 		&& /SKY_METEORS[\s\S]{0,40}Math\.random/.test(page) === false,

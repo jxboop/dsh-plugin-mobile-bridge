@@ -552,8 +552,18 @@
 	body.bg-live input, body.bg-live textarea, body.bg-live select, body.bg-live .plain {
 		background: rgba(10,12,18,.46); color: var(--text); border-color: var(--field-line);
 	}
-	/* 有图的背景也把流星放出来 ✓（"一定要动态" ✓ —— 推近 + 流星一起 ✓）。 */
-	body.hasbg #sky { display: block; position: fixed; inset: 0; z-index: 2; pointer-events: none; mix-blend-mode: screen; }
+	/*
+	 * 有图的背景也把流星放出来 ✓（"一定要动态" ✓ —— 推近 + 流星一起 ✓）。
+	 * ⚠️ 4.9.1：用户 2026-10-15「流星放在文字下面」✓ —— 从 `z-index: 2`（**压在内容之上** ✗）改成 **`0`** ✓。
+	 * 这一层的三明治关系（**每一层都不能弄错** ✗）：
+	 *   · `#backdrop` = **0** ✓（背景本体 + 那张压暗的纱 ✓）；
+	 *   · `#sky` = **0 但 DOM 在后面** ✓ → 画在背景和纱**之上** ✓（流星不会被压暗 ✓，也不会被背景盖掉 ✗）；
+	 *   · `#app` = **1** ✓（对话/气泡/输入区 ✓）→ **压在流星上面** ✓✓（这就是"文字下面" ✓）；
+	 *   · 面板 = 更高 ✓（工具面板照旧盖住一切 ✓）。
+	 * 所以流星现在是"**在背景上飞、从文字后面过**" ✓ —— 隔着半透明的气泡还能看见 ✓（气泡 .50 ✓），
+	 * 但**绝不会糊在字上** ✓。这就是用户要的效果 ✓。
+	 */
+	body.hasbg #sky { display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none; mix-blend-mode: screen; }
 	/* 刹车：静下来 / 减弱动态 → 推近停下 ✓、流星不飞 ✓（图还在 ✓）。 */
 	body.bg-still #backdrop img { animation: none; }
 	body.bg-still #sky .meteor { display: none; }
