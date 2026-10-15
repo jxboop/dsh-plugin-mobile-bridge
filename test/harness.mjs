@@ -1610,8 +1610,18 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 			navBranch.replace(/\s+/g, ' ').slice(0, 100))
 		check('不再把缓存直接递给浏览器（那就是 cache-first 的老 bug）',
 			swBody.includes('return hit ?? network') === false)
-		check('缓存名带版本号（换代时 activate 会清掉旧壳）',
-			swBody.includes('dshm-shell-v') && swBody.includes('caches.delete'))
+		/*
+		 * 🔴 4.10.2：**壳缓存名必须带"真版本号"** ✓（原来是写死的 `dshm-shell-v3` ✗ ——
+		 * 它**永远不变** ✓ → 弱网下导航回落到缓存时手机拿到的是**旧页面** ✓✓ →
+		 * **一整天的页面侧修复都到不了手机** ✗，用户看到的就是"改了没反应"✓）。
+		 * ⚠️ 老断言查的是字面 `dshm-shell-v` ✓ —— **名字写着"带版本号"、实际在给一个常量把关** ✗
+		 *（`v3` 里那个 3 永远不动 ✓）→ 断言本身"名不副实" ✓。
+		 * 现在查**真去 `/sw.js` 取回来的那份**里带不带**当前版本** ✓（不是源码形状 ✓）。
+		 */
+		/* ⚠️ 这里**没有 `ROOT`** ✗（那是 package.mjs 的变量 ✓）→ 用 `import.meta.url` 自己算 ✓，哪个文件都能用 ✓。 */
+		const shellVersion = String(JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).version)
+		check('🔴 壳缓存名带**当前版本**（4.10.2 起 ✓ —— 写死的 v3 会让手机一直吃旧页面 ✗）',
+			swBody.includes(`dshm-shell-${shellVersion}`) && swBody.includes('caches.delete'), shellVersion)
 	}
 	check('页面里的 manifest / apple-touch-icon 用的是相对地址（带密钥段才不会 404）',
 		pageHtml.includes('href="manifest.webmanifest"') && pageHtml.includes('href="icon-180.png"'),
