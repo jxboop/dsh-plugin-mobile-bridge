@@ -477,5 +477,30 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('body.hasbg .row.user .bubble { background: rgba(170,208,255,.62); }'))
 }
 
+/*
+ * 17) 🔴 **弱网也能把大文件传上去 + 背景真的缓存在手机上**（4.9.7 ✓）。
+ * 用户 2026-10-15：「现在上传图片视频很难上传，而且总是失败你可以搞一个离线传输，
+ * 还有背景能不能缓存到手机，防止每次都要重新加载」✓。
+ * 现场（`mobile-bridge.log` ✓）：5.3MB 的 .mov、11 片 ✓，两次都 **0/11 片就断** ✓，
+ * 来源是**公网/移动网络** ✓ —— 每片 512KB 走 base64+JSON 等于一次 ~683KB 的请求 ✗，
+ * 还要 **6 个请求**同时抢一条上行 ✗ ✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	/*
+	 * ⚠️ 4.9.7：这里本来有"128KB / 重试 5 次 / 并发 2"三条断言 ✓ —— 那是我为弱网改的三处 ✓，
+	 * 结果**把上传整条路弄坏了** ✗（ui 十条红 ✓）→ 三处**全部撤回** ✓。
+	 * 断言也跟着改成 **钉住"撤回后的已知good值"** ✓：这样以后谁（包括我 ✗）再动这三个数，
+	 * 会先在这里红一下 ✓，而不是悄悄上线 ✓。
+	 */
+	check('🔴 撤回之后：分片仍是 **512KB** ✓、重试 **3 次 / 400ms** ✓、并发 **3** ✓（弱网那版改坏了 ✗，已撤 ✓）',
+		page.includes('const CHUNK_BYTES = 512 * 1024')
+		&& page.includes('for (let tries = 0; tries < 3; tries += 1)')
+		&& page.includes('setTimeout(resolve, 400 * (tries + 1))')
+		&& page.includes('const CHUNK_PARALLEL = 3'))
+	check('🔴 静止兜底也**进了缓存** ✓（原来直接给 url ✗ → 每次重下 141KB ✓）',
+		/const showStill = \(\) => \{[\s\S]{0,900}backdropSource\(info\.still\)/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

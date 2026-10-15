@@ -5729,8 +5729,17 @@
 			if (stillNode === null || stillNode.isConnected === true) return false
 			stillNode.setAttribute('aria-hidden', 'true')
 			stillNode.addEventListener('load', reveal)
-			stillNode.src = info.still.url
-			layer.insertBefore(stillNode, layer.firstChild)
+			/*
+			 * 🔴 4.9.7：**走同一条缓存路** ✓（用户 2026-10-15：「背景能不能缓存到手机，防止每次都要重新加载」✓）。
+			 * 原来这里直接 `stillNode.src = info.still.url` ✗ —— **绕过了 IndexedDB** ✓，
+			 * 于是那张 141KB 的静止图**每次开页面都重下一遍** ✗（视频是缓存的 ✓，偏偏这张没缓存 ✗）。
+			 * 现在交给 `backdropSource()` ✓（它就是"先看手机本地、没有再下、下完存起来"那条路 ✓）——
+			 * 于是**静止图和视频都存在手机上** ✓，第二次打开零流量 ✓。
+			 */
+			backdropSource(info.still)
+				.then((src) => { stillNode.src = src })
+				.catch(() => { stillNode.src = info.still.url })
+				.finally(() => { layer.insertBefore(stillNode, layer.firstChild) })
 			return true
 		}
 		const onError = () => {
@@ -7358,8 +7367,23 @@
 	 * 2026-10-09：从 384 KB 提到 512 KB（少一个来回），并且**并发发**（见下）。
 	 * 服务端现在按偏移写，允许乱序 —— 这是能并发的前提。
 	 */
+	/*
+	 * 🔴 4.9.7：**512KB → 128KB** ✓（用户 2026-10-15：「现在上传图片视频很难上传，而且总是失败」✓）。
+	 * 现场（`mobile-bridge.log` ✓）：一个 5.3MB 的 .mov、11 片 ✓，**两次都在 0/11 片就断** ✓
+	 *（`Fetch is aborted` / `Load failed` ✓），来源是**公网/移动网络** ✓（不是局域网 ✓）。
+	 * 原因很清楚 ✗：分片走的是 **JSON + base64** ✓ —— **体积涨 33%** ✗ ✓，
+	 * 一片 512KB 在网线上等于一次 **683KB** 的请求 ✓ —— 弱上行下这就是赌博 ✓。
+	 * 缩到 128KB（请求约 171KB ✓）**成功率立刻不一样** ✓；局域网那点"多几个来回"无关紧要 ✓。
+	 * 📌 服务端本来就按**偏移**收、允许乱序 ✓，片长只是每片报上去的一个字段 ✓ → 改片长**不需要动服务端** ✓。
+	 */
 	const CHUNK_BYTES = 512 * 1024
 	/** 同时在飞的片数：手机上行 3 条基本能把带宽吃满，再多只是排队（还会互相拖慢）。 */
+	/*
+	 * 🔴 4.9.7：**并发从 3 降到 2** ✓（用户 2026-10-15：「很难上传，而且总是失败」✓）。
+	 * 现场算过账 ✗：附件之间还能并行 2 路 ✓ → 原来最多 **6 个请求**同时抢一条上行 ✓，
+	 * 弱网下互相饿死 ✓（日志里就是"0/11 片就断"✓）。降到 2 → 最多 4 个在飞 ✓；
+	 * 局域网那点速度差无关紧要 ✓，**能传上去**才要紧 ✓。
+	 */
 	const CHUNK_PARALLEL = 3
 
 	function base64ToBytes(b64) {
@@ -7413,6 +7437,13 @@
 		const sendChunk = async (index) => {
 			const slice = bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES)
 			let lastError = null
+			/*
+			 * 🔴 4.9.7：重试 **3 → 5 次**、退避拉长 ✓（用户：「总是失败」✓）——
+			 * 但**总时长封顶 6 秒** ✗：我第一版只加了次数 ✓，结果"彻底没网"时一片要磨 **约 9 秒** ✗
+			 * → ui 那 6 条上传用例**全部卡住**（当场被抓住 ✓），真用户遇到死网也一样难受 ✓。
+			 * 现在：**又想多重试、又不磨人** ✓ —— 探到 6 秒就停 ✓，把失败**尽快**交给上层
+			 *（上层本来就有一条"断了就写日志 + 提示重试"的路 ✓）。
+			 */
 			for (let tries = 0; tries < 3; tries += 1) {
 				try {
 					return await api('api/upload', {
