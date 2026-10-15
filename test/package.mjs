@@ -389,8 +389,9 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& page.includes('background: var(--bubble, rgba(16,18,26,.20))'))
 	check('🔴 下半压得更重 ✓（那张图下半是亮水面 ✓ —— 4.9.3 起 .24 → .60 ✓：更透，但下重上轻 ✓）',
 		page.includes('rgba(8,9,14,.12) 0%, rgba(8,9,14,.12) 46%, rgba(8,9,14,.40) 100%'))
-	check('🔴 图片背景也有流星 ✓（"一定要是动态" ✓），刹车也管到它们 ✓',
-		page.includes('body.hasbg #sky { display: block') && page.includes('body.bg-still #sky .meteor { display: none; }')
+	check('🔴 图片背景也有流星 ✓（"一定要是动态" ✓），刹车也管到它们 ✓（4.10.6 起**两层一起**刹 ✓）',
+		page.includes('body.hasbg #sky { display: block')
+		&& page.includes('body.bg-still #sky .meteor,\n\tbody.bg-still #skyNear .meteor { display: none; }')
 		&& page.includes('body.bg-still #backdrop img { animation: none; }'))
 }
 
@@ -432,10 +433,19 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
 	check('🔴 静止兜底那张图仍然 `scale(1.18)` ✓ —— 它的作用**不是动效** ✗，而是把那张 JPEG 的**水印带推出屏幕** ✓（文件不动 ✓）',
 		/body\.hasbg\.bg-live #backdrop img \{\s*transform: scale\(1\.18\);\s*\}/.test(page))
-	const durs = [...page.matchAll(/dur: ([0-9.]+), delay/g)].map((m) => Number(m[1]))
-	check('🔴 流星**放慢**了 ✓（全部 ≥ 2.6 秒 ✓ —— 上一版 1.2~2.0 秒被用户判为"太快" ✗）',
-		durs.length >= 12 && durs.every((d) => d >= 2.6),
-		`${durs.length} 颗，最短 ${Math.min(...durs)}s / 最长 ${Math.max(...durs)}s`)
+	/*
+	 * ⚠️ 4.10.6：分两层之后这里要**分开判** ✓ —— 后排（`SKY_METEORS` ✓）依旧慢 ✓；
+	 * **前排故意更快** ✓（2.2~3.2 秒 ✓）—— 那不是"改回去了" ✗，而是**视差** ✓：
+	 * 近处的相对速度更快 ✓，这正是"前后"看得出来**的**关键 ✓（用户要的"层次"✓）。
+	 */
+	const backDurs = [...page.slice(page.indexOf('const SKY_METEORS = ['), page.indexOf('const SKY_METEORS_NEAR')).matchAll(/dur: ([0-9.]+),/g)].map((m) => Number(m[1]))
+	const nearDurs = [...page.slice(page.indexOf('const SKY_METEORS_NEAR = [')).matchAll(/dur: ([0-9.]+),/g)].map((m) => Number(m[1]))
+	check('🔴 后排流星**放慢** ✓（全部 ≥ 2.6 秒 ✓ —— 上一版 1.2~2.0 秒被用户判为"太快"✗）',
+		backDurs.length >= 12 && backDurs.every((d) => d >= 2.6),
+		`后排 ${backDurs.length} 颗，最短 ${Math.min(...backDurs)}s / 最长 ${Math.max(...backDurs)}s`)
+	check('🔴 前排流星**更快但不唐突** ✓（2.2~3.2 秒 ✓ —— 视差 ✓；比后排快 ✓ 才看得出"在近处"✓）',
+		nearDurs.length >= 4 && nearDurs.every((d) => d >= 2.2 && d <= 3.2),
+		`前排 ${nearDurs.length} 颗，最短 ${Math.min(...nearDurs)}s / 最长 ${Math.max(...nearDurs)}s`)
 	check('🔴 文字框**更透明** ✓（面板 .34 / 气泡 .34 / 工具键 .28 ✓ —— 上一版 .52/.50 ✗）',
 		page.includes('--panel: rgba(12,14,22,.18)') && page.includes('--panel-2: rgba(24,26,36,.16)')
 		&& page.includes('rgba(255,180,84,.10)') && page.includes('--bubble: rgba(16,18,26,.20)'))
@@ -585,6 +595,28 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& /if \(isCssPreset === true\) \{/.test(page))
 	check('🔴 切背景时**摘掉 `bg-cyber` / `bg-still`** ✓（否则"赛博朋克 → 夜行星"两套叠着 ✗）',
 		/document\.body\.classList\.remove\('bg-cyber', 'bg-still'\)/.test(page))
+}
+
+/*
+ * 22) 🔴 **流星分两层：有层次与遮挡关系**（4.10.6 ✓）。
+ * 用户 2026-10-15：「可以继续调整流星，有的流星划过表面，有的从背后划过，要有层次与遮挡关系」✓。
+ * 判据核心 ✓：两层的 **z-index 一前一后** ✓（遮挡靠层叠自动产生 ✓，不给每颗流星算交点 ✗）；
+ * 并且**刹车必须同时管住两层** ✓（只刹一层 = 刹车失灵 ✗）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 两层都在 ✓（`#sky` 后排 + `#skyNear` 前排 ✓，容器各一个 ✓）',
+		page.includes('<div id="sky" aria-hidden="true"></div>') && page.includes('<div id="skyNear" aria-hidden="true"></div>'))
+	check('🔴 **层叠一前一后** ✓（后排 z 0 ✓ 在 `#app` 之下 → 被挡住 ✓；前排 z 2 ✓ 在之上 → 盖着划过 ✓）',
+		/body\.hasbg #sky \{[^}]*z-index: 0/.test(page) && /body\.hasbg #skyNear \{[^}]*z-index: 2/.test(page))
+	check('🔴 前排**克制** ✓（只有 5 颗 ✓、scale ≤ .7 ✓、整层 .62 透明度 ✓ —— 它压在字上 ✓）',
+		page.includes('const SKY_METEORS_NEAR = [') && /opacity: \.62/.test(page)
+		&& /SKY_METEORS_NEAR = \[[\s\S]{0,700}scale: 0\.7/.test(page))
+	check('🔴 前排**更快** ✓（近处视差 ✓ —— 这是"前后"看得出**来**的关键 ✓：2.2~3.2 秒 ✓）',
+		/dur: 2\.2,/.test(page) && /dur: 3\.2,/.test(page))
+	check('🔴 刹车**两层一起**管住 ✓（`bg-still` ✓ + 减弱动态 ✓ —— 只刹一层 = 刹车失灵 ✗）',
+		page.includes('body.bg-still #sky .meteor,\n\tbody.bg-still #skyNear .meteor')
+		&& page.includes('body.hasbg #sky .meteor,\n\t\tbody.hasbg #skyNear .meteor'))
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)

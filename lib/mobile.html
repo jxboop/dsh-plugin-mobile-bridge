@@ -365,13 +365,37 @@
 	 * 关键在"头亮、尾散" ✓：一条等宽的线看着就是划线 ✗，有核有尾才像流星 ✓。
 	 */
 	#sky { display: none; }
-	body.bg-cyber #sky {
+	/*
+	 * 🔴🔴 4.10.6：**流星分两层，有前后遮挡** ✓
+	 *（用户 2026-10-15：「可以继续调整流星，有的流星划过表面，有的从背后划过，要有层次与遮挡关系」✓）。
+	 *
+	 * 以前是"**一层走天下**" ✗：赛博朋克那套整层压在前面（z 2 ✓）、
+	 * 用户那套整层放在后面（z 0 ✓）—— 永远只有一种观感 ✓。
+	 * 现在两层同时在 ✓，靠 **z-index 就自动有遮挡关系** ✓（不用给每颗算交点 ✗）：
+	 *   · **后排 `#sky`**（z 0 ✓）：在 `#app`（z 1 ✓）**之下** → 气泡/文字**挡住**它们 ✓ = "从背后划过" ✓；
+	 *   · **前排 `#skyNear`**（z 2 ✓）：在 `#app` **之上** → 它们**盖住**气泡划过 ✓ = "划过表面" ✓。
+	 * ⚠️ 前排要**克制** ✗（更少、更小、更淡 ✓ —— 它压在字上 ✓，抢戏就看不清字了 ✓）；
+	 *    后排可以多、可以亮 ✓（反正被内容挡着 ✓）。
+	 * ⚠️ 两层都 `pointer-events: none` ✓（绝不拦点击 ✓）+ `mix-blend-mode: screen` ✓（只加光、不减光 ✓）。
+	 */
+	body.bg-cyber #sky,
+	body.hasbg #sky {
 		display: block;
-		position: fixed; inset: 0; z-index: 2;
+		position: fixed; inset: 0; z-index: 0;
 		/* ⚠️ 划过归划过，**绝不拦点击** ✗ —— 这层永远不吃事件 ✓。 */
 		pointer-events: none;
 		/* 只加光、不减光 ✓：压在文字上时是"提亮" ✓，不会把字压花 ✗。 */
 		mix-blend-mode: screen;
+	}
+	#skyNear { display: none; }
+	body.bg-cyber #skyNear,
+	body.hasbg #skyNear {
+		display: block;
+		position: fixed; inset: 0; z-index: 2;
+		pointer-events: none;
+		mix-blend-mode: screen;
+		/* 前排整体再淡一点 ✓（它压在字上 ✓ —— 克制才不会抢戏 ✓）。 */
+		opacity: .62;
 	}
 	/*
 	 * ---------- 月亮（4.8.3 重做 ✓）----------
@@ -665,13 +689,18 @@
 	 * 所以流星现在是"**在背景上飞、从文字后面过**" ✓ —— 隔着半透明的气泡还能看见 ✓（气泡 .50 ✓），
 	 * 但**绝不会糊在字上** ✓。这就是用户要的效果 ✓。
 	 */
+	/* 4.10.6：这一套同样**两层** ✓（后排 0 ✓ 被气泡挡 / 前排 2 ✓ 从表面划过 ✓）—— 见上面那段长注释 ✓。 */
 	body.hasbg #sky { display: block; position: fixed; inset: 0; z-index: 0; pointer-events: none; mix-blend-mode: screen; }
+	body.hasbg #skyNear { display: block; position: fixed; inset: 0; z-index: 2; pointer-events: none; mix-blend-mode: screen; opacity: .62; }
 	/* 刹车：静下来 / 减弱动态 → 推近停下 ✓、流星不飞 ✓（图还在 ✓）。 */
 	body.bg-still #backdrop img { animation: none; }
-	body.bg-still #sky .meteor { display: none; }
+	/* 4.10.6：刹车要**两层一起**管住 ✓ —— 只刹后排、前排还在动 = 刹车失灵 ✗。 */
+	body.bg-still #sky .meteor,
+	body.bg-still #skyNear .meteor { display: none; }
 	@media (prefers-reduced-motion: reduce) {
 		body.hasbg #backdrop img { animation: none; }
-		body.hasbg #sky .meteor { display: none; }
+		body.hasbg #sky .meteor,
+		body.hasbg #skyNear .meteor { display: none; }
 	}
 
 	body.hasbg { background: #05060d; }
@@ -1464,6 +1493,7 @@
 	（划过归划过 ✓，**绝不挡点按** ✗ —— 点了没反应是项目铁律里最不许的事 ✓）。
 -->
 <div id="sky" aria-hidden="true"></div>
+<div id="skyNear" aria-hidden="true"></div>
 
 <!-- 看大图：真 URL，长按可存进手机相册 -->
 <div id="viewer">
@@ -5651,6 +5681,21 @@
 		{ x: '112%', y: '6%', len: 195, dur: 3.3, delay: 7.3, scale: 1 },
 		{ x: '80%', y: '66%', len: 175, dur: 4.2, delay: 8.0, scale: 0.9 },
 	]
+	/*
+	 * 🔴 4.10.6：**前排表**（划过表面 ✓）—— 用户要「有层次与遮挡关系」✓。
+	 * 取舍（为什么这么定 ✓）：
+	 *   · **少**（5 颗 ✓ vs 后排 12 颗 ✓）：它**压在字上** ✓，多了就是干扰 ✗；
+	 *   · **小**（scale .5~.7 ✓）：贴脸的大流星最抢戏 ✗；
+	 *   · **快一点**（dur 2.2~3.2 ✓）：近处相对速度更快 ✓ —— 这一条正是"前后"看得出来**的**关键 ✓（视差 ✓）；
+	 *   · 整层再压一档透明度 ✓（CSS 里 `opacity: .62` ✓）。
+	 */
+	const SKY_METEORS_NEAR = [
+		{ x: '100%', y: '12%', len: 120, dur: 2.6, delay: 0.4, scale: 0.62 },
+		{ x: '114%', y: '34%', len: 96, dur: 2.2, delay: 2.2, scale: 0.54 },
+		{ x: '86%', y: '48%', len: 132, dur: 3.0, delay: 4.0, scale: 0.7 },
+		{ x: '106%', y: '64%', len: 104, dur: 2.4, delay: 5.6, scale: 0.58 },
+		{ x: '92%', y: '4%', len: 88, dur: 3.2, delay: 7.4, scale: 0.5 },
+	]
 	/** 30° 浅斜、从右往左 ✓（**同单位 vmax** ✓ —— 换屏幕尺寸角度也不变 ✓）。 */
 	const SKY_METEOR_ANG = '150deg'
 	const SKY_METEOR_DX = '-104vmax'
@@ -5671,25 +5716,36 @@
 			moon.className = 'moon'
 			backdrop.appendChild(moon)
 		}
-		const layer = $('sky')
-		if (layer === null || layer.querySelector('.meteor') !== null) return
-		for (const one of SKY_METEORS) {
-			const node = document.createElement('i')
-			node.className = 'meteor'
-			node.style.setProperty('--len', one.len + 'px')
-			node.style.setProperty('--dur', one.dur + 's')
-			node.style.setProperty('--delay', one.delay + 's')
-			node.style.setProperty('--scale', String(one.scale))
-			node.style.setProperty('--ang', SKY_METEOR_ANG)
-			node.style.setProperty('--dx', SKY_METEOR_DX)
-			node.style.setProperty('--dy', SKY_METEOR_DY)
-			node.style.left = one.x
-			node.style.top = one.y
-			const streak = document.createElement('b')
-			streak.className = 'streak'
-			node.appendChild(streak)
-			layer.appendChild(node)
+		/*
+		 * 🔴 4.10.6：**两层一起搭** ✓（用户：「有的流星划过表面，有的从背后划过，要有层次与遮挡关系」✓）。
+		 * 同一个搭法用两次 ✓（抽成 `fill` ✓，别复制粘贴 ✗）：
+		 *   · `#sky`     + `SKY_METEORS`      = **后排** ✓（被气泡挡住 → "从背后划过" ✓）；
+		 *   · `#skyNear` + `SKY_METEORS_NEAR` = **前排** ✓（盖住气泡 → "划过表面" ✓，少/小/淡 ✓）。
+		 * ⚠️ 两层都用**同一套角度常量** ✓ —— 方向必须一致 ✓（一个朝上一个朝下就成了两拨东西 ✗）。
+		 */
+		const fill = (layerId, table) => {
+			const layer = $(layerId)
+			if (layer === null || layer.querySelector('.meteor') !== null) return
+			for (const one of table) {
+				const node = document.createElement('i')
+				node.className = 'meteor'
+				node.style.setProperty('--len', one.len + 'px')
+				node.style.setProperty('--dur', one.dur + 's')
+				node.style.setProperty('--delay', one.delay + 's')
+				node.style.setProperty('--scale', String(one.scale))
+				node.style.setProperty('--ang', SKY_METEOR_ANG)
+				node.style.setProperty('--dx', SKY_METEOR_DX)
+				node.style.setProperty('--dy', SKY_METEOR_DY)
+				node.style.left = one.x
+				node.style.top = one.y
+				const streak = document.createElement('b')
+				streak.className = 'streak'
+				node.appendChild(streak)
+				layer.appendChild(node)
+			}
 		}
+		fill('sky', SKY_METEORS)
+		fill('skyNear', SKY_METEORS_NEAR)
 	}
 
 	function applyBackdrop(info) {
