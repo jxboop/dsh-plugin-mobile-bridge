@@ -7651,17 +7651,36 @@
 	const uploadResume = new Map()
 
 	async function uploadInChunks(entry, label, position, count, onProgress) {
-		const bytes = base64ToBytes(entry.data)
-		const total = Math.max(1, Math.ceil(bytes.length / CHUNK_BYTES))
-		// 稳定钥匙 ✓（服务端按 uploadId 归拢分片 ✓ —— 同一个钥匙 = 接着上次那份继续 ✓）。
-		const resumeId = 'u' + String(entry.name ?? '') + ':' + String(bytes.length) + ':' + String(entry.data ?? '').slice(0, 48)
+		/*
+		 * 🔴 4.11.1：**有原始 Blob 就走二进制分片** ✓（施工单第 2 步 ✓）。
+		 * "文件/视频"那条路现在会带 `blob` ✓ → 每片直接 `blob.slice(a,b)` 当请求体 ✓，
+		 * **浏览器自己从磁盘流式读** ✓ → 每片**不再 base64** ✓（少花 33% 流量 ✓、少一次内存拷贝 ✓）。
+		 * ⚠️ **没有 blob 就照旧走 JSON** ✓（那条路一行没动 ✓）—— 照片那条、以及离线箱里
+		 * 重启后取回来的老条目 ✓，都还走它 ✓（**向后兼容** ✓）。
+		 */
+		const blob = entry.blob instanceof Blob ? entry.blob : null
+		const bytes = blob === null ? base64ToBytes(entry.data) : null
+		const size = blob === null ? bytes.length : blob.size
+		const total = Math.max(1, Math.ceil(size / CHUNK_BYTES))
+		/*
+		 * 稳定钥匙 ✓（服务端按 uploadId 归拢分片 ✓ —— 同一个钥匙 = 接着上次那份继续 ✓）。
+		 * ⚠️ 二进制那条**用 `ub` 前缀** ✓：和 base64 那条的钥匙**刻意分开** ✗ ——
+		 * 两种协议虽然写的是同样的偏移 ✓，但混用一份确认记录只会让"哪片真到了"变模糊 ✗。
+		 * Blob 那条用 `size + lastModified` 认文件 ✓（名字相同也不串 ✓）。
+		 */
+		const resumeId = blob === null
+			? 'u' + String(entry.name ?? '') + ':' + String(size) + ':' + String(entry.data ?? '').slice(0, 48)
+			: 'ub' + String(entry.name ?? '') + ':' + String(size) + ':' + String(blob.lastModified ?? 0)
 		const uploadId = resumeId
 		const acked = uploadResume.get(resumeId) ?? new Set()
 		uploadResume.set(resumeId, acked)
 		const sendChunk = async (index, force) => {
 			// 已经确认过的片**不再重传** ✓（这就是"续传"本身 ✓）；`force` 例外 ✓（见下面"拿路径"那段 ✓）。
 			if (force !== true && acked.has(index) === true) return null
-			const slice = bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES)
+			// 4.11.1：有 blob 就切 **Blob**（浏览器从磁盘读 ✓），没有就切旧的字节数组 ✓。
+			const slice = blob === null
+				? bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES)
+				: blob.slice(index * CHUNK_BYTES, Math.min(size, (index + 1) * CHUNK_BYTES))
 			let lastError = null
 			/*
 			 * 🔴 4.9.11：重试次数**故意保持 3 次 / 400ms** ✓（**没跟着改** ✗）——
@@ -7674,22 +7693,44 @@
 			 */
 			for (let tries = 0; tries < 3; tries += 1) {
 				try {
-					const done = await api('api/upload', {
-						method: 'POST',
-						headers: { 'content-type': 'application/json' },
-						body: JSON.stringify({
-							uploadId,
-							index,
-							total,
-							// 新协议：报上总长与片长，服务端就能乱序收（手机上缓存的老页面不带这两个字段，
-							// 服务端会退回"顺序追加"，所以不需要考虑版本兼容的开关）。
-							size: bytes.length,
-							chunkBytes: CHUNK_BYTES,
-							name: entry.name,
-							mediaType: entry.mediaType,
-							data: bytesToBase64(slice),
-						}),
-					})
+					/*
+					 * 4.11.1：两条协议**同一段重试/续传逻辑** ✓，只有"请求长什么样"不同 ✓：
+					 *   · 旧：JSON + base64（照片那条、以及老条目 ✓）；
+					 *   · 新：**`application/octet-stream` + `x-upload-*` 头** ✓（服务端 4.11.0 起支持 ✓✓）。
+					 * ⚠️ 元数据走**请求头** ✓（不塞 query ✗ —— 文件名是用户的东西 ✓，不该进访问日志 ✓）。
+					 */
+					const request = blob === null
+						? {
+							method: 'POST',
+							headers: { 'content-type': 'application/json' },
+							body: JSON.stringify({
+								uploadId,
+								index,
+								total,
+								// 新协议：报上总长与片长，服务端就能乱序收（手机上缓存的老页面不带这两个字段，
+								// 服务端会退回"顺序追加"，所以不需要考虑版本兼容的开关）。
+								size,
+								chunkBytes: CHUNK_BYTES,
+								name: entry.name,
+								mediaType: entry.mediaType,
+								data: bytesToBase64(slice),
+							}),
+						}
+						: {
+							method: 'POST',
+							headers: {
+								'content-type': 'application/octet-stream',
+								'x-upload-id': uploadId,
+								'x-upload-index': String(index),
+								'x-upload-total': String(total),
+								'x-upload-size': String(size),
+								'x-upload-chunk-bytes': String(CHUNK_BYTES),
+								'x-upload-name': String(entry.name ?? 'file'),
+								'x-upload-type': String(entry.mediaType ?? 'application/octet-stream'),
+							},
+							body: slice,
+						}
+					const done = await api('api/upload', request)
 					// 4.9.10：这片**服务端已经收下了** ✓ → 记下来 ✓（下次重试跳过它 ✓ = 续传 ✓）。
 					acked.add(index)
 					return done
@@ -7716,7 +7757,7 @@
 			const now = Date.now()
 			if (now - loggedAt < 1000 && done < total) return
 			loggedAt = now
-			reportToBridge('upload-progress', `${label}（第 ${position}/${count} 条）${done}/${total} 片`, bytes.length)
+			reportToBridge('upload-progress', `${label}（第 ${position}/${count} 条）${done}/${total} 片`, size)
 		}
 		try {
 			let last = await sendChunk(0)
@@ -7749,7 +7790,7 @@
 			// 之后再发同一个文件必须**重新完整传一遍** ✗（否则会拼出一个缺片的坏文件 ✗✗）。
 			uploadResume.delete(resumeId)
 			reportToBridge('upload-done',
-				`${label}（第 ${position}/${count} 条）${total} 片全传完 → ${last?.path ?? '(服务端没回路径)'}`, bytes.length)
+				`${label}（第 ${position}/${count} 条）${total} 片全传完 → ${last?.path ?? '(服务端没回路径)'}`, size)
 			return { name: last?.name ?? entry.name, mediaType: entry.mediaType, path: last?.path ?? '' }
 		} catch (error) {
 			/*
@@ -7758,7 +7799,7 @@
 			 * 续传之后这个数会**一开始就比较大** ✓，这是对的 ✓（那些片确实已经在服务端了 ✓）。
 			 */
 			reportToBridge('upload-aborted',
-				`${label}（第 ${position}/${count} 条）传到 ${done}/${total} 片断了：${String(error?.message ?? error)}`, bytes.length)
+				`${label}（第 ${position}/${count} 条）传到 ${done}/${total} 片断了：${String(error?.message ?? error)}`, size)
 			throw error
 		}
 	}
@@ -7914,6 +7955,15 @@
 			name: file.name || 'file',
 			mediaType: type === '' ? 'application/octet-stream' : type,
 			data: await readBase64(file),
+			/*
+			 * 🔴 4.11.1：**留下原始 Blob** ✓（就是手机磁盘上那个文件句柄 ✓）。
+			 * 目的：分片时可以直接 `blob.slice(a,b)` 当请求体发 ✓ —— 浏览器**自己从磁盘流式读** ✓ →
+			 * **每一片不再 base64** ✓（少花 33% 流量 ✓，也少一次整片的内存拷贝 ✓）。
+			 * ⚠️ 这一步**只加属性、没有任何地方读它** ✗ → **行为零变化** ✓（施工单第 1 步 ✓）；
+			 *    `data`（base64）**先留着** ✓ —— 预览和离线队列还在用它 ✓，
+			 *    等 ②-b 把它们也改成 Blob/对象 URL 之后再撤 ✓（**一次只改一处** ✓）。
+			 */
+			blob: file,
 		})
 		renderThumbs()
 		// 视频：桥会自动抽几帧当图片给模型看（2026-10-09 加），所以"发视频 = 模型能看懂"。

@@ -569,8 +569,15 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 `uploadId` 对同一个文件**是稳定的** ✓（名字 + 字节数 + 内容开头 ✓）—— 不再是随机值 ✗（那等于每次都从头来 ✓）',
-		/const resumeId = 'u' \+ String\(entry\.name[\s\S]{0,200}const uploadId = resumeId/.test(page)
+	/*
+	 * ⚠️ 4.11.1：钥匙现在**分两条** ✓（base64 那条 + 二进制那条 ✓）——
+	 * 二进制那条用 `ub` 前缀**刻意和 base64 分开** ✓（两种协议不共用确认记录 ✓）,
+	 * 并且用 `size + lastModified` 认文件 ✓（同名文件也不串 ✓）。判据跟着更新 ✓，不是放宽 ✗：
+	 * 依旧必须"**同一个文件稳定、不再是随机值**" ✓。
+	 */
+	check('🔴 `uploadId` 对同一个文件**是稳定的** ✓（base64：名字+字节数+内容头 ✓；二进制：名字+字节数+lastModified ✓，`ub` 前缀刻意分开 ✓）—— 都不是随机值 ✗',
+		/const resumeId = blob === null[\s\S]{0,500}const uploadId = resumeId/.test(page)
+		&& page.includes("'ub' + String(entry.name")
 		&& /const uploadId = Date\.now\(\)\.toString\(36\) \+ Math\.random/.test(page) === false)
 	check('🔴 已确认的片**记下来** ✓（`acked.add(index)` ✓，成功那一步之后才记 ✓）',
 		/acked\.add\(index\)[\s\S]{0,80}return done/.test(page))

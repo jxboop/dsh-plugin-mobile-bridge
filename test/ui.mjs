@@ -833,7 +833,27 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse({ ok: true })
 	}
 	if (path.startsWith('/api/upload')) {
-		const body = JSON.parse(options.body ?? '{}')
+		/*
+		 * 🔴 4.11.1：**两种协议都要认** ✓ —— "文件/视频"那条现在走**二进制**
+		 *（`content-type: application/octet-stream` ✓，元数据在 `x-upload-*` 头里 ✓）；
+		 * 照片那条还是 JSON + base64 ✓。
+		 * 以前这里**只会 `JSON.parse`** ✗ → 二进制片一到就抛 ✓（测试里就表现成"一片都没传"✗ ✓），
+		 * 所以这条桩必须跟着协议一起更新 ✓ —— **桩落后于实现**也是一种假绿 ✗
+		 *（它会让你以为"没走那条路"✓，其实是"桩不认那条路"✗）。
+		 */
+		const headers = options?.headers ?? {}
+		const isBinary = String(headers['content-type'] ?? '').startsWith('application/octet-stream')
+		const body = isBinary
+			? {
+				uploadId: headers['x-upload-id'],
+				index: Number(headers['x-upload-index']),
+				total: Number(headers['x-upload-total']),
+				name: headers['x-upload-name'],
+				mediaType: headers['x-upload-type'],
+				binary: true,
+				bytes: options?.body?.size ?? 0,
+			}
+			: JSON.parse(options.body ?? '{}')
 		uploaded.push(body)
 		// 并发观测：同时在飞的片数峰值（"传图快一点"就靠这个）。
 		uploadInFlight += 1
@@ -1828,13 +1848,15 @@ check('the preview is cleared after sending', $('thumbs').querySelectorAll('img'
 	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(200)
 	const sentBody = JSON.parse(requests.filter((entry) => entry.path.startsWith('/api/prompt')).pop().options.body)
-	check('视频先分片上传，再只把路径放进任务（大包必被隧道掐断）',
+	check('视频先分片上传，再只把路径放进任务（大包必被隧道掐断）'
+		+ '（4.11.1 起**走二进制分片** ✓ —— 每片不进内存、也不多花 33% 流量 ✓）',
 		requests.filter((entry) => entry.path.startsWith('/api/prompt')).length === before + 1
 		&& uploaded.length >= 1 && uploaded[0].total === 1
+		&& uploaded[0].binary === true
 		&& uploaded[0].name === 'clip.mp4'
 		&& sentBody.fileRefs?.length === 1 && sentBody.fileRefs[0].path.includes('mobile-uploads')
 		&& sentBody.images.length === 1,
-		JSON.stringify({ 片: uploaded.length, refs: sentBody.fileRefs, images: sentBody.images?.length }))
+		JSON.stringify({ 片: uploaded.length, 二进制: uploaded[0]?.binary === true, refs: sentBody.fileRefs, images: sentBody.images?.length }))
 	check('分片上传的片名带上了 uploadId 与序号（服务端要靠它拼回去）',
 		uploaded[0].uploadId !== undefined && uploaded[0].index === 0,
 		JSON.stringify({ id: uploaded[0]?.uploadId, index: uploaded[0]?.index, total: uploaded[0]?.total }))
