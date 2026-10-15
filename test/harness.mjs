@@ -1415,6 +1415,59 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 		body: JSON.stringify({ preset: 'cyberpunk' }),
 	})
 
+	/*
+	 * 🔴 4.10.8：**归档风格"真有素材"时必须能铺出来** ✓ ——
+	 * 这正是 4.10.1 那个 bug **逃过测试**的原因 ✗（当时只有源码形状断言 ✓，靠用户发现 ✓）。
+	 *
+	 * 做法：在探针家目录里**摆一份归档** ✓（结构和真实归档一模一样 ✓：`preset.json` + 素材 + 静止图 ✓），
+	 * 然后走**真实请求**验四件事 ✓：
+	 *   ① 设这个预设被接受 ✓；② bootstrap 报的是归档那套（`archived: true` ✓ + 地址带 `preset=` ✓）；
+	 *   ③ **素材真取得回来** ✓（200 ✓ + 正确的 content-type ✓）；
+	 *   ④ **支持 Range** ✓（206 ✓ —— 手机是边下边播 ✓，这条断了视频就播不了 ✓）；
+	 *   ⑤ 静止兜底也取得回来 ✓（先秒出一帧 ✓）。
+	 * ⚠️ 用完**还原成 cyberpunk** ✓ —— 后面那些用例假设"当前预设"是它 ✓（不还原就是给后面埋雷 ✗）。
+	 */
+	const presetRoot = join(scratch, 'mobile-bridge-presets', 'planet')
+	await mkdir(presetRoot, { recursive: true })
+	const clip = Buffer.from('this-is-a-fake-mp4-payload')
+	await writeFile(join(presetRoot, 'planet.mp4'), clip)
+	await writeFile(join(presetRoot, 'planet.jpg'), Buffer.from('fake-jpeg-payload'))
+	await writeFile(join(presetRoot, 'preset.json'), `${JSON.stringify({
+		preset: 'planet', label: '夜行星', file: 'planet.mp4', still: 'planet.jpg',
+		mediaType: 'video/mp4', bytes: clip.length, archivedAt: new Date().toISOString(),
+	}, null, 2)}\n`, 'utf8')
+
+	const planetSet2 = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'planet' }),
+	})
+	check('🔴 归档风格被接受 ✓（探针家目录里**真摆了**一份归档 ✓）', planetSet2.status === 200, String(planetSet2.status))
+	const planetBoot2 = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('🔴 bootstrap 报的是**归档那套** ✓（`archived: true` ✓ + 地址带 `preset=` ✓ + 静止兜底也在 ✓）',
+		planetBoot2.background?.preset === 'planet' && planetBoot2.background?.archived === true
+		&& String(planetBoot2.background?.url).includes('preset=planet')
+		&& planetBoot2.background?.still !== undefined,
+		JSON.stringify(planetBoot2.background))
+	const planetGet2 = await fetch(`${base}/api/background?preset=planet`, authed)
+	check('🔴 归档目录里的素材**真取得回来** ✓（200 ✓ + `video/mp4` ✓ + 字节数对得上 ✓）',
+		planetGet2.status === 200 && String(planetGet2.headers.get('content-type')).startsWith('video/')
+		&& Number(planetGet2.headers.get('content-length')) === clip.length,
+		`${planetGet2.status} ${planetGet2.headers.get('content-type')} ${planetGet2.headers.get('content-length')}`)
+	const planetRange2 = await fetch(`${base}/api/background?preset=planet`, { headers: { ...authed.headers, range: 'bytes=0-3' } })
+	check('🔴 归档素材支持 **Range** ✓（206 ✓ —— 手机是边下边播 ✓，这条断了视频就播不出来 ✓）',
+		planetRange2.status === 206, String(planetRange2.status))
+	const planetStill2 = await fetch(`${base}/api/background?preset=planet&still=1`, authed)
+	check('🔴 归档的**静止兜底**也取得回来 ✓（先秒出一帧 ✓，视频挂了也还有它 ✓）',
+		planetStill2.status === 200 && String(planetStill2.headers.get('content-type')).startsWith('image/'),
+		`${planetStill2.status} ${planetStill2.headers.get('content-type')}`)
+	// 还原 ✓：后面那些用例假设当前是 cyberpunk ✓。
+	await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'cyberpunk' }),
+	})
+
 	const afterBoot = await fetch(`${base}/api/bootstrap`, authed)
 	const afterBootBody = await afterBoot.json()
 	check('🔴 bootstrap 里带的就是预设 ✓（手机一打开就知道要铺赛博朋克 ✓）',
