@@ -224,13 +224,11 @@
 	body.bg-cyber #backdrop::before { animation: dsh-horizon-pulse 3.2s ease-in-out infinite; }
 	body.bg-cyber #backdrop::after { animation: dsh-scan-drift 8s linear infinite, dsh-glitch 12s step-end infinite; }
 	body.bg-cyber.bg-still .scrim::before,
-	body.bg-cyber.bg-still .scrim::after,
 	body.bg-cyber.bg-still #backdrop,
 	body.bg-cyber.bg-still #backdrop::before,
 	body.bg-cyber.bg-still #backdrop::after { animation: none; }
 	@media (prefers-reduced-motion: reduce) {
 		body.bg-cyber .scrim::before,
-		body.bg-cyber .scrim::after,
 		body.bg-cyber #backdrop,
 		body.bg-cyber #backdrop::before,
 		body.bg-cyber #backdrop::after { animation: none; }
@@ -265,21 +263,10 @@
 	}
 	/*
 	 * 4.8.1：**斜落的霓虹雨** ✓ —— 上一层"往下掉的光丝" ✓。
-	 * 45° 的重复线 + 动画位移 ✓（还是只动 background-position ✓）——
-	 * 这是"一眼就看出在动"的主力 ✓（比网格那层显眼得多 ✓）。
+	 * ⚠️ 4.8.3 已**删掉这一层** ✗（用户 2026-10-15：「那些背景里面的线条能不能改掉，很丑欸」✓）——
+	 * 它就是 74° 的重复斜线 ✓，横穿整个屏幕（包括压在对话上 ✓），看着像**划痕**而不是雨 ✗。
+	 * 现在"雨"这件事交给**真流星**（`#sky` 里的 ✓，有头有尾 ✓），背景层不再画任何斜线 ✓。
 	 */
-	body.bg-cyber .scrim::after {
-		content: ''; position: absolute; inset: -20% -20% -20% -20%;
-		background-image: repeating-linear-gradient(74deg,
-			rgba(0,229,255,.30) 0 1px, transparent 1px 26px,
-			rgba(255,45,196,.22) 0 27px, transparent 27px 58px);
-		animation: dsh-rain 1.5s linear infinite;
-		opacity: .55;
-	}
-	@keyframes dsh-rain {
-		from { background-position: 0 0; }
-		to { background-position: 0 58px; }
-	}
 	/*
 	 * 4.8.1：**偶尔闪一下** ✓（故障感 ✓）—— 12 秒里只有极短两下 ✓，
 	 * 平时完全不出现 ✓（不做成一直闪 ✗：那是干扰，不是惊艳 ✓）。
@@ -382,27 +369,43 @@
 		/* 只加光、不减光 ✓：压在文字上时是"提亮" ✓，不会把字压花 ✗。 */
 		mix-blend-mode: screen;
 	}
-	/* ---------- 月亮 ---------- */
-	#sky .moon {
-		position: absolute; top: 6%; right: 13%; width: 78px; height: 78px; border-radius: 50%;
+	/*
+	 * ---------- 月亮（4.8.3 重做 ✓）----------
+	 * ⚠️ 三条来自用户的批评 ✓（2026-10-15）：「月亮不够真实」✗、「为什么要放在最上面」✗、
+	 * 「改成透明的放背景里」✓ —— 全对 ✓：
+	 *   ① **搬到 `#backdrop` 里** ✓（不再是 `#sky` 那个 z-index 2 的顶层 ✗）→ 它在**内容之下** ✓，
+	 *      和网格、光晕是同一片景 ✓（划过的是流星 ✓，月亮不该飘在对话上面 ✗）；
+	 *   ② **半透明** ✓（`opacity: .72` ✓ —— 压在它上面的字照样清楚 ✓）；
+	 *   ③ **真实感** ✓：参考了「纯 CSS 画月亮」那类做法 ✓ —— 关键是**三层**：
+	 *      **月海**（大片暗区 ✓ 真实月亮最显眼的特征 ✓）、**环形山**（柔边暗斑 ✓）、
+	 *      **偏心的明暗交界**（`::after` 那层偏移暗影 = **月相** ✓ —— 整圆一样亮就是贴纸 ✗）。
+	 */
+	body.bg-cyber #backdrop .moon {
+		position: absolute; top: 7%; right: 12%; width: 92px; height: 92px; border-radius: 50%;
+		opacity: .72;
 		background:
-			radial-gradient(circle at 36% 30%, #ffffff 0%, #eef4ff 38%, #cfdcf7 66%, #a9bce4 100%);
+			/* 环形山 + 亮点 */
+			radial-gradient(13% 13% at 62% 66%, rgba(104,124,176,.55), rgba(104,124,176,0) 70%),
+			radial-gradient(9% 9% at 40% 57%, rgba(104,124,176,.46), rgba(104,124,176,0) 70%),
+			radial-gradient(6% 6% at 58% 34%, rgba(104,124,176,.38), rgba(104,124,176,0) 70%),
+			radial-gradient(18% 18% at 28% 30%, rgba(255,255,255,.34), rgba(255,255,255,0) 72%),
+			/* 月海（两片大的 ✓ —— 没有这个就是一颗白球 ✗） */
+			radial-gradient(48% 42% at 37% 43%, rgba(118,136,184,.45), rgba(118,136,184,0) 72%),
+			radial-gradient(34% 30% at 67% 59%, rgba(124,142,190,.36), rgba(124,142,190,0) 74%),
+			/* 球体本身：亮边 → 边缘变暗 ✓（球感 ✓） */
+			radial-gradient(circle at 34% 30%, #ffffff 0%, #eef4ff 30%, #d3ddf4 58%, #a9b7d8 82%, #8e9cc0 100%);
 		box-shadow:
-			0 0 26px 8px rgba(170,210,255,.30),
-			0 0 74px 26px rgba(120,170,255,.18),
-			inset -7px -9px 18px rgba(86,106,158,.42);
+			0 0 30px 10px rgba(170,210,255,.22),
+			0 0 80px 30px rgba(120,170,255,.14),
+			inset -9px -11px 20px rgba(78,96,150,.55);
 	}
-	/* 环形山 + 一点明暗交界 ✓（太细会糊成一团 ✓，所以只有四个大块 ✓）。 */
-	#sky .moon::after {
+	/* 月相：一层**偏心**暗影 ✓（明暗交界 ✓ —— 这一层是"像不像真的"的分水岭 ✓）。 */
+	body.bg-cyber #backdrop .moon::after {
 		content: ''; position: absolute; inset: 0; border-radius: 50%;
-		background:
-			radial-gradient(11px 11px at 63% 66%, rgba(112,134,186,.34), transparent 72%),
-			radial-gradient(7px 7px at 41% 57%, rgba(112,134,186,.28), transparent 72%),
-			radial-gradient(5px 5px at 59% 35%, rgba(112,134,186,.24), transparent 72%),
-			radial-gradient(14px 14px at 29% 31%, rgba(255,255,255,.34), transparent 72%);
+		background: radial-gradient(circle at 78% 76%, rgba(6,10,26,.66) 0%, rgba(6,10,26,.44) 36%, rgba(6,10,26,0) 62%);
 	}
-	/* 月晕：慢慢呼吸 ✓（只动 opacity ✓）。 */
-	#sky .moon::before {
+	/* 月晕：慢慢呼吸 ✓（只动 opacity / transform ✓）—— 月亮搬进 `#backdrop` 之后选择器也跟着改 ✓。 */
+	body.bg-cyber #backdrop .moon::before {
 		content: ''; position: absolute; inset: -46%; border-radius: 50%;
 		background: radial-gradient(circle, rgba(150,200,255,.22) 0%, rgba(120,170,255,.10) 42%, transparent 70%);
 		animation: dsh-moon-glow 7.5s ease-in-out infinite;
@@ -411,40 +414,51 @@
 		0%, 100% { opacity: .55; transform: scale(.96); }
 		50% { opacity: 1; transform: scale(1.04); }
 	}
-	/* ---------- 流星 ---------- */
+	/*
+	 * ---------- 流星（4.8.3 重做运动方式 ✓）----------
+	 * ⚠️ 用户 2026-10-15：「流星是斜向下流的，你这个流星动作很奇怪」✓ —— 说到点子上了 ✓。
+	 * 上一版是**一个元素**上写 `rotate(31deg) translate3d(74vw, 74vh)` ✗：
+	 * 位移是在**旋转后的坐标系**里算的 ✓ → 实际飞行方向 = 旋转再叠加 ✗，
+	 * 尾巴的朝向和它飞的方向**不一定一致** ✓ —— 看着就是"歪着飘" ✗。
+	 * 现在拆成两层 ✓，各管一件事 ✓：
+	 *   · 外层 `.meteor`：**只走轨迹** ✓（`translate3d(var(--dx), var(--dy))` ✓，坐标系是正的 ✓）；
+	 *   · 内层 `.streak`：**只负责形状** ✓（按 `--ang` 旋转 ✓，尾巴方向 = 飞行方向 ✓）。
+	 * 于是"斜向下"这件事是**算出来的** ✓，不是凑出来的 ✓。
+	 * 另外：全部同方向 ✓（真实流星雨就是一个辐射点发出来的 ✓）、匀速 ✓（`linear` ✓）、更快 ✓（1.1~2.0s ✓）。
+	 */
 	#sky .meteor {
-		position: absolute; width: var(--len, 170px); height: 2px; border-radius: 999px;
-		background: linear-gradient(90deg,
-			rgba(255,255,255,0) 0%, rgba(190,235,255,.16) 42%, rgba(225,245,255,.62) 82%, #ffffff 100%);
-		transform: rotate(31deg) translate3d(0, 0, 0);
+		position: absolute; left: var(--x); top: var(--y);
+		animation: dsh-meteor-fly var(--dur) linear var(--delay) infinite;
 		opacity: 0;
-		animation: dsh-meteor var(--dur, 2.4s) linear var(--delay, 0s) infinite;
+	}
+	#sky .meteor .streak {
+		display: block; width: var(--len); height: 2px; border-radius: 999px;
+		transform: rotate(var(--ang));
+		transform-origin: 100% 50%;
+		background: linear-gradient(90deg,
+			rgba(255,255,255,0) 0%, rgba(190,235,255,.18) 44%, rgba(228,247,255,.70) 84%, #ffffff 100%);
 	}
 	/* 亮核：流星"有头"就靠这个 ✓（尺寸跟着 --scale 走 ✓，大小颗都有 ✓）。 */
-	#sky .meteor::after {
+	#sky .meteor .streak::after {
 		content: ''; position: absolute; right: -4px; top: 50%;
 		width: calc(7px * var(--scale, 1)); height: calc(7px * var(--scale, 1));
 		margin-top: calc(-3.5px * var(--scale, 1)); border-radius: 50%;
 		background: radial-gradient(circle, #ffffff 0%, rgba(200,242,255,.92) 42%, rgba(190,235,255,0) 72%);
 		box-shadow: 0 0 calc(12px * var(--scale, 1)) calc(3px * var(--scale, 1)) rgba(170,235,255,.55);
 	}
-	/*
-	 * 一条流星的一生 ✓：淡入 → 划过 → 淡出 ✓（大部分时间是不在的 ✓ ——
-	 * 十几颗错开延迟 ✓，所以屏幕上总有几颗在飞、又不会糊成一片 ✓）。
-	 * 只动 `transform` / `opacity` ✓（合成层 ✓，手机上不掉帧 ✓）。
-	 */
-	@keyframes dsh-meteor {
-		0% { transform: rotate(31deg) translate3d(0, 0, 0); opacity: 0; }
-		4% { opacity: 1; }
-		62% { opacity: .95; }
-		100% { transform: rotate(31deg) translate3d(74vw, 74vh, 0); opacity: 0; }
+	/* 一条流星的一生 ✓：淡入 → 匀速划过 → 淡出 ✓（大部分时间不在 ✓，12 颗错开 ✓ 屏幕上总有几颗 ✓）。 */
+	@keyframes dsh-meteor-fly {
+		0% { transform: translate3d(0, 0, 0); opacity: 0; }
+		5% { opacity: 1; }
+		68% { opacity: .95; }
+		100% { transform: translate3d(var(--dx), var(--dy), 0); opacity: 0; }
 	}
 	/* 刹车：静下来 / 系统减弱动态 → **流星不飞了** ✓（月亮留着 ✓ —— 它本来就基本静止 ✓）。 */
 	body.bg-cyber.bg-still #sky .meteor { display: none; }
-	body.bg-cyber.bg-still #sky .moon::before { animation: none; }
+	body.bg-cyber.bg-still #backdrop .moon::before { animation: none; }
 	@media (prefers-reduced-motion: reduce) {
 		body.bg-cyber #sky .meteor { display: none; }
-		body.bg-cyber #sky .moon::before { animation: none; }
+		body.bg-cyber #backdrop .moon::before { animation: none; }
 	}
 	/*
 	 * ⚠️ 交互控件**一个一个明确接管** ✓ —— 不追着亮色模式里那些老规则跑 ✗
@@ -5402,36 +5416,51 @@
 	 */
 	let backdropKey = ''
 	/*
-	 * 🔴 4.8.2：把「星空」搭出来 ✓（月亮 + 流星 ✓）。
+	 * 🔴 4.8.3：星空参数 ✓（月亮搬到 `#backdrop` 里了 ✓，这里只剩流星 ✓）。
 	 *
-	 * ⚠️ 参数写成**固定表** ✓，不用 `Math.random()` ✗ —— 随机会让"截图对不上""问题复现不了" ✓
-	 *（这一整天在预览里吃了不少"看不出来是不是改坏了"的亏 ✓）。表里 12 颗：
-	 * 起点铺在左上到中上 ✓（所以会**划过对话框** ✓），长短 / 速度 / 延迟 / 大小都错开 ✓。
+	 * ⚠️ 参数写成**固定表** ✓，不用 `Math.random()` ✗ —— 随机会让"截图对不上""问题复现不了" ✓。
+	 * ⚠️ `--dx/--dy/--ang` **必须对得上** ✗（这就是上一版"动作奇怪"的根因 ✓）：
+	 *   方向统一是**斜向下偏左** ✓（真实流星雨同出一个辐射点 ✓），角度实测约 **40°** ✓：
+	 *   `dx = -66vw`、`dy = +58vh` → 屏幕角 = 180° − atan(58/66) ≈ **139°** ✓（CSS 顺时针为正 ✓、y 向下 ✓）。
+	 *   所以每颗的 `--ang` 都是 **139deg** ✓：拖尾按这个角旋转 ✓，**尾巴朝向 = 飞行方向** ✓。
+	 *   长短 / 速度 / 延迟 / 大小错开 ✓，但**方向不散** ✓ —— 散开看着就乱 ✗。
 	 */
 	const SKY_METEORS = [
-		{ left: '-6%', top: '2%', len: 190, dur: 2.3, delay: 0, scale: 1 },
-		{ left: '12%', top: '10%', len: 140, dur: 2.9, delay: 0.7, scale: 0.8 },
-		{ left: '30%', top: '4%', len: 230, dur: 2.1, delay: 1.5, scale: 1.15 },
-		{ left: '48%', top: '14%', len: 160, dur: 3.2, delay: 2.4, scale: 0.9 },
-		{ left: '4%', top: '22%', len: 120, dur: 3.6, delay: 3.1, scale: 0.7 },
-		{ left: '38%', top: '26%', len: 200, dur: 2.6, delay: 4.2, scale: 1.05 },
-		{ left: '58%', top: '6%', len: 175, dur: 2.8, delay: 5.0, scale: 0.95 },
-		{ left: '20%', top: '36%', len: 150, dur: 3.4, delay: 5.9, scale: 0.85 },
-		{ left: '66%', top: '20%', len: 210, dur: 2.4, delay: 6.6, scale: 1.1 },
-		{ left: '-2%', top: '44%', len: 130, dur: 3.9, delay: 7.4, scale: 0.75 },
-		{ left: '44%', top: '40%', len: 185, dur: 3.0, delay: 8.3, scale: 1 },
-		{ left: '74%', top: '30%', len: 165, dur: 3.3, delay: 9.1, scale: 0.9 },
+		{ x: '82%', y: '-6%', len: 190, dur: 1.5, delay: 0, scale: 1 },
+		{ x: '64%', y: '4%', len: 140, dur: 1.9, delay: 0.6, scale: 0.8 },
+		{ x: '94%', y: '10%', len: 230, dur: 1.3, delay: 1.2, scale: 1.15 },
+		{ x: '50%', y: '12%', len: 160, dur: 2.0, delay: 1.9, scale: 0.9 },
+		{ x: '76%', y: '22%', len: 120, dur: 1.7, delay: 2.6, scale: 0.7 },
+		{ x: '36%', y: '24%', len: 200, dur: 1.6, delay: 3.4, scale: 1.05 },
+		{ x: '88%', y: '32%', len: 175, dur: 1.8, delay: 4.1, scale: 0.95 },
+		{ x: '22%', y: '34%', len: 150, dur: 1.4, delay: 4.9, scale: 0.85 },
+		{ x: '70%', y: '44%', len: 210, dur: 1.2, delay: 5.6, scale: 1.1 },
+		{ x: '10%', y: '6%', len: 130, dur: 2.0, delay: 6.3, scale: 0.75 },
+		{ x: '58%', y: '36%', len: 185, dur: 1.5, delay: 7.1, scale: 1 },
+		{ x: '44%', y: '2%', len: 165, dur: 1.9, delay: 7.9, scale: 0.9 },
 	]
+	/** 全表同一个方向 ✓（139° ✓ —— 见上面那段推导 ✓）。 */
+	const SKY_METEOR_ANG = '139deg'
+	const SKY_METEOR_DX = '-66vw'
+	const SKY_METEOR_DY = '58vh'
 
 	let skyBuilt = false
 	function buildSky() {
 		if (skyBuilt === true) return
 		skyBuilt = true
+		/*
+		 * ⚠️ 月亮挂在 **`#backdrop`** 里 ✓（用户：「改成透明的放背景里」✓）——
+		 * 不是 `#sky` ✗：那一层在内容**之上** ✓（流星要划过对话 ✓），
+		 * 月亮放那儿就成了"贴在对话上的贴纸" ✗。
+		 */
+		const backdrop = $('backdrop')
+		if (backdrop !== null && backdrop.querySelector('.moon') === null) {
+			const moon = document.createElement('div')
+			moon.className = 'moon'
+			backdrop.appendChild(moon)
+		}
 		const layer = $('sky')
-		if (layer === null) return
-		const moon = document.createElement('div')
-		moon.className = 'moon'
-		layer.appendChild(moon)
+		if (layer === null || layer.querySelector('.meteor') !== null) return
 		for (const one of SKY_METEORS) {
 			const node = document.createElement('i')
 			node.className = 'meteor'
@@ -5439,8 +5468,14 @@
 			node.style.setProperty('--dur', one.dur + 's')
 			node.style.setProperty('--delay', one.delay + 's')
 			node.style.setProperty('--scale', String(one.scale))
-			node.style.left = one.left
-			node.style.top = one.top
+			node.style.setProperty('--ang', SKY_METEOR_ANG)
+			node.style.setProperty('--dx', SKY_METEOR_DX)
+			node.style.setProperty('--dy', SKY_METEOR_DY)
+			node.style.left = one.x
+			node.style.top = one.y
+			const streak = document.createElement('b')
+			streak.className = 'streak'
+			node.appendChild(streak)
 			layer.appendChild(node)
 		}
 	}

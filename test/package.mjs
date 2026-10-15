@@ -274,7 +274,7 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	const layers = ['dsh-aurora', 'dsh-grid-flow', 'dsh-rain', 'dsh-horizon-pulse', 'dsh-scan-drift', 'dsh-glitch']
+	const layers = ['dsh-aurora', 'dsh-grid-flow', 'dsh-horizon-pulse', 'dsh-scan-drift', 'dsh-glitch', 'dsh-meteor-fly', 'dsh-moon-glow']
 	check('🔴 够动：**五层以上**各自在动 ✓（光晕 / 网格 / 霓虹雨 / 地平线 / 扫描线 + 偶发故障闪 ✓）—— 上一版只有两层 ✗',
 		layers.every((name) => page.includes('@keyframes ' + name)),
 		layers.filter((name) => page.includes('@keyframes ' + name) === false).join(' ') || `${layers.length} 个动画都在 ✓`)
@@ -284,9 +284,15 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/body\.bg-cyber \.scrim::before \{[\s\S]*?opacity: \.92;/.test(page))
 	check('🔴 不被挡住：压暗层让到 **.20/.34** ✓（上一版 .45/.68 把背景压没了 ✗）',
 		page.includes('body.hasbg.bg-cyber #backdrop .scrim { background: linear-gradient(180deg, rgba(6,8,18,.20), rgba(6,8,18,.34)); }'))
-	check('🔴 两条刹车**盖全**所有动起来的层 ✓（4.8.1 新加了 `.scrim::after` 和 `#backdrop` 自己 ✗ —— 漏一个就是"关不掉的动画" ✗）',
-		/body\.bg-cyber\.bg-still[\s\S]{0,400}\.scrim::after[\s\S]{0,200}#backdrop\b/.test(page)
-		&& /prefers-reduced-motion: reduce[\s\S]{0,400}\.scrim::after[\s\S]{0,200}#backdrop\b/.test(page))
+	/*
+	 * ⚠️ 4.8.3：这条原来盯的是 `.scrim::after`（那层斜线 ✗）—— 用户说「那些背景里面的线条…很丑」✓，
+	 * 那层已经**删掉** ✓，所以改盯现在真正动起来的那几层 ✓（含新加的流星和月晕 ✓）。
+	 */
+	check('🔴 两条刹车**盖全**所有动起来的层 ✓（4.8.3 新加了流星和月晕 ✗ —— 漏一个就是"关不掉的动画" ✗）',
+		/body\.bg-cyber\.bg-still[\s\S]{0,500}#sky \.meteor[\s\S]{0,200}moon::before/.test(page)
+		&& /prefers-reduced-motion: reduce[\s\S]{0,500}#sky \.meteor[\s\S]{0,200}moon::before/.test(page))
+	check('🔴 那层"很丑的斜线"**确实删掉了** ✓（`.scrim::after` 和 `dsh-rain` 都不该再出现 ✓）',
+		page.includes('dsh-rain') === false && page.includes('.scrim::after {') === false)
 	check('🔴 动画**只碰** background-position / opacity ✓（碰 filter/blur/宽高就会在手机上掉帧发热 ✗）',
 		[...page.matchAll(/@keyframes (dsh-[a-z-]+) \{([\s\S]*?)\n\t\}/g)]
 			.every(([, , body]) => /^(?:(?!filter|blur|width|height|inset|margin|padding|left|top)[\s\S])*$/.test(body)),
@@ -301,32 +307,48 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
 	check('🔴 有星星那一层 ✓（`#sky` ✓ —— 月亮和流星都在这儿 ✓）', page.includes('<div id="sky"'))
-	check('🔴 流星**有头**：亮核是独立一层 ✓（`::after` 的发光圆点 ✓）—— 上一版就是一条等宽的线 ✗',
-		/#sky \.meteor::after \{[\s\S]*?radial-gradient\(circle, #ffffff/.test(page))
+	check('🔴 流星**有头**：亮核是独立一层 ✓（拖尾里那颗发光点 ✓）—— 上一版就是一条等宽的线 ✗',
+		/#sky \.meteor \.streak::after \{[\s\S]*?radial-gradient\(circle, #ffffff/.test(page))
 	check('🔴 流星**有尾**：拖尾是**渐隐**的 ✓（从透明到白 ✓）—— 等宽实线看着就是划线 ✗',
-		/#sky \.meteor \{[\s\S]*?linear-gradient\(90deg,[\s\S]*?rgba\(255,255,255,0\)[\s\S]*?#ffffff 100%\)/.test(page))
+		/#sky \.meteor \.streak \{[\s\S]*?linear-gradient\(90deg,[\s\S]*?rgba\(255,255,255,0\)[\s\S]*?#ffffff 100%\)/.test(page))
+	/*
+	 * 🔴 4.8.3：**运动方式必须"轨迹和朝向分开"** ✓（用户：「你这个流星动作很奇怪」✓）。
+	 * 上一版一个元素上写 `rotate() translate()` ✗ —— 位移在旋转后的坐标系里 ✓ → 尾巴方向和飞行方向不一定一致 ✓。
+	 * 现在外层只管位移 ✓、内层只管朝向 ✓（`--dx/--dy/--ang` 三个变量必须**一起存在** ✓）。
+	 */
+	check('🔴 流星把"轨迹"和"朝向"拆成两层 ✓（外层 translate + 内层 rotate ✓ —— 上一版混在一起才显得奇怪 ✗）',
+		/#sky \.meteor \{[\s\S]*?translate3d\(var\(--dx\), var\(--dy\)/.test(page)
+		&& /#sky \.meteor \.streak \{[\s\S]*?transform: rotate\(var\(--ang\)\)/.test(page))
+	check('🔴 斜向下：方向是**算出来的** ✓（`--dx` 负、`--dy` 正 ✓ 且 `--ang` 对得上 ✓ —— 不是凑的 ✗）',
+		page.includes("const SKY_METEOR_ANG = '139deg'") && page.includes("const SKY_METEOR_DX = '-66vw'") && page.includes("const SKY_METEOR_DY = '58vh'"))
+	check('🔴 月亮**搬到背景层**了 ✓（`#backdrop .moon` ✓）而且是**半透明** ✓（用户：「改成透明的放背景里」✓）',
+		/body\.bg-cyber #backdrop \.moon \{[\s\S]*?opacity: \.72;/.test(page) && page.includes('#sky .moon') === false)
+	check('🔴 月亮**不是个白球** ✓：月海 + 环形山 + **偏心的月相暗影** ✓（`::after` ✓ —— 这一层是"像不像真的"的分水岭 ✓）',
+		page.includes('body.bg-cyber #backdrop .moon::after')
+		&& /rgba\(118,136,184,\.45\)/.test(page) && /rgba\(6,10,26,\.66\)/.test(page))
 	/*
 	 * ⚠️ 这里第一版我写成 `page.match(/#sky \.moon::after \{[\s\S]*?radial-gradient/g).length >= 4` ✗ ——
 	 * **非贪婪匹配到第一个 radial-gradient 就收尾** ✓，永远只能数到 1 ✓（断言当场红 ✓，等于自己抓自己 ✓）。
 	 * 正确写法：先把**整块**抠出来 ✓，再在块里数 ✓。
 	 */
 	const moonCraters = /#sky \.moon::after \{([\s\S]*?)\n\t\}/.exec(page)?.[1] ?? ''
-	check('🔴 有月亮 ✓，而且**不是个白圆** ✓（四块环形山 + 内阴影 ✓）',
-		page.includes('#sky .moon {') && (moonCraters.match(/radial-gradient/g) ?? []).length >= 4
-		&& page.includes('inset -7px -9px 18px'),
-		`环形山 ${(moonCraters.match(/radial-gradient/g) ?? []).length} 块`)
+	check('🔴 「非常丑的那些斜线」没了 ✓，而月亮和流星还在 ✓（星空层里只剩流星 ✓ —— 月亮在背景层 ✓）',
+		page.includes('<div id="sky"') && page.includes('body.bg-cyber #backdrop .moon {')
+		&& page.includes('#sky .meteor .streak {'))
 	check('🔴 **划过对话框** ✓：这一层在内容**之上**（z-index 2 > `#app` 的 1 ✓）',
 		/z-index: 2;[\s\S]{0,200}pointer-events: none/.test(page))
 	check('🔴 但**绝不拦点击** ✗ —— `pointer-events: none` ✓（划过归划过，点了必须有反应 ✓）',
 		/body\.bg-cyber #sky \{[\s\S]*?pointer-events: none/.test(page))
-	check('🔴 流星参数是**固定表** ✓，不用 `Math.random()` ✗（随机会让截图对不上、问题复现不了 ✓）',
-		page.includes('const SKY_METEORS = [') && /SKY_METEORS[\s\S]{0,40}Math\.random/.test(page) === false)
+	check('🔴 流星参数是**固定表** ✓（12 颗都在 ✓），不用 `Math.random()` ✗（随机会让截图对不上 ✓）',
+		page.includes('const SKY_METEORS = [') && (page.match(/\{ x: '[+-]?\d+%', y: '/g) ?? []).length >= 12
+		&& /SKY_METEORS[\s\S]{0,40}Math\.random/.test(page) === false,
+		`${(page.match(/\{ x: '[+-]?\d+%', y: '/g) ?? []).length} 颗`)
 	check('🔴 刹车管到流星 ✓（静下来 / 减弱动态 → `.meteor` 直接不显示 ✓，月亮留着 ✓）',
 		page.includes('body.bg-cyber.bg-still #sky .meteor { display: none; }')
 		&& page.includes('body.bg-cyber #sky .meteor { display: none; }'))
 	check('🔴 流星只动 transform / opacity ✓（手机上才不掉帧 ✓）',
-		/@keyframes dsh-meteor \{[\s\S]*?\n\t\}/.exec(page)?.[0] !== undefined
-		&& /filter|blur|width:|height:|margin:/.test(/@keyframes dsh-meteor \{[\s\S]*?\n\t\}/.exec(page)[0]) === false)
+		/@keyframes dsh-meteor-fly \{[\s\S]*?\n\t\}/.exec(page)?.[0] !== undefined
+		&& /filter|blur|width:|height:|margin:/.test(/@keyframes dsh-meteor-fly \{[\s\S]*?\n\t\}/.exec(page)[0]) === false)
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)

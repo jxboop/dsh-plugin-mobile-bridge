@@ -4819,9 +4819,12 @@ await wait(40)
 	 * 4.8.2：**月亮 + 流星** ✓（用户：「这流星雨就是线啊…最好再加上好看的月亮」✓）——
 	 * 钉"真搭出来了" ✓（1 个月亮 + 12 颗流星 ✓），而且要**有头有尾** ✓（核 + 尾两个元素都在 ✓）。
 	 */
-	check('🔴 星空真的搭出来了 ✓（1 个月亮 + 12 颗流星 ✓）',
-		$('sky').querySelectorAll('.moon').length === 1 && $('sky').querySelectorAll('.meteor').length === 12,
-		`月亮 ${$('sky').querySelectorAll('.moon').length} / 流星 ${$('sky').querySelectorAll('.meteor').length}`)
+	check('🔴 星空真的搭出来了 ✓（**月亮在背景层** ✓ + 12 颗流星 ✓ —— 4.8.3 起月亮不再飘在对话上面 ✓）',
+		$('backdrop').querySelectorAll('.moon').length === 1 && $('sky').querySelectorAll('.moon').length === 0
+		&& $('sky').querySelectorAll('.meteor').length === 12,
+		`背景层月亮 ${$('backdrop').querySelectorAll('.moon').length} / 顶层月亮 ${$('sky').querySelectorAll('.moon').length} / 流星 ${$('sky').querySelectorAll('.meteor').length}`)
+	check('🔴 每颗流星都有**拖尾那层** ✓（头尾分开 ✓ —— 上一版就是一条线 ✗）',
+		[...$('sky').querySelectorAll('.meteor')].every((node) => node.querySelector('.streak') !== null))
 	check('🔴 流星**大小 / 速度 / 延迟各不相同** ✓（一样的话就是"复制粘贴的线" ✗）',
 		new Set([...$('sky').querySelectorAll('.meteor')].map((node) => node.style.getPropertyValue('--dur'))).size >= 8
 		&& new Set([...$('sky').querySelectorAll('.meteor')].map((node) => node.style.getPropertyValue('--scale'))).size >= 4,
