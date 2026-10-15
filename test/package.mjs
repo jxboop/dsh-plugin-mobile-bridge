@@ -367,23 +367,22 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 图片背景**会动** ✓（Ken Burns 缓慢推近 ✓ —— 静态图也有镜头感 ✓）',
-		page.includes('body.hasbg.bg-live #backdrop img') && page.includes('@keyframes dsh-live-pan'))
+	check('🔴 图片背景**会动** ✓（4.9.3 起是**慢速旋转** ✓ —— 用户要「星球在转」✓，不是推近 ✗）',
+		page.includes('body.hasbg.bg-live #backdrop img') && page.includes('@keyframes dsh-live-turn'))
 	check('🔴 动效只碰 transform ✓（手机上不掉帧 ✓）',
-		/from \{ transform: scale\(1\.18\)[\s\S]{0,120}to \{ transform: scale\(1\.28\)/.test(page))
+		/from \{ transform: scale\(1\.18\) rotate\(-1\.83deg\); \}[\s\S]{0,120}to \{ transform: scale\(1\.18\) rotate\(1\.83deg\); \}/.test(page))
 	/*
 	 * 水印：这台机器**没有 ffmpeg / jpegtran** ✗（无损裁 JPEG 的工具一个都没有 ✓），
 	 * 重新编码一定掉画质 ✗ —— 而用户要求"画质不变、不要压缩、不要更改" ✓。
 	 * 所以改成**画面层面裁**：scale ≥ 1.18 + **顶边为锚** ✓ → 底部约 15% 推出屏幕 ✓，文件一个字节不动 ✓。
 	 */
-	check('🔴 水印靠**显示裁掉** ✓（最小 scale 仍 ≥ 1.18 ✓、以顶边为锚 ✓ —— 全程不会露出来 ✓，文件不改 ✓）',
-		page.includes('transform-origin: 50% 0') && /from \{ transform: scale\(1\.18\)/.test(page)
-		&& page.includes('scale(1.28)'))
+	check('🔴 水印靠**显示裁掉** ✓（scale 恒 ≥ 1.18 ✓ —— 旋转也露不出水印 ✓，文件不改 ✓）',
+		page.includes('transform-origin: 50% 42%') && /from \{ transform: scale\(1\.18\) rotate\(-1\.83deg\)/.test(page))
 	check('🔴 暖金色调 ✓ + **更透明** ✓（气泡 .50 / 面板 .52 ✓ —— 用户要"透明能够适配这张图"✓）',
 		/body\.hasbg\.bg-live \{[\s\S]*?--accent: #ffb454/.test(page)
 		&& page.includes('body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50)'))
-	check('🔴 下半压得更重 ✓（那张图下半是亮水面 ✓ —— .30 → .62 ✓）',
-		page.includes('rgba(8,9,14,.30) 0%, rgba(8,9,14,.30) 46%, rgba(8,9,14,.62) 100%'))
+	check('🔴 下半压得更重 ✓（那张图下半是亮水面 ✓ —— 4.9.3 起 .24 → .60 ✓：更透，但下重上轻 ✓）',
+		page.includes('rgba(8,9,14,.24) 0%, rgba(8,9,14,.24) 46%, rgba(8,9,14,.60) 100%'))
 	check('🔴 图片背景也有流星 ✓（"一定要是动态" ✓），刹车也管到它们 ✓',
 		page.includes('body.hasbg #sky { display: block') && page.includes('body.bg-still #sky .meteor { display: none; }')
 		&& page.includes('body.bg-still #backdrop img { animation: none; }'))
@@ -416,6 +415,30 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		server.includes('const backgroundStill =') && server.includes('...(still === null ? {} : { still })'))
 	check('🔴 `?still=1` 真的送那张图 ✓（手机先铺它秒出 ✓，视频再换上 ✓）',
 		server.includes('const wantStill =') && server.includes('stillName'))
+}
+
+/*
+ * 14) 🔴 **旋转动效 + 慢流星 + 透明界面**（4.9.3 ✓）。
+ * 用户 2026-10-15：「动图不是这样动的，原本图片里的星球会旋转的，而且流星速度太快了，
+ * 文字和文字框要透明，能清晰显示背景」✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 动效是**旋转**不是推近 ✓（上一版 Ken Burns 推近 ✗ —— 用户要的是"星球在转" ✓）',
+		page.includes('@keyframes dsh-live-turn') && page.includes('rotate(-1.83deg)') && page.includes('rotate(1.83deg)')
+		&& page.includes('dsh-live-turn 60s ease-in-out infinite alternate'))
+	check('🔴 旋转时**四角不露黑** ✓（`scale(1.18)` 必须还在 ✓ —— 顺便挡住水印 ✓）',
+		/body\.hasbg\.bg-live #backdrop img \{[\s\S]{0,160}\}/.test(page)
+		&& /@keyframes dsh-live-turn \{\s*from \{ transform: scale\(1\.18\)/.test(page))
+	const durs = [...page.matchAll(/dur: ([0-9.]+), delay/g)].map((m) => Number(m[1]))
+	check('🔴 流星**放慢**了 ✓（全部 ≥ 2.6 秒 ✓ —— 上一版 1.2~2.0 秒被用户判为"太快" ✗）',
+		durs.length >= 12 && durs.every((d) => d >= 2.6),
+		`${durs.length} 颗，最短 ${Math.min(...durs)}s / 最长 ${Math.max(...durs)}s`)
+	check('🔴 文字框**更透明** ✓（面板 .34 / 气泡 .34 / 工具键 .28 ✓ —— 上一版 .52/.50 ✗）',
+		page.includes('--panel: rgba(12,14,22,.34)') && page.includes('--panel-2: rgba(24,26,36,.30)')
+		&& page.includes('rgba(255,180,84,.16)'))
+	check('🔴 透明还能看清：**文字阴影**在 ✓（不靠把背景压暗 ✗ —— 阴影跟着字走 ✓，背景不受损 ✓）',
+		page.includes('text-shadow: 0 1px 3px rgba(0,0,0,.78), 0 0 14px rgba(0,0,0,.5)'))
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)

@@ -512,45 +512,64 @@
 	 *      📌 注意：这张图是**别人的作品**（带出处水印 ✓）—— 只装进你这台机器的本地目录 ✓，
 	 *      **不打包进插件、不随 Release 发布** ✓（那样才叫分发 ✗）。
 	 */
+	/*
+	 * 🔴 4.9.3：**动效改成"星球在转"** ✓（用户 2026-10-15：「动图不是这样动的，原本图片里的星球会旋转的」✓）。
+	 * 上一版是**推近**（Ken Burns ✓）—— 那是"镜头在推" ✗，不是他看到的那个意思 ✓。
+	 * 现在整幅图**极慢地绕中心来回转**（±1.83° / 60 秒一个来回 ✓）：
+	 * 角度小到地平线不会歪 ✓，但画面明显"在转" ✓。
+	 * ⚠️ `scale(1.18)` **必须留着** ✗（不只是为了裁水印 ✓）：旋转会露出**四角** ✗，
+	 * 放大 18% 之后四角被推出屏幕 ✓，转起来才不露黑边 ✓。
+	 */
 	body.hasbg.bg-live #backdrop img {
-		transform-origin: 50% 0;
-		animation: dsh-live-pan 42s ease-in-out infinite alternate;
+		transform-origin: 50% 42%;
+		animation: dsh-live-turn 60s ease-in-out infinite alternate;
 	}
-	@keyframes dsh-live-pan {
-		from { transform: scale(1.18) translate3d(0, 0, 0); }
-		to { transform: scale(1.28) translate3d(-1.6%, -1.4%, 0); }
+	@keyframes dsh-live-turn {
+		from { transform: scale(1.18) rotate(-1.83deg); }
+		to { transform: scale(1.18) rotate(1.83deg); }
 	}
 	/*
 	 * 暖色调（跟那张图同一个调子 ✓：金色月亮 + 暖灰天空 + 水面反光 ✓）——
 	 * **只覆盖颜色变量** ✓（布局/字号/间距不动 ✓）。
-	 * ⚠️ 透明度是**故意调低**的 ✓（用户要"透明能够适配"✓）：面板 .52 ✓，让图透出来 ✓ ——
-	 * 但**底部的纱要更重** ✓（那张图下半是亮的水面 ✓，字压上去会糊 ✗）：
-	 * 顶部 .30 → 底部 .62 ✓，让"上半透、下半压" ✓。
+	 * 🔴 4.9.3：**用户要"文字和文字框透明，能清晰显示背景"** ✓ —— 所以透明度**大幅调低** ✓：
+	 * 面板 `.34` ✓、气泡 `.34` ✓、工具键 `.28` ✓。
+	 * ⚠️ 但"透明"和"读得清"是一对矛盾 ✗ —— 这版靠**两件事**同时成立 ✓（而不是把背景压暗 ✗）：
+	 *   ① **文字阴影** ✓（气泡里的字带一圈深色柔影 ✓ —— 这是透明界面里保清晰的**正解** ✓，
+	 *      因为阴影跟着字走 ✓，不牺牲背景 ✓）；
+	 *   ② 底部纱仍然是**上轻下重** ✓（下面那段是亮水面 ✓，字最容易糊 ✓）。
 	 */
 	body.hasbg.bg-live {
 		--bg: #0b0c10;
 		--bg-2: #14161c;
 		--text: #fdf6ec;
-		--muted: #cbb9a4;
+		--muted: #d8c6ae;
 		--accent: #ffb454;
 		--accent-2: #ffd9a0;
 		--accent-ink: #26170a;
-		--panel: rgba(14,16,24,.52);
-		--panel-2: rgba(26,28,38,.46);
-		--line: rgba(255,196,120,.20);
-		--field-line: rgba(255,196,120,.24);
-		--code-bg: rgba(10,12,18,.44);
-		--code-line: rgba(255,196,120,.40);
+		--panel: rgba(12,14,22,.34);
+		--panel-2: rgba(24,26,36,.30);
+		--line: rgba(255,196,120,.18);
+		--field-line: rgba(255,196,120,.22);
+		--code-bg: rgba(8,10,16,.30);
+		--code-line: rgba(255,196,120,.35);
 		--code-name: #ffd9a0;
-		--think-line: rgba(255,196,120,.32);
-		--user-bubble: rgba(255,180,84,.20);
-		--user-border: rgba(255,196,120,.46);
-		--glass-edge: inset 0 1px 0 rgba(255,214,160,.20);
-		--glass-shadow: 0 12px 30px rgba(0,0,0,.42);
+		--think-line: rgba(255,196,120,.28);
+		--user-bubble: rgba(255,180,84,.16);
+		--user-border: rgba(255,196,120,.38);
+		--glass-edge: inset 0 1px 0 rgba(255,214,160,.18);
+		--glass-shadow: 0 10px 26px rgba(0,0,0,.34);
 	}
 	body.hasbg.bg-live #backdrop .scrim {
-		background: linear-gradient(180deg, rgba(8,9,14,.30) 0%, rgba(8,9,14,.30) 46%, rgba(8,9,14,.62) 100%);
+		background: linear-gradient(180deg, rgba(8,9,14,.24) 0%, rgba(8,9,14,.24) 46%, rgba(8,9,14,.60) 100%);
 	}
+	/* 透明界面的"清晰"靠**文字阴影** ✓（不是靠把背景压暗 ✗）。 */
+	body.hasbg.bg-live .bubble,
+	body.hasbg.bg-live .row .bubble {
+		text-shadow: 0 1px 3px rgba(0,0,0,.78), 0 0 14px rgba(0,0,0,.5);
+	}
+	body.hasbg.bg-live .title,
+	body.hasbg.bg-live h1, body.hasbg.bg-live h2, body.hasbg.bg-live h3,
+	body.hasbg.bg-live .hint, body.hasbg.bg-live .sheetbar { text-shadow: 0 1px 3px rgba(0,0,0,.7); }
 	/* 亮色模式那几条硬编码白底也要接管 ✓（不然又是"白底白字看不见" ✗）。 */
 	body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50); border-color: rgba(255,196,120,.22); }
 	body.hasbg.bg-live .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
@@ -5542,18 +5561,18 @@
 	 * 12 颗：起点 x 从 70% 到 118% ✓（右侧进来 ✓），y 从 -10% 到 62% ✓（覆盖整个竖屏 ✓）。
 	 */
 	const SKY_METEORS = [
-		{ x: '104%', y: '-8%', len: 200, dur: 1.6, delay: 0, scale: 1 },
-		{ x: '88%', y: '2%', len: 150, dur: 2.0, delay: 0.7, scale: 0.8 },
-		{ x: '116%', y: '14%', len: 240, dur: 1.4, delay: 1.4, scale: 1.15 },
-		{ x: '78%', y: '22%', len: 170, dur: 1.9, delay: 2.1, scale: 0.9 },
-		{ x: '110%', y: '30%', len: 130, dur: 1.7, delay: 2.8, scale: 0.7 },
-		{ x: '84%', y: '38%', len: 210, dur: 1.5, delay: 3.6, scale: 1.05 },
-		{ x: '120%', y: '46%', len: 185, dur: 1.8, delay: 4.3, scale: 0.95 },
-		{ x: '74%', y: '52%', len: 160, dur: 1.3, delay: 5.1, scale: 0.85 },
-		{ x: '100%', y: '60%', len: 220, dur: 1.2, delay: 5.8, scale: 1.1 },
-		{ x: '92%', y: '-16%', len: 140, dur: 2.0, delay: 6.5, scale: 0.75 },
-		{ x: '112%', y: '6%', len: 195, dur: 1.5, delay: 7.3, scale: 1 },
-		{ x: '80%', y: '66%', len: 175, dur: 1.9, delay: 8.0, scale: 0.9 },
+		{ x: '104%', y: '-8%', len: 200, dur: 3.5, delay: 0, scale: 1 },
+		{ x: '88%', y: '2%', len: 150, dur: 4.4, delay: 0.7, scale: 0.8 },
+		{ x: '116%', y: '14%', len: 240, dur: 3.1, delay: 1.4, scale: 1.15 },
+		{ x: '78%', y: '22%', len: 170, dur: 4.2, delay: 2.1, scale: 0.9 },
+		{ x: '110%', y: '30%', len: 130, dur: 3.7, delay: 2.8, scale: 0.7 },
+		{ x: '84%', y: '38%', len: 210, dur: 3.3, delay: 3.6, scale: 1.05 },
+		{ x: '120%', y: '46%', len: 185, dur: 4.0, delay: 4.3, scale: 0.95 },
+		{ x: '74%', y: '52%', len: 160, dur: 2.9, delay: 5.1, scale: 0.85 },
+		{ x: '100%', y: '60%', len: 220, dur: 2.6, delay: 5.8, scale: 1.1 },
+		{ x: '92%', y: '-16%', len: 140, dur: 4.4, delay: 6.5, scale: 0.75 },
+		{ x: '112%', y: '6%', len: 195, dur: 3.3, delay: 7.3, scale: 1 },
+		{ x: '80%', y: '66%', len: 175, dur: 4.2, delay: 8.0, scale: 0.9 },
 	]
 	/** 30° 浅斜、从右往左 ✓（**同单位 vmax** ✓ —— 换屏幕尺寸角度也不变 ✓）。 */
 	const SKY_METEOR_ANG = '150deg'
