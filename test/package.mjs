@@ -351,5 +351,34 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& /filter|blur|width:|height:|margin:/.test(/@keyframes dsh-meteor-fly \{[\s\S]*?\n\t\}/.exec(page)[0]) === false)
 }
 
+/*
+ * 12) 🔴 **任意图片背景也能"活"+ 配色跟着图走**（4.9.0 ✓）。
+ * 用户 2026-10-15：「去水印后装上，画质不变，不要压缩，不要更改，然后对话框和文字改成合适的风格
+ * 以及透明能够适配这张图片，一定要是动态图片装上去」✓。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 图片背景**会动** ✓（Ken Burns 缓慢推近 ✓ —— 静态图也有镜头感 ✓）',
+		page.includes('body.hasbg.bg-live #backdrop img') && page.includes('@keyframes dsh-live-pan'))
+	check('🔴 动效只碰 transform ✓（手机上不掉帧 ✓）',
+		/from \{ transform: scale\(1\.18\)[\s\S]{0,120}to \{ transform: scale\(1\.28\)/.test(page))
+	/*
+	 * 水印：这台机器**没有 ffmpeg / jpegtran** ✗（无损裁 JPEG 的工具一个都没有 ✓），
+	 * 重新编码一定掉画质 ✗ —— 而用户要求"画质不变、不要压缩、不要更改" ✓。
+	 * 所以改成**画面层面裁**：scale ≥ 1.18 + **顶边为锚** ✓ → 底部约 15% 推出屏幕 ✓，文件一个字节不动 ✓。
+	 */
+	check('🔴 水印靠**显示裁掉** ✓（最小 scale 仍 ≥ 1.18 ✓、以顶边为锚 ✓ —— 全程不会露出来 ✓，文件不改 ✓）',
+		page.includes('transform-origin: 50% 0') && /from \{ transform: scale\(1\.18\)/.test(page)
+		&& page.includes('scale(1.28)'))
+	check('🔴 暖金色调 ✓ + **更透明** ✓（气泡 .50 / 面板 .52 ✓ —— 用户要"透明能够适配这张图"✓）',
+		/body\.hasbg\.bg-live \{[\s\S]*?--accent: #ffb454/.test(page)
+		&& page.includes('body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50)'))
+	check('🔴 下半压得更重 ✓（那张图下半是亮水面 ✓ —— .30 → .62 ✓）',
+		page.includes('rgba(8,9,14,.30) 0%, rgba(8,9,14,.30) 46%, rgba(8,9,14,.62) 100%'))
+	check('🔴 图片背景也有流星 ✓（"一定要是动态" ✓），刹车也管到它们 ✓',
+		page.includes('body.hasbg #sky { display: block') && page.includes('body.bg-still #sky .meteor { display: none; }')
+		&& page.includes('body.bg-still #backdrop img { animation: none; }'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

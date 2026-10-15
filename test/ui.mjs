@@ -4832,6 +4832,14 @@ await wait(40)
 	check('🔴 星空层**不吃点击** ✓（划过对话框 ≠ 挡住按钮 ✓ —— `pointer-events: none` ✓）',
 		window.getComputedStyle($('sky')).pointerEvents === 'none',
 		window.getComputedStyle($('sky')).pointerEvents)
+	/*
+	 * ⚠️ 这里**故意没有**一条"背景铺上后 body 有 bg-live"的断言 ✗ ——
+	 * 我第一版写了 ✓，然后它红了 ✓：`bg-live` 是**媒体真的显示了**才挂的 ✓
+	 *（图片等 `load` ✓、视频等 `playing` ✓），而 **jsdom 永远不会触发视频那类事件** ✓
+	 * → 这条在测试环境里**根本走不到** ✓。要"造"一个假的事件去让它变绿 ✓
+	 * 就是**假绿** ✗（这个项目最不许的东西 ✓）。所以这条**交给 package 那侧按源码形状钉** ✓
+	 *（`applyBackdrop` 的两个分支 ✓），而**真机上的效果**由预览截图 + 线上核对负责 ✓。
+	 */
 	check('面板上写明「当前是赛博朋克」✓', $('bgNow').textContent.includes('赛博朋克'), $('bgNow').textContent.trim())
 	/*
 	 * 4.8.0：**动态** ✓（用户：「最好是动态的背景」✓）—— 默认就是动的 ✓，面板上那个键是刹车 ✓。

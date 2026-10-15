@@ -484,6 +484,84 @@
 	/* 选中的页签：品红下划线 ✓（和地平线同色 ✓）。 */
 	body.hasbg.bg-cyber .tab.on { border-bottom-color: var(--accent-2); }
 
+	/*
+	 * 🔴 4.9.0：**任意图片背景都能"活"起来** ✓（用户 2026-10-15：「一定要是动态图片装上去」✓、
+	 * 「对话框和文字改成合适的风格以及透明能够适配这张图片」✓）。
+	 *
+	 * 两件事 ✓：
+	 *   ① **缓慢推近 + 平移**（Ken Burns ✓）：静态照片也有"镜头在动"的感觉 ✓。
+	 *      只动 `transform` ✓（合成层 ✓ —— 手机上不掉帧、不发热 ✓），42 秒一个来回 ✓ 慢到不晃眼 ✓。
+	 *   ② **水印在显示时裁掉** ✓：用户要求「画质不变、不要压缩、不要更改」✓ ——
+	 *      而这台机器**没有 ffmpeg / jpegtran** ✗（无损裁 JPEG 的工具一个都没有 ✓），
+	 *      重新编码一定会掉画质 ✗。所以改成**画面层面裁**：把图放大到 `scale(1.18)` 并**以顶边为锚** ✓
+	 *      （`transform-origin: 50% 0` ✓）→ 底部约 15% 被推到屏幕外 ✓，右下角那个水印**永远看不到** ✓，
+	 *      而**文件一个字节都没改** ✓（Ken Burns 全程 `scale ≥ 1.18` ✓，所以水印绝不会露出来 ✓）。
+	 *      📌 注意：这张图是**别人的作品**（带出处水印 ✓）—— 只装进你这台机器的本地目录 ✓，
+	 *      **不打包进插件、不随 Release 发布** ✓（那样才叫分发 ✗）。
+	 */
+	body.hasbg.bg-live #backdrop img {
+		transform-origin: 50% 0;
+		animation: dsh-live-pan 42s ease-in-out infinite alternate;
+	}
+	@keyframes dsh-live-pan {
+		from { transform: scale(1.18) translate3d(0, 0, 0); }
+		to { transform: scale(1.28) translate3d(-1.6%, -1.4%, 0); }
+	}
+	/*
+	 * 暖色调（跟那张图同一个调子 ✓：金色月亮 + 暖灰天空 + 水面反光 ✓）——
+	 * **只覆盖颜色变量** ✓（布局/字号/间距不动 ✓）。
+	 * ⚠️ 透明度是**故意调低**的 ✓（用户要"透明能够适配"✓）：面板 .52 ✓，让图透出来 ✓ ——
+	 * 但**底部的纱要更重** ✓（那张图下半是亮的水面 ✓，字压上去会糊 ✗）：
+	 * 顶部 .30 → 底部 .62 ✓，让"上半透、下半压" ✓。
+	 */
+	body.hasbg.bg-live {
+		--bg: #0b0c10;
+		--bg-2: #14161c;
+		--text: #fdf6ec;
+		--muted: #cbb9a4;
+		--accent: #ffb454;
+		--accent-2: #ffd9a0;
+		--accent-ink: #26170a;
+		--panel: rgba(14,16,24,.52);
+		--panel-2: rgba(26,28,38,.46);
+		--line: rgba(255,196,120,.20);
+		--field-line: rgba(255,196,120,.24);
+		--code-bg: rgba(10,12,18,.44);
+		--code-line: rgba(255,196,120,.40);
+		--code-name: #ffd9a0;
+		--think-line: rgba(255,196,120,.32);
+		--user-bubble: rgba(255,180,84,.20);
+		--user-border: rgba(255,196,120,.46);
+		--glass-edge: inset 0 1px 0 rgba(255,214,160,.20);
+		--glass-shadow: 0 12px 30px rgba(0,0,0,.42);
+	}
+	body.hasbg.bg-live #backdrop .scrim {
+		background: linear-gradient(180deg, rgba(8,9,14,.30) 0%, rgba(8,9,14,.30) 46%, rgba(8,9,14,.62) 100%);
+	}
+	/* 亮色模式那几条硬编码白底也要接管 ✓（不然又是"白底白字看不见" ✗）。 */
+	body.hasbg.bg-live .bubble { background: rgba(16,18,26,.50); border-color: rgba(255,196,120,.22); }
+	body.hasbg.bg-live .row.user .bubble { background: var(--user-bubble); border-color: var(--user-border); }
+	body.bg-live .copyb { background: rgba(12,14,20,.48); border-color: rgba(255,196,120,.20); }
+	body.bg-live .tab { background: rgba(12,14,20,.46); border-color: rgba(255,196,120,.20); color: var(--muted); }
+	body.bg-live .tab.on { background: rgba(255,180,84,.12); color: var(--accent); border-bottom-color: var(--accent-2); }
+	body.bg-live .iconbtn, body.bg-live #toolsToggle { background: rgba(12,14,20,.44); border-color: rgba(255,196,120,.18); color: var(--text); }
+	body.bg-live #send, body.bg-live .go, body.bg-live .actions .go {
+		background: linear-gradient(160deg, var(--accent-2), var(--accent));
+		color: var(--accent-ink); border-color: transparent;
+	}
+	body.bg-live input, body.bg-live textarea, body.bg-live select, body.bg-live .plain {
+		background: rgba(10,12,18,.46); color: var(--text); border-color: var(--field-line);
+	}
+	/* 有图的背景也把流星放出来 ✓（"一定要动态" ✓ —— 推近 + 流星一起 ✓）。 */
+	body.hasbg #sky { display: block; position: fixed; inset: 0; z-index: 2; pointer-events: none; mix-blend-mode: screen; }
+	/* 刹车：静下来 / 减弱动态 → 推近停下 ✓、流星不飞 ✓（图还在 ✓）。 */
+	body.bg-still #backdrop img { animation: none; }
+	body.bg-still #sky .meteor { display: none; }
+	@media (prefers-reduced-motion: reduce) {
+		body.hasbg #backdrop img { animation: none; }
+		body.hasbg #sky .meteor { display: none; }
+	}
+
 	body.hasbg { background: #05060d; }
 	body.hasbg #backdrop { display: block; }
 	body.hasbg #gate, body.hasbg #app { position: relative; z-index: 1; }
@@ -5497,6 +5575,7 @@
 			return
 		}
 		document.body.classList.remove('bg-cyber')
+		document.body.classList.remove('bg-live')
 		const key = info === null || info === undefined ? '' : String(info.url) + ':' + String(info.bytes)
 		if (key === backdropKey) return
 		backdropKey = key
@@ -5526,10 +5605,16 @@
 			if (shown === true) return
 			shown = true
 			document.body.classList.add('hasbg')
+			/*
+			 * 4.9.0：**图片/视频背景**都要"活"起来 ✓（用户：「一定要是动态图片装上去」✓）——
+			 * `bg-live` 挂上之后：图片会缓慢推近（Ken Burns ✓）、暖色主题生效 ✓、流星放出来 ✓。
+			 */
+			document.body.classList.add('bg-live')
 		}
 		const conceal = () => {
 			shown = false
 			document.body.classList.remove('hasbg')
+			document.body.classList.remove('bg-live')
 			backdropKey = ''
 		}
 		node.addEventListener('error', conceal)
