@@ -854,6 +854,14 @@ async function stubFetch(input, options = {}) {
 		if (options.method === 'POST') {
 			const body = JSON.parse(options.body ?? '{}')
 			bgRequests.push(body)
+			// 4.7.0：自带预设 ✓ —— 认 `preset` ✓（回包里带"现在的背景" ✓，和真宿主同形状 ✓）。
+			// ⚠️ 一定要**独立判断** ✗：我第一版把它嵌进了 `body.clear === true` 里面 ✓ →
+			// 点「赛博朋克」时根本没走到这儿 ✗（测试当场抓到 ✓）。
+			if (body.preset === 'cyberpunk') {
+				backdropInfo = { preset: 'cyberpunk', kind: 'preset' }
+				return jsonResponse({ ok: true, background: backdropInfo })
+			}
+			if (body.preset === 'nope') return jsonResponse({ error: '不认识的背景预设', presets: ['cyberpunk'] }, 400)
 			if (body.clear === true) {
 				backdropInfo = null
 				return jsonResponse({ ok: true, background: null })
@@ -4772,6 +4780,42 @@ check('说明指向了下拉框或读取状态',
 	click($('moreBack'))
 	await wait(100)
 	check('「更多」里的返回键能关掉那张纸 ✓', window.getComputedStyle($('moreopen')).display === 'none')
+}
+
+/* --- 4.7.0：自带的赛博朋克背景（CSS 画的，不传图 ✓）------------------------- */
+/*
+ * 用户 2026-10-15：「制作背景要有赛博朋克风格」✓。
+ * 钉四件事 ✓：① 点那个键**发的是 preset=cyberpunk** ✓（不是又走上传那条路 ✗）；
+ * ② 请求回来之后页面**真的铺上了** `.bg-cyber` ✓（CSS 画的网格 ✓ —— 不是"发完请求就算完" ✗）；
+ * ③ 面板上写明当前就是它 ✓（不然用户不知道生效没有 ✓）；④ 「去掉背景」要把预设也摘掉 ✓。
+ */
+click(tabButton('task'))
+await wait(40)
+{
+	click($('bgBtn'))
+	await wait(60)
+	check('背景面板里有「赛博朋克（自带）」这个键 ✓', $('bgCyber') !== null && $('bgCyber').textContent.includes('赛博朋克'))
+	bgRequests.length = 0
+	click($('bgCyber'))
+	await wait(220)
+	/*
+	 * ⚠️ 用 `bgRequests` ✓（桩里本来就有这个记录器 ✓）—— **别用 `pcRequests`** ✗，那个只收 `/api/pc` 的动作 ✓。
+	 */
+	check('🔴 点它 → 发的是 `preset: cyberpunk` ✓（走预设那条路 ✓，不用传图 ✓）',
+		bgRequests.length >= 1 && bgRequests[bgRequests.length - 1].preset === 'cyberpunk',
+		JSON.stringify(bgRequests[bgRequests.length - 1] ?? null))
+	check('🔴 页面当场铺上赛博朋克 ✓（body 上有 `.bg-cyber` ✓ —— CSS 画的网格 ✓）',
+		window.document.body.classList.contains('bg-cyber') && window.document.body.classList.contains('hasbg'),
+		`bg-cyber=${window.document.body.classList.contains('bg-cyber')} hasbg=${window.document.body.classList.contains('hasbg')}`)
+	check('面板上写明「当前是赛博朋克」✓', $('bgNow').textContent.includes('赛博朋克'), $('bgNow').textContent.trim())
+	// 去掉背景：**必须把预设也摘掉** ✓（不然 CSS 那层会一直留着 ✗）。
+	click($('bgClear'))
+	await wait(220)
+	check('🔴 「去掉背景」把 .bg-cyber 也摘掉了 ✓（否则背景层永远留着 ✗）',
+		window.document.body.classList.contains('bg-cyber') === false && window.document.body.classList.contains('hasbg') === false,
+		`bg-cyber=${window.document.body.classList.contains('bg-cyber')} hasbg=${window.document.body.classList.contains('hasbg')}`)
+	click($('bgBack'))
+	await wait(40)
 }
 
 /* --- 2.7.0 ★3/★4：状态盘 + 一键动作（"点两次"这条一定要钉住 ✓）------------- */

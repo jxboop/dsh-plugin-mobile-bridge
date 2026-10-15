@@ -146,6 +146,51 @@
 		position: absolute; inset: 0;
 		background: linear-gradient(180deg, rgba(4,6,16,.45), rgba(4,6,16,.68));
 	}
+	/*
+	 * 4.7.0「赛博朋克」自带背景 ✓（用户 2026-10-15：「制作背景要有赛博朋克风格」✓）：
+	 * **整块都是 CSS 画的** ✓ —— 不带图片、不下载、任何分辨率都锐利 ✓。
+	 * 三件事叠出来：
+	 *   ① 远处的霓虹地平线（青 + 品红两团辉光 ✓）；
+	 *   ② 透视地面网格（`::before` 一层平面网格 + `perspective/rotateX` 压成"往远处收" ✓）；
+	 *   ③ 细扫描线（`::after`，很淡 ✓ —— 只当质感，不影响读字 ✓）。
+	 * ⚠️ 读字优先 ✗：底色压得很深 ✓，而且 `.scrim` 那层压暗**照旧在上面** ✓ ——
+	 * 背景再花也不能让对话看不清 ✓。
+	 */
+	body.bg-cyber #backdrop {
+		background:
+			radial-gradient(130% 42% at 50% 78%, rgba(255,45,196,.40), transparent 62%),
+			radial-gradient(80% 30% at 50% 72%, rgba(122,64,255,.30), transparent 72%),
+			radial-gradient(70% 34% at 50% 4%, rgba(0,225,255,.16), transparent 70%),
+			linear-gradient(180deg, #03040a 0%, #070a17 46%, #160a26 74%, #1b0a2a 100%);
+	}
+	/* 地平线：一条亮线 + 双层辉光 ✓（赛博朋克那张图的"骨架"就在这条线 ✓）。 */
+	body.bg-cyber #backdrop::before {
+		content: ''; position: absolute; left: 0; right: 0; top: 74%; height: 2px;
+		background: linear-gradient(90deg, transparent, rgba(255,80,220,.95), rgba(150,220,255,.95), rgba(255,80,220,.95), transparent);
+		box-shadow: 0 0 18px 6px rgba(255,60,200,.45), 0 0 46px 14px rgba(120,80,255,.30);
+	}
+	/*
+	 * 透视地面网格 ✓ —— 挂在 `.scrim::before` 上（在压暗层**之上** ✓，不然会被压灰 ✗）。
+	 * ⚠️ 角度是调出来的 ✗：`rotateX(74deg)` 几乎贴平、屏幕上**什么都看不见** ✓（第一版就这么白做了 ✓）；
+	 * 64° 才既能看出"往远处收"、又真的占满下半屏 ✓。
+	 */
+	body.bg-cyber .scrim::before {
+		content: ''; position: absolute; left: -60%; right: -60%; top: 74%; bottom: -10%;
+		background-image:
+			repeating-linear-gradient(90deg, rgba(0,240,255,.46) 0 1.2px, transparent 1.2px 46px),
+			repeating-linear-gradient(0deg, rgba(255,60,210,.36) 0 1.2px, transparent 1.2px 34px);
+		transform: perspective(46vh) rotateX(64deg);
+		transform-origin: 50% 0%;
+		/* ⚠️ 第一版是 .85 ✓ —— 拍出来网格"抢戏" ✗（霓虹线比对话还显眼 ✓）。
+		   压到 .72 之后：一眼能看出是赛博朋克 ✓，但视线仍先落在字上 ✓。 */
+		opacity: .72;
+	}
+	/* 细扫描线：只当质感 ✓（很淡 ✓ —— 读字优先 ✗）。 */
+	body.bg-cyber #backdrop::after {
+		content: ''; position: absolute; inset: 0;
+		background: repeating-linear-gradient(0deg, rgba(0,0,0,.22) 0 1px, transparent 1px 3px);
+		opacity: .45;
+	}
 	body.hasbg { background: #05060d; }
 	body.hasbg #backdrop { display: block; }
 	body.hasbg #gate, body.hasbg #app { position: relative; z-index: 1; }
@@ -1514,6 +1559,8 @@
 					<p class="hint" id="bgNow">当前：没有背景</p>
 				</div>
 				<div class="actions">
+					<!-- 4.7.0：自带的赛博朋克背景 ✓（**CSS 画的** ✓ —— 不用传图、不占流量、任何分辨率都锐利 ✓）。 -->
+					<button id="bgCyber">🌀 赛博朋克（自带）</button>
 					<button class="go" id="bgPick">选图片 / 动图 / 视频</button>
 					<button id="bgClear">去掉背景</button>
 				</div>
@@ -5065,6 +5112,17 @@
 	let backdropKey = ''
 	function applyBackdrop(info) {
 		const layer = $('backdrop')
+		/*
+		 * 4.7.0：**自带预设**（赛博朋克 ✓）—— 它是 **CSS 画的** ✓，没有 url、也没有字节数 ✓，
+		 * 所以钥匙要单独算 ✓（不然"从图片切到预设"会被当成没变、不重画 ✗）。
+		 */
+		if (info !== null && info !== undefined && typeof info.preset === 'string' && info.preset !== '') {
+			backdropKey = 'preset:' + info.preset
+			layer.querySelectorAll('video, img').forEach((node) => node.remove())
+			document.body.classList.add('bg-cyber', 'hasbg')
+			return
+		}
+		document.body.classList.remove('bg-cyber')
 		const key = info === null || info === undefined ? '' : String(info.url) + ':' + String(info.bytes)
 		if (key === backdropKey) return
 		backdropKey = key
@@ -5141,7 +5199,12 @@
 	 */
 	let hasBackdrop = false
 	function renderBgSheet() {
-		$('bgNow').textContent = hasBackdrop ? '当前：已设置（背景文件在电脑上）' : '当前：没有背景'
+		// 4.7.0：当前是哪个背景要说清 ✓ —— `backdropKey` 是铺背景时记下来的钥匙 ✓
+		// （`preset:cyberpunk` = 自带预设 ✓，`url:bytes` = 用户自己传的图/视频 ✓）。
+		const isPreset = backdropKey.startsWith('preset:')
+		$('bgNow').textContent = isPreset
+			? '当前：赛博朋克（自带，不用传图 ✓）'
+			: hasBackdrop ? '当前：已设置（背景文件在电脑上）' : '当前：没有背景'
 		if (hasBackdrop) show($('bgClear'))
 		else hide($('bgClear'))
 	}
@@ -5149,6 +5212,29 @@
 	$('bgBtn').addEventListener('click', () => { renderBgSheet(); show($('bgopen')) })
 	$('bgBack').addEventListener('click', () => { hide($('bgopen')) })
 	$('bgPick').addEventListener('click', () => $('fileBg').click())
+	/*
+	 * 4.7.0：一键换上自带的赛博朋克背景 ✓ ——
+	 * 服务端只认白名单里的 `cyberpunk` ✓，设它会**自动摘掉**图片背景 ✓（二选一 ✓，不打架 ✓）。
+	 * 回包里带的是"现在的背景" ✓ → 直接铺上 ✓，不用再拉一次 bootstrap ✓。
+	 */
+	$('bgCyber').addEventListener('click', () => {
+		flash('正在换背景…')
+		void (async () => {
+			try {
+				const body = await api('api/background', {
+					method: 'POST',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ preset: 'cyberpunk' }),
+				})
+				applyBackdrop(body.background ?? null)
+				hasBackdrop = body.background !== null && body.background !== undefined
+				renderBgSheet()
+				flash('背景已换成赛博朋克 ✓')
+			} catch (error) {
+				flash('换背景失败：' + error.message, 3000)
+			}
+		})()
+	})
 
 	$('fileBg').addEventListener('change', () => {
 		const input = $('fileBg')

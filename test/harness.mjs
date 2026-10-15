@@ -1358,6 +1358,66 @@ check('non-image media type is rejected', badImage.status === 400, String(badIma
 	const config = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 	check('写进配置文件的 backgroundFile（重启也还在）', config.backgroundFile === 'my-bg.png', JSON.stringify(config.backgroundFile))
 
+	/*
+	 * 4.7.0：**自带背景预设**（赛博朋克 ✓）—— 用户 2026-10-15：「制作背景要有赛博朋克风格」✓。
+	 * 钉三件事 ✓：① 不在白名单里的值**必须 400** ✓（不给"随便塞个字符串"留口子 ✗）；
+	 * ② 设了之后 bootstrap 里带的是 `preset` ✓（页面据此加 `.bg-cyber` ✓）；
+	 * ③ 设预设会**把图片背景摘掉** ✓（二选一 ✓ —— 两个同时存在的话页面不知道铺哪个 ✗）。
+	 */
+	const badPreset = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'nope' }),
+	})
+	const badPresetBody = await badPreset.json()
+	check('🔴 不认识的背景预设 → 400，并把能用的列出来（只认白名单 ✓）',
+		badPreset.status === 400 && Array.isArray(badPresetBody.presets) && badPresetBody.presets.includes('cyberpunk'),
+		`${badPreset.status} ${JSON.stringify(badPresetBody.presets ?? null)}`)
+
+	const setPreset = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ preset: 'cyberpunk' }),
+	})
+	const setPresetBody = await setPreset.json()
+	check('🔴 设「赛博朋克」成功 ✓ 回包里带 preset ✓（页面据此铺 CSS 那层 ✓）',
+		setPreset.status === 200 && setPresetBody.background?.preset === 'cyberpunk' && setPresetBody.background?.kind === 'preset',
+		JSON.stringify(setPresetBody.background))
+	const presetConfig = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('🔴 设预设会**把图片背景摘掉** ✓（预设和文件二选一 ✓，不打架 ✗）',
+		presetConfig.backgroundPreset === 'cyberpunk' && presetConfig.backgroundFile === undefined,
+		JSON.stringify({ preset: presetConfig.backgroundPreset, file: presetConfig.backgroundFile ?? null }))
+	const afterBoot = await fetch(`${base}/api/bootstrap`, authed)
+	const afterBootBody = await afterBoot.json()
+	check('🔴 bootstrap 里带的就是预设 ✓（手机一打开就知道要铺赛博朋克 ✓）',
+		afterBootBody.background?.preset === 'cyberpunk', JSON.stringify(afterBootBody.background))
+
+	const clearPreset = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ clear: true }),
+	})
+	const clearBody = await clearPreset.json()
+	const clearedConfig = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+	check('🔴 「去掉背景」把预设也清干净 ✓（配置里两个键都不留 ✓）',
+		clearPreset.status === 200 && clearBody.background === null
+		&& clearedConfig.backgroundPreset === undefined && clearedConfig.backgroundFile === undefined,
+		JSON.stringify({ preset: clearedConfig.backgroundPreset ?? null, file: clearedConfig.backgroundFile ?? null }))
+
+	/*
+	 * ⚠️ **必须还原成上一步那张图片背景** ✓ —— 我第一版这一段跑完就留了个"什么都没有" ✗，
+	 * 下面紧接着那条「取回来的就是新背景」当场 404 ✓（测试抓到的 ✓）。
+	 * 这几条是新加的 ✓，不能把后面老用例的前置状态改掉 ✗。
+	 */
+	const restoreFile = await fetch(`${base}/api/background`, {
+		method: 'POST',
+		headers: { ...authed.headers, 'content-type': 'application/json' },
+		body: JSON.stringify({ name: 'my-bg.png' }),
+	})
+	check('（收尾）把背景还原成那张图片 ✓，后面的老用例前置状态不受影响 ✓',
+		restoreFile.status === 200 && (await restoreFile.json()).background?.kind === 'image',
+		String(restoreFile.status))
+
 	const nowImage = await fetch(`${base}/api/background`, authed)
 	check('取回来的就是新背景', Buffer.from(await nowImage.arrayBuffer()).equals(image), `${nowImage.status}`)
 
