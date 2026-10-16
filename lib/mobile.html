@@ -3584,8 +3584,17 @@
 			return
 		}
 		offline.reason = reason
-		// 背景素材这时候多半也取不到 —— 留着它就是"黑屏"本身，先收掉。
-		document.body.classList.remove('hasbg')
+		/*
+		 * 背景素材这时候多半也取不到 —— 留着它就是"黑屏"本身，先收掉。
+		 *
+		 * 🔴 4.15.2（用户 2026-10-16：「发一句话文字框颜色就会变回去」✓）：**两套主题类必须一起摘** ✗ ——
+		 * 那套跟着背景走的暖色配色（`--field-line` / `--panel` / `--bubble` …✓）是
+		 * **`body.hasbg.bg-live`** 两个类**同时**在才生效的 ✓；老代码在这里**只摘 `hasbg`** ✗ →
+		 * 主题进入"半开"状态 ✓ → **配色当场变回默认** ✓（输入框、面板、气泡一起 ✓），
+		 * 而 `#backdrop` 那张图还在屏幕上 ✓ —— 用户看到的现象就正好是"**只有颜色回去了**" ✓✓。
+		 * 现在：要收就**收整套** ✓（两个类一起 ✓），回来时再整套装回去 ✓（见 `offlineHide` ✓）。
+		 */
+		document.body.classList.remove('hasbg', 'bg-live')
 		if (offline.shown === false) {
 			offline.shown = true
 			show($('offline'))
@@ -3599,6 +3608,15 @@
 	function offlineHide() {
 		window.clearTimeout(offline.armed)
 		offline.armed = 0
+		/*
+		 * 🔴 4.15.2：**回到线上就把主题补回来** ✗（用户：「发一句话文字框颜色就会变回去」✓）。
+		 * ⚠️ 这一句**必须放在下面那个早退之前** ✓ —— `offlineHide()` 在"成功拿到数据"时都会被调 ✓，
+		 * 而"断了一小会儿、离线屏还没来得及弹出来"这种情况 `offline.shown` 还是 false ✗ →
+		 * 放后面就会被早退挡掉 ✓，主题就补不回来了 ✓。
+		 * 没配过背景时 `lastBackdrop` 是 null ✓（什么都不做 ✓）；没真铺过时 `backdropShown` 会挡住 ✓
+		 *（不会凭空给一个黑屏 ✓）。
+		 */
+		if (lastBackdrop !== null && document.body.classList.contains('hasbg') === false) applyBackdrop(lastBackdrop)
 		if (offline.shown === false) return
 		offline.shown = false
 		window.clearInterval(offline.timer)
@@ -5983,6 +6001,14 @@
 	 *   · **从没铺过**、媒体还没加载完 ✓ → **绝不能补** ✗（那会露出视频的整块黑 ✓ = 黑屏 ✗）。
 	 */
 	let backdropShown = false
+	/**
+	 * 🔴 4.15.2：**上一次拿到的背景信息** ✓（用户：「发一句话文字框颜色就会变回去」✓）。
+	 * 为什么要记它：断线时 `offlineShow()` 会把主题类整套摘掉 ✓（见那边的注释 ✓），
+	 * 而"补回来"原本只发生在**页面再次拿到背景信息**的时候 ✗（boot / 换背景 ✓）——
+	 * 单纯断线重连拿不到那次调用 ✗，于是主题一直半开着 ✓（颜色回不来 ✓）。
+	 * 记一份在手边 ✓，`offlineHide()` 就能自己把上次那套重新应用一次 ✓。
+	 */
+	let lastBackdrop = null
 	/*
 	 * 🔴 4.8.3：星空参数 ✓（月亮搬到 `#backdrop` 里了 ✓，这里只剩流星 ✓）。
 	 *
@@ -6079,6 +6105,8 @@
 	}
 
 	function applyBackdrop(info) {
+		// 4.15.2：记住"上一次那套背景" ✓（断线重连后要照着它把主题补回来 ✓，见 `offlineHide` ✓）。
+		lastBackdrop = info === undefined ? null : info
 		// 4.8.2：星空（月亮 + 流星）按需搭一次 ✓（隐藏与否由 CSS 的 `body.bg-cyber` 决定 ✓）。
 		buildSky()
 		const layer = $('backdrop')

@@ -470,9 +470,20 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	check('🔴 「铺过没有」这个标记**在 reveal 里置真、conceal 里置假** ✓（不然它永远不动 = 假标记 ✗）',
 		/const reveal = \(\) => \{[\s\S]{0,200}backdropShown = true/.test(page)
 		&& /const conceal = \(\) => \{[\s\S]{0,200}backdropShown = false/.test(page))
-	check('🔴 `offlineShow` 那条"断线先收掉背景"仍然保留 ✓（素材取不到时留着就是黑屏 ✓ —— 不是把它删掉 ✗）',
-		page.includes("// 背景素材这时候多半也取不到 —— 留着它就是\"黑屏\"本身，先收掉。")
-		&& /offlineShow[\s\S]{0,900}classList\.remove\('hasbg'\)/.test(page))
+	/*
+	 * 🔴 4.15.2 升级（用户 2026-10-16：「发一句话文字框颜色就会变回去」✓）：
+	 * 原来这条钉的是 `remove('hasbg')` 的**字面** ✓ —— 而正是它让主题**半开** ✓
+	 *（那套暖色配色要 `hasbg` + `bg-live` **两个类同时在** ✓ → 只摘一个 ⇒ 配色当场回默认 ✓）。
+	 * 现在判据改成**更强的那一条**：断线时**两个类必须一起摘** ✓，而且要**自己补回来** ✓。
+	 */
+	check('🔴 `offlineShow` 那条"断线先收掉背景"仍然保留 ✓（素材取不到时留着就是黑屏 ✓ —— 不是把它删掉 ✗），'
+		+ '而且**两个主题类一起摘** ✓（只摘一个 ⇒ 主题半开 ⇒ 配色回默认 ✗ —— 用户报的就是这个 ✓）',
+		/offlineShow[\s\S]{0,1600}classList\.remove\('hasbg', 'bg-live'\)/.test(page))
+	check('🔴 回到线上要**自己把主题补回来** ✓（`lastBackdrop` + `offlineHide` ✓ —— 不许等用户刷新 ✗），'
+		+ '而且这一句在**早退之前** ✓（"断一下没弹离线屏"那种也要补 ✓）',
+		page.includes('let lastBackdrop = null')
+		&& /function offlineHide\(\) \{[\s\S]{0,1500}lastBackdrop !== null[\s\S]{0,400}applyBackdrop\(lastBackdrop\)/.test(page)
+		&& page.indexOf('lastBackdrop !== null') < page.indexOf("if (offline.shown === false) return"))
 }
 
 /*

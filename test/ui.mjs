@@ -8136,6 +8136,50 @@ check('the same stale tag never reloads twice (no loop)', reloads() === afterFir
 	await wait(80)
 }
 
+/*
+ * 🔴 4.15.2：**主题类必须"同进同出"**（用户 2026-10-16：「发一句话文字框颜色就会变回去」✓）。
+ * 现场：发出一句话之后 **输入框 / 面板 / 气泡的配色变回默认** ✗，可背景图还铺着 ✓
+ * —— 看着就是"只有颜色回去了" ✓。
+ *
+ * 根因是一条**类不配对** ✗：那套跟着背景走的暖色配色（`--field-line` / `--panel` / `--bubble` …✓）
+ * 是 **`body.hasbg.bg-live`** 两个类**同时在**才生效 ✓；断线那一下 `offlineShow()` **只摘了 `hasbg`** ✗
+ * → 主题"半开" ✓ → 配色当场回默认 ✓；而"补回来"原本只在页面**再次拿到背景信息**时才发生 ✗
+ *（boot / 换背景 ✓）→ 单纯断一下再连上**补不回来** ✓（除非整页刷新 ✓）。
+ *
+ * ⚠️ 判据写在这两条**行为**上 ✓：① 摘的时候**两个一起摘** ✓；② 回到线上时**自己补回来** ✓。
+ * ⚠️ **这一块故意放在整个套件的最后** ✗ —— 它会把页面推进"整屏离线"再拉回来 ✓，
+ * 状态最脏 ✓；我第一版放在中间 ✓ → 后面 9 条毫不相干的用例一起红 ✓（翻页 / 发件箱横幅…）
+ * —— 看起来像九处回归 ✗。**状态变更型的用例放最后** ✓，这条经验留着 ✓。
+ */
+{
+	// 先把背景铺上（图片背景 ✓）：宿主给 info → 页面建 <img> → 它 load 了才铺 ✓
+	backdropInfo = { url: 'api/background?v=7', mediaType: 'image/gif', kind: 'image', bytes: 12 }
+	click($('reload'))
+	await wait(240)
+	$('backdrop').querySelector('img')?.dispatchEvent(new window.Event('load'))
+	await wait(80)
+	check('（前置）图片背景真的铺上了 ✓（`hasbg` + `bg-live` 都在 ✓ —— 这就是那套暖色配色的开关 ✓）',
+		window.document.body.classList.contains('hasbg') && window.document.body.classList.contains('bg-live'),
+		window.document.body.className)
+
+	window.dispatchEvent(new window.Event('offline'))
+	await wait(220)
+	check('🔴 断线时**两个主题类一起摘** ✓（老代码只摘 `hasbg` ✗ → 主题半开 → 配色当场回默认 ✗ —— 用户看到的就是这个 ✓）',
+		window.document.body.classList.contains('hasbg') === false
+		&& window.document.body.classList.contains('bg-live') === false,
+		window.document.body.className)
+
+	// 回到线上：应用自己的出口之一 —— 那个键就是 `offlineHide()` ✓；`offlineHide` 里会**自己把主题补回来** ✓。
+	click($('reload'))
+	await wait(320)
+	check('🔴 回到线上后主题**自己补回来** ✓（`hasbg` + `bg-live` 都回来了 ✓ —— 用户不用刷新一次才恢复 ✓）',
+		window.document.body.classList.contains('hasbg') && window.document.body.classList.contains('bg-live'),
+		window.document.body.className)
+	check('🔴 而"说话/输入"那一带跟着回到主题里 ✓（配色不回默认 ✓ —— 这正是用户报的那一格 ✓）',
+		$('text') !== null && window.document.body.classList.contains('hasbg'),
+		`class=${window.document.body.className}`)
+}
+
 // 所有 DOM 断言都做完了 ✓ —— 现在才把 jsdom 关掉 ✓（放到前面会让后面的 DOM 断言崩成 TypeError ✗）。
 dom.window.close()
 
