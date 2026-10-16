@@ -2616,6 +2616,112 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	}
 }
 
+/* --- 4.13.0「定时开机」（用户 2026-10-16：「既然有关机那么可以做一个对应的定时开机功能」✓）----
+ * 这一组要钉住的**不是**"功能能用" ✗，而是**它有没有说真话** ✓：
+ *   ① **完全关机 (S5) 后到点开机，软件做不到** ✓ —— 接口必须**如实拒绝** ✓（带上"只能靠 BIOS" ✓），
+ *      而且**一个计划任务都不许顺手建** ✗；
+ *   ② **睡眠 (S3) 那条是真做的** ✓ —— 真机往返一次：建 → 回读到"带唤醒标志" → 删 → 回读确认没了 ✓；
+ *   ③ **读不到就说读不到** ✓（`powercfg /waketimers` 要管理员 ✓）—— 不许当成"没有定时器" ✗。
+ *
+ * ⚠️ 这组**会真的**在机器上建一个计划任务（`DSH-mobile-bridge-wake` ✓、将来时刻 ✓、不会响 ✓），
+ * 用例里**一定删掉** ✓（`finally` ✓ —— 别在用户机器上留东西 ✗）；
+ * 时刻用**本机时区算出来的将来时刻** ✓（写死日期的话，换了年份就变成"已经过了" → 假红 ✗）。
+ */
+{
+	const wakeGet = async () => (await fetch(`${base}/api/pc/wake`, authed)).json()
+	const wake = (body) => fetch(`${base}/api/pc/wake`, {
+		method: 'POST',
+		headers: { cookie, 'content-type': 'application/json' },
+		body: JSON.stringify(body),
+	})
+
+	check('没登录读不到定时开机面板', (await fetch(`${base}/api/pc/wake`)).status === 401)
+
+	// 默认关：它挂在 `powerControl` 上（和"关机 / 重启"**同一个开关** ✓ —— 交接文档点名要这样 ✓）。
+	const offInfo = await wakeGet()
+	check('🔴 定时开机**默认关** ✓：`GET` 回 enabled=false + 写清怎么开 ✓（不是一句 403 了事 ✓）',
+		offInfo.enabled === false && String(offInfo.note).includes('powerControl'),
+		String(offInfo.note).slice(0, 80))
+	check('🔴 关着的时候也**照实说**"完全关机做不到" ✓（这段实话不跟着开关走 ✓）',
+		String(offInfo.truth?.shutdown ?? '').includes('S5') && String(offInfo.truth?.shutdown ?? '').includes('BIOS')
+		&& String(offInfo.truth?.biosUndetectable ?? '').includes('查不到'),
+		String(offInfo.truth?.shutdown ?? '').slice(0, 80))
+	check('关着的时候**不许设** ✓（403 + 说清怎么开 ✓）',
+		(await wake({ action: 'set', at: '07:30' })).status === 403)
+
+	// 打开 powerControl（现读配置即生效 ✓）
+	{
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify({ ...stored, powerControl: true }), 'utf8')
+	}
+	try {
+		check('打开 powerControl 后立刻生效', (await wakeGet()).enabled === true)
+
+		/*
+		 * 🔴 本组最要紧的一条 ✗：「关机后到点开机」**必须如实拒绝** ✓ ——
+		 * 带上"软件做不到 + 只能靠 BIOS" ✓，而且**真的什么都没建** ✗。
+		 */
+		const powerOn = await wake({ action: 'poweron' })
+		const powerOnBody = await powerOn.json()
+		check('🔴 「关机后到点开机」→ 400 + `impossible` + "软件做不到 / 只能靠 BIOS" ✓（本项目的底线 ✓）',
+			powerOn.status === 400 && powerOnBody.impossible === true
+			&& String(powerOnBody.error).includes('软件做不到') && String(powerOnBody.error).includes('BIOS')
+			&& Array.isArray(powerOnBody.biosNames) && powerOnBody.biosNames.length >= 3,
+			JSON.stringify(powerOnBody).slice(0, 150))
+		check('🔴 而且它**什么都没建** ✓（"如实拒绝"= 不动手 ✓，不是"拒了但顺手建一个"✓）',
+			(await wakeGet()).task?.exists === false, JSON.stringify((await wakeGet()).task ?? null))
+
+		// 时间校验：写死的过去时刻必须被拒 ✓
+		const past = await wake({ action: 'set', at: '2020-01-01 07:30' })
+		check('写一个已经过去的时刻 → 400（定时开机只能定**将来** ✓）',
+			past.status === 400 && String((await past.json()).error).includes('已经过了'), `HTTP ${past.status}`)
+
+		// dryRun：只回报"会设成什么" ✓ —— 一个任务都不建 ✓
+		const dry = await (await wake({ action: 'set', at: '07:30', dryRun: true })).json()
+		check('🔴 dryRun 只回报形状 ✓：任务名 + 将来时刻 + `wakeToRun:true` ✓，而且**一个任务都没建** ✗',
+			dry.dryRun === true && dry.taskName === 'DSH-mobile-bridge-wake' && dry.wakeToRun === true
+			&& /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/.test(String(dry.at))
+			&& (await wakeGet()).task?.exists === false,
+			JSON.stringify({ at: dry.at, 建了吗: (await wakeGet()).task?.exists }))
+
+		// 真机往返：建 → 回读 → 删 → 回读确认没了 ✓
+		const target = new Date(Date.now() + 30 * 60 * 1000)
+		const pad = (value) => String(value).padStart(2, '0')
+		const atText = `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())} ${pad(target.getHours())}:${pad(target.getMinutes())}`
+		const setResult = await wake({ action: 'set', at: atText })
+		const setBody = await setResult.json()
+		check('🔴 真机设一个（睡眠里到点唤醒 ✓）：200 + 回读到的任务**带 `WakeToRun`** ✓（"我以为建上了"不算 ✗）',
+			setResult.status === 200 && setBody.ok === true && setBody.task?.wakeToRun === true
+			&& String(setBody.task?.startBoundary ?? '').startsWith(String(setBody.at ?? '').slice(0, 16)),
+			JSON.stringify(setBody).slice(0, 170))
+		const listed = await wakeGet()
+		check('🔴 `GET` 能读到那个任务（走 `schtasks /xml` ✓ 免提权 ✓）+ 唤醒标志在 ✓ + 策略是**读回来的值** ✓',
+			listed.task?.exists === true && listed.task?.wakeToRun === true
+			&& typeof listed.policy?.acName === 'string'
+			&& ['ok', 'important-only', 'disabled', 'unknown'].includes(String(listed.policy?.level)),
+			JSON.stringify({ task: listed.task, 策略: listed.policy?.level }))
+		check('🔴 `powercfg /waketimers` 读不到时**如实回 `readable:false`** ✓（不许当成"没有定时器" ✗）',
+			typeof listed.wakeTimers?.readable === 'boolean'
+			&& (listed.wakeTimers.readable === true ? Array.isArray(listed.wakeTimers.lines) : (listed.wakeTimers.lines ?? []).length === 0),
+			JSON.stringify(listed.wakeTimers))
+		const clearResult = await wake({ action: 'clear' })
+		const clearBody = await clearResult.json()
+		check('🔴 取消：200 + `removed:true` ✓，而且**回读确认真的没了** ✓（"删完了"要有证据 ✓）',
+			clearResult.status === 200 && clearBody.removed === true && (await wakeGet()).task?.exists === false,
+			JSON.stringify(clearBody))
+		const clearAgain = await (await wake({ action: 'clear' })).json()
+		check('再取消一次：**如实说"本来就没有"** ✓（不许说成"已经取消了" ✗）',
+			clearAgain.removed === false && String(clearAgain.message).includes('本来就没有'), JSON.stringify(clearAgain))
+		check('不认识的 action → 400（不许拿别的字符串当动作使 ✓）', (await wake({ action: 'setLater' })).status === 400)
+	} finally {
+		// ⚠️ 收尾：**别在用户机器上留东西** ✗（成功路径已经删过 ✓；这一步是给失败路径兜底的 ✓）。
+		await wake({ action: 'clear' })
+		const stored = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
+		delete stored.powerControl
+		await writeFile(join(scratch, 'mobile-bridge.json'), JSON.stringify(stored), 'utf8')
+	}
+}
+
 /* --- 剪贴板 & 截屏（2.7.0 池子里的 ★4）-------------------------------------
  * 文档原话：「电脑截图 → 手机立刻看到 ✓；手机复制的文字 → 进电脑剪贴板 ✓」。
  * ⚠️ 这组用例会**动用户真实的剪贴板** —— 所以先备份、测完**还原** ✓（这是礼貌，也是纪律 ✓）。

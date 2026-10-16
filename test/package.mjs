@@ -691,5 +691,99 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes("if (files.some((file) => file?.blob instanceof Blob && String(file?.data ?? '') === '')) return false"))
 }
 
+/*
+ * 26) 🔴 **4.13.0「定时开机」的纯函数**（用户 2026-10-16：「既然有关机那么可以做一个对应的定时开机功能」✓）。
+ *
+ * 为什么把这些**拎成纯函数** ✓：真机上"到点醒不醒"没法在测试里等（要睡一觉 ✗），
+ * 但"用户写的时间读成什么时刻 ✓ / 滚不滚到明天 ✓ / 过去的时间拒不拒 ✓"全是可以**当场钉住**的 ✓。
+ * ⚠️ 尤其这两条 ✗：`powercfg` 的输出是**本地化**的 ✓（所以只认十六进制字面量 ✓）；
+ * 而"读不到"**不许**说成"没有" ✓（`ac/dc` 为 null 时要能区分出来 ✓）。
+ */
+{
+	const { parseWakeAt, parseRtcWakeIndex, describeWakePolicy, parseWakeTaskXml } = await import('../lib/pccontrol.js')
+	const now = new Date(2026, 9, 16, 11, 47, 0)   // 2026-10-16 11:47（本机时区）
+	const want = (text, at, rolled) => {
+		const got = parseWakeAt(text, now)
+		return got.ok === true && got.iso === at && got.rolled === rolled
+	}
+	check('🔴 只写 `07:30`（今天已经过了）→ **滚到明天** ✓ 而且 `rolled` 说得出来 ✓（不许悄悄改掉用户写的时间还不吭声 ✗）',
+		want('07:30', '2026-10-17T07:30:00', 'tomorrow'))
+	check('只写 `23:30`（今天还没到）→ 就是今天 ✓',
+		want('23:30', '2026-10-16T23:30:00', ''))
+	check('🔴 写了年月日的**过去**时刻 → **拒绝** ✓（用户写得很明确 ✓，替他改成明年就是骗他 ✗）',
+		parseWakeAt('2026-10-15 07:30', now).ok === false && parseWakeAt('2020-01-01 07:30', now).ok === false)
+	check('月-日不带年、今年已经过了 → 明年那一天 ✓',
+		want('10-15 07:30', '2027-10-15T07:30:00', 'year'))
+	check('`T` 分隔（`2026-10-17T07:30`）也认 ✓；不存在的日子（2-30）**拒绝** ✓；乱写的**拒绝** ✓',
+		want('2026-10-17T07:30', '2026-10-17T07:30:00', '')
+		&& parseWakeAt('2-30 06:00', now).ok === false
+		&& parseWakeAt('明天早上', now).ok === false && parseWakeAt('', now).ok === false)
+	check('🔴 `02-29` 不带年 → 找**真的闰年**（2028 ✓），不许被 Date 悄悄滚成 3-1 ✗',
+		parseWakeAt('02-29 06:00', new Date(2026, 1, 1, 0, 0, 0)).iso === '2028-02-29T06:00:00')
+	check('🔴 唤醒定时器取值只认**十六进制字面量** ✓（`powercfg` 输出是本地化的 ✗ —— 中文关键词换台机器就废 ✓）',
+		JSON.stringify(parseRtcWakeIndex('可能的设置索引: 000\n当前交流电源设置索引: 0x00000002\n当前直流电源设置索引: 0x00000000')) === JSON.stringify({ ac: 2, dc: 0 }))
+	check('🔴 **读不到 ≠ 没有** ✓：空输出回 null ✓，而且说成人话时是"读不到" ✗ 不是"禁用" ✗',
+		JSON.stringify(parseRtcWakeIndex('')) === JSON.stringify({ ac: null, dc: null })
+		&& describeWakePolicy(null, null).level === 'unknown'
+		&& describeWakePolicy(null, null).note.includes('读不到'))
+	check('策略三档都说人话 ✓（0 禁用 ✗ / 1 启用 ✓ / 2 仅限重要 ⚠️），而且给得出改它的那条命令 ✓',
+		describeWakePolicy(0, 0).level === 'disabled' && describeWakePolicy(1, 1).level === 'ok'
+		&& describeWakePolicy(2, 0).level === 'important-only'
+		&& describeWakePolicy(2, 0).note.includes('管理员')
+		&& describeWakePolicy(2, 0).command.includes('setacvalueindex'))
+	check('任务 XML：`WakeToRun` 读得出来 ✓；**没有 `<Enabled>` 元素 = 启用** ✓（实测就是这么导出的 ✗ 别当成没启用 ✓）',
+		parseWakeTaskXml('<Task version="1.3"><Settings><WakeToRun>true</WakeToRun></Settings><Triggers><TimeTrigger><StartBoundary>2026-10-17T07:30:00+08:00</StartBoundary></TimeTrigger></Triggers></Task>')
+			.wakeToRun === true
+		&& parseWakeTaskXml('<Task version="1.3"><Settings><Enabled>false</Enabled><WakeToRun>true</WakeToRun></Settings></Task>').enabled === false
+		&& parseWakeTaskXml('<Task version="1.3"><Settings><WakeToRun>true</WakeToRun></Settings></Task>').enabled === true
+		&& parseWakeTaskXml('').exists === false)
+}
+
+/*
+ * 27) 🔴 **4.13.0「定时开机」：脚本块与门禁的形状**。
+ *
+ * 这三条是**真机实测得来**的 ✓（不这么写就会踩已知的坑 ✗）：
+ *   · 建任务**必须带 `-WakeToRun`** ✓ —— 不带它就是一个"到点也不会叫醒机器"的普通任务 ✗；
+ *   · ⚠️ 这台机器上 `Get-ScheduledTask` / `Unregister-ScheduledTask` 会报
+ *     "The task XML contains a value which is incorrectly formatted or out of range" ✗
+ *     （`lib/index.js` 里"开机自启"那条早就在注释里记过同一颗雷 ✓）→ **一律走 `schtasks.exe`** ✓；
+ *   · 设完 / 删完都要**回读**（`$xml=...` / `$after=...`）✓ —— 项目一贯的规矩：不假装成功 ✗。
+ * 还有两条是**文案**：页面必须把"睡眠能醒 ✓ / 完全关机做不到 ✗"两句写出来 ✓，
+ * 而且**不许**摆"关机后开机"那个键 ✗（摆了就是骗人 ✓，铁律 ✓）。
+ */
+{
+	const { WAKE_TASK_NAME } = await import('../lib/pccontrol.js')
+	const control = await readFile(join(ROOT, 'lib', 'pccontrol.js'), 'utf8')
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const block = (name) => new RegExp('const ' + name + ' = `([\\s\\S]*?)`').exec(control)?.[1] ?? ''
+	const setScript = block('WAKE_SET_SCRIPT')
+	const infoScript = block('WAKE_INFO_SCRIPT')
+	const clearScript = block('WAKE_CLEAR_SCRIPT')
+	check('（自检）三段脚本块都抠出来了（别把下面几条写成永远通过）',
+		setScript.includes('Register-ScheduledTask') && infoScript.includes('powercfg') && clearScript.includes('schtasks'),
+		`${setScript.length}/${infoScript.length}/${clearScript.length}`)
+	check('🔴 建任务**带 `-WakeToRun`** ✓（不带它 → 到点根本叫不醒机器 ✗）',
+		setScript.includes('New-ScheduledTaskSettingsSet -WakeToRun'))
+	check('🔴 建 / 查 / 删**一律走 `schtasks.exe`** ✓，脚本里**一个 `Get-ScheduledTask` / `Unregister-ScheduledTask` 都没有** ✗（真机实测这两条在这台机器上会报错 ✓）',
+		infoScript.includes('schtasks.exe /query /tn $name /xml')
+		&& clearScript.includes('schtasks.exe /delete /tn $name /f')
+		&& clearScript.includes('schtasks.exe /query /tn $name /xml')
+		&& [setScript, infoScript, clearScript].every((text) => text.includes('Get-ScheduledTask') === false && text.includes('Unregister-ScheduledTask') === false))
+	check('🔴 设完**读回来** ✓、删完**再查一次** ✓（"我以为设上了 / 我以为删了"都不算 ✗）',
+		setScript.includes('schtasks.exe /query /tn $name /xml') && clearScript.includes('$after='))
+	check('🔴 路由门禁：`GET /api/pc/wake` → `guard()` ✓（读不改东西 ✓）、`POST /api/pc/wake` → `guardWrite()` ✓（要 PIN 提权 ✓）',
+		/GET \/api\/pc\/wake'\)\s*return\s+guard\(\)/.test(host)
+		&& /POST \/api\/pc\/wake'\)\s*return\s+guardWrite\(\)/.test(host))
+	check('🔴 「关机后开机」那一支在**服务端**也是如实拒绝 ✓（接口是公开的 ✓ —— 拒绝的话必须从服务端说出来 ✓）',
+		host.includes('impossible: true') && host.includes("它挂在「关机 / 重启」那个开关上"))
+	check('🔴 面板上那两句实话在**页面里** ✓（睡眠能自己醒 ✓ / 完全关机软件做不到 ✗）',
+		page.includes('睡眠 (S3)：能自己醒') && page.includes('完全关机 (S5)：软件做不到'))
+	check('🔴 页面上**一个"关机后开机"的键都没有** ✓（`data-wake-poweron` 不许出现 ✗ —— 软件做不到的事不摆键 ✓）',
+		page.includes('data-wake-poweron') === false)
+	check('任务名是**纯 ASCII** ✓（中文任务名走命令行会被本地代码页吃掉 ✗ —— 这条坑今天咬过好几次 ✓）',
+		/^[\x00-\x7F]+$/.test(WAKE_TASK_NAME), WAKE_TASK_NAME)
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

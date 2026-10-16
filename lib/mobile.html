@@ -11326,7 +11326,7 @@
 	 * —— 今天真实疼过两次（"重启后连不上"就是端口被同一个 node 占着 ✓）。
 	 * 数据全由桥现采（`lib/system.js` ✓），这一层只负责画 + 给一个"结束"入口 ✓。
 	 */
-	const sysPanel = { data: null, busy: false, pid: 0 }
+	const sysPanel = { data: null, busy: false, pid: 0, wake: null }
 
 	function sysRow(label, value, note = '') {
 		return '<div class="sysrow"><span class="k">' + escapeHtml(label) + '</span><span class="v">' + escapeHtml(value) + '</span>'
@@ -11340,6 +11340,12 @@
 		const host = data.host ?? {}
 		const html = []
 		html.push(renderPowerBlock())
+		/*
+		 * 4.13.0「定时开机」✓：紧挨着"电脑端一键动作"摆 ✓（它就是这一类的：手机上让**这台机器**自己动 ✓）。
+		 * ⚠️ 面板上**只用两句话**把两条路分开 ✗（"睡眠能醒 ✓ / 完全关机做不到 ✗"）——
+		 * 这是这一版最要紧的一条文案 ✓（`test/package.mjs` 与 `test/ui.mjs` 都钉着它 ✓）。
+		 */
+		html.push(renderWakeBlock())
 		html.push('<div class="syscard">')
 		html.push(sysRow('CPU', host.cpuPercent === null || host.cpuPercent === undefined ? '（再刷一次）' : host.cpuPercent + '%', (host.cores ?? 0) + ' 核'))
 		html.push(sysRow('内存', (host.memoryUsedPercent ?? 0) + '%', '可用 ' + (host.memoryFreeMB ?? 0) + ' MB / 共 ' + (host.memoryTotalMB ?? 0) + ' MB'))
@@ -11407,6 +11413,11 @@
 			sysPanel.data = await api('api/system')
 			// 关机/重启那块（含"关机前自检"）顺便一起拿 ✓ —— 同一个面板里，分开取只会多一次往返 ✓。
 			try { sysPanel.power = await api('api/power') } catch { sysPanel.power = null }
+			/*
+			 * 4.13.0「定时开机」✓：也一并拿 ✓（同一张纸上 ✓）。⚠️ 它**自己带**一段"到底能不能做到"的实话 ✓，
+			 * 所以 `power` 拿不到也不影响这一块把话说清 ✓。
+			 */
+			try { sysPanel.wake = await api('api/pc/wake') } catch { sysPanel.wake = null }
 			// ③ 审批记录（2.5.0 遗留）：顺手拿最近 5 条 ✓ —— "谁在什么设备上批了什么" ✓。
 			try { sysPanel.approvals = await api('api/approvals?limit=5') } catch { sysPanel.approvals = null }
 			renderSystem()
@@ -11480,6 +11491,116 @@
 		}
 		html.push('</div>')
 		return html.join('')
+	}
+
+	/*
+	 * 4.13.0「定时开机」（用户 2026-10-16 原话：「既然有关机那么可以做一个对应的定时开机功能」✓）。
+	 *
+	 * ⚠️ 这一块的全部价值就在**两句实话**上 ✓（剩下的都是操作细节 ✓）：
+	 *   ① **睡眠 (S3) 能自己醒** ✓ —— 系统还活着 ✓，"唤醒定时器"才有权把它叫醒 ✓；
+	 *   ② **完全关机 (S5) 软件做不到** ✗ —— 那时系统没在运行 ✓，任何软件都不存在 ✓，
+	 *      只能去主板 BIOS 里设 RTC 定时开机 ✓。所以这里**没有**那个键 ✗（摆了就是骗人 ✓，
+	 *      和"不摆按了没反应的键"是同一条 ✓）。
+	 *
+	 * 另外三样**必须照实说**的东西 ✓（都是这台机器上当场读回来的 ✓，不是照文档抄的 ✗）：
+	 *   · 唤醒定时器策略（交流 / 电池两档 ✓）—— 它决定"到点到底醒不醒" ✓；
+	 *     不是「启用」就把那条命令摆出来 ✓（**要管理员** ✓ —— 插件不偷偷提权 ✗）；
+	 *   · 现有的那个计划任务（时刻 + 有没有 WakeToRun ✓）—— 走 `schtasks /xml` 免提权读 ✓；
+	 *   · `powercfg /waketimers` **读不到**时明说读不到 ✓（要管理员 ✓），**不当成"没有定时器"** ✗。
+	 */
+	function renderWakeBlock() {
+		const wake = sysPanel.wake
+		if (wake === null || wake === undefined) return ''
+		const truth = wake.truth ?? {}
+		const html = ['<div class="syscard">', '<div class="sessgroup">⏰ 定时开机</div>']
+		html.push('<div class="hint"><strong>睡眠 (S3)：能自己醒 ✓</strong> —— 到点由系统的「唤醒定时器」把机器叫醒 ✓'
+			+ '（那时系统还活着 ✓）。<br><strong>完全关机 (S5)：软件做不到 ✗</strong> —— 那时系统没在运行 ✓，'
+			+ '只能去主板 BIOS 里设「RTC 定时开机」✓（' + escapeHtml((truth.biosNames ?? []).join(' / ')) + ' ✓；'
+			+ 'BIOS 里设没设，Windows **查不到** ✗ —— 只能开机时自己进去看一眼 ✓）。</div>')
+		html.push('<div class="hint">' + escapeHtml(String(wake.note ?? '')) + '</div>')
+		if (wake.error !== undefined && wake.error !== '') {
+			// ⚠️ 读不到就**说读不到** ✓ —— 和"没有定时唤醒"是两件事 ✓（这条是本项目最较真的一类 ✗）。
+			html.push('<div class="err-box">定时唤醒的状态**读不到** ✗（不是"没设" ✓）：'
+				+ escapeHtml(String(wake.error)) + ' ✓</div>')
+		}
+		const policy = wake.policy ?? null
+		if (policy !== null) {
+			html.push('<div class="hint">唤醒定时器（这台机器当场读回来的 ✓）：交流电 = '
+				+ escapeHtml(String(policy.acName ?? '')) + ' ✓ / 电池 = ' + escapeHtml(String(policy.dcName ?? '')) + ' ✓<br>'
+				+ escapeHtml(String(policy.note ?? '')) + '<br>' + escapeHtml(String(policy.battery ?? '')) + '</div>')
+			if (policy.level !== 'ok') {
+				html.push('<div class="hint">要改成「启用」：在**电脑**上开一个管理员 PowerShell，跑 '
+					+ '<code>' + escapeHtml(String(policy.command ?? '')) + '</code> ✓（要管理员 ✓ —— 插件不会偷偷提权 ✗）</div>')
+			}
+		}
+		const task = wake.task ?? null
+		if (task !== null && task.exists === true) {
+			html.push(sysRow('已设的唤醒', String(task.startBoundary ?? '（读不到时刻）'),
+				task.wakeToRun === true ? '带「唤醒」标志 ✓（WakeToRun ✓ —— 到点会叫醒机器 ✓）' : '⚠️ **没有**唤醒标志 ✗ —— 到点**不会**叫醒机器'))
+			html.push('<div class="actions"><button class="go" data-wake-clear="1">取消这个定时唤醒</button></div>')
+		} else if (task !== null) {
+			html.push('<div class="hint">现在没有设过定时唤醒 ✓。</div>')
+		}
+		const timers = wake.wakeTimers ?? null
+		if (timers !== null && timers.readable !== true) {
+			html.push('<div class="hint">系统里还排着哪些唤醒定时器：**读不到** ✗（`powercfg /waketimers` 要管理员 ✓ —— '
+				+ '插件没有管理员权限 ✓，所以这里照实说读不到 ✗，**不**当成"没有" ✗）。</div>')
+		} else if (timers !== null && Array.isArray(timers.lines) && timers.lines.length > 0) {
+			html.push('<div class="hint">系统里排着的唤醒定时器：<br>' + timers.lines.map((line) => escapeHtml(String(line))).join('<br>') + '</div>')
+		}
+		if (wake.enabled === true) {
+			html.push('<div class="field"><label>设一个到点唤醒（本机时间 ✓；只响一次 ✓）</label>'
+				+ '<input class="plain" id="wakeAt" inputmode="numeric" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16" placeholder="10-17 07:30（也可以只写 07:30）"></div>')
+			html.push('<div class="actions"><button class="go" data-wake-set="1">设它</button>'
+				+ '<button data-wake-refresh="1">刷新</button></div>')
+			html.push('<div class="hint">再设一个会**换掉**上一个 ✓（同一时刻只留一个 ✓）。'
+				+ '要"醒过来之后自己干点什么"，再配一个「📅 定时」任务 ✓。</div>')
+		} else {
+			html.push('<div class="actions"><button data-wake-refresh="1">刷新</button></div>')
+		}
+		html.push('</div>')
+		return html.join('')
+	}
+
+	/** 设一个到点唤醒 ✓（PIN 走 `api()` 那套提权门 ✓ —— 和"关机 / 重启"同一档 ✓）。 */
+	async function setWake() {
+		const at = String($('wakeAt')?.value ?? '').trim()
+		if (at === '') { toast('先写一个时刻 ✓ —— 比如 10-17 07:30', 2600); return }
+		try {
+			const body = await api('api/pc/wake', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'set', at }),
+			})
+			const rolled = String(body.rolledNote ?? '')
+			toast(String(body.message ?? '已设好 ✓') + (rolled === '' ? '' : '（' + rolled + '）'), 6000)
+			sysPanel.wake = null
+			await loadSystem()
+		} catch (error) {
+			const message = String(error?.message ?? '')
+			toast(error?.status === 403 && message.includes('默认关闭') === true ? message : '没设上：' + message, 4600)
+		}
+	}
+
+	/** 取消 ✓（服务端删完会**回读**一次才说"取消了" ✓，这里只管把原话转给用户 ✓）。 */
+	async function clearWake() {
+		try {
+			const body = await api('api/pc/wake', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'clear' }),
+			})
+			toast(String(body.message ?? '已经取消了 ✓'), 4200)
+		} catch (error) {
+			toast('没取消成：' + String(error?.message ?? ''), 4200)
+		}
+		sysPanel.wake = null
+		await loadSystem()
+	}
+
+	async function refreshWake() {
+		sysPanel.wake = null
+		await loadSystem()
 	}
 
 	function openKill(pid) {
@@ -11929,6 +12050,13 @@
 		if (target.closest('[data-focus-mark]') !== null) { focusMark(); return }
 		if (target.closest('[data-focus-exit]') !== null) { toggleFocus(); return }
 		if (target.closest('[data-power-cancel]') !== null) { void cancelPower() }
+		/*
+		 * 4.13.0「定时开机」✓：**只在这一处委派** ✓（3.5.0 那次"两份接法 = 一次点击两条请求"的教训 ✓，
+		 * 见 `#poweropen` 那段 ✓）；目标节点每次 `closest` 重查 ✓（面板会重渲染 ✓）。
+		 */
+		if (target.closest('[data-wake-set]') !== null) { void setWake(); return }
+		if (target.closest('[data-wake-clear]') !== null) { void clearWake(); return }
+		if (target.closest('[data-wake-refresh]') !== null) { void refreshWake() }
 	})
 
 	/*

@@ -194,6 +194,10 @@ const archiveRequests = []
 const killRequests = []
 /** 2.7.0 ★4：一键动作（锁屏/关机/重启/取消）的请求体。 */
 const powerRequests = []
+/** 4.13.0：定时开机（设 / 取消）的请求体。 */
+const wakeRequests = []
+/** 4.13.0：桩里"那个唤醒任务在不在"的开关 —— 设成功就变成在 ✓，取消就变回不在 ✓。 */
+let wakeTaskExists = false
 /** 2.7.0 ★4：发到电脑剪贴板的请求体。 */
 const clipboardWrites = []
 /** 2.7.0 ★6：定时任务的请求体。 */
@@ -793,6 +797,52 @@ async function stubFetch(input, options = {}) {
 				{ name: '开机自启已装', ok: false, hint: '没装：关完得自己点桌面图标才能连上' },
 			],
 			pending: null,
+		})
+	}
+	/*
+	 * 4.13.0「定时开机」✓（用户 2026-10-16）—— 桩要照**服务端的真实口径**回 ✓：
+	 *   · `truth` 那几句是"能不能做到"的实话 ✓（⚠️ 页面上那两句是 `mobile.html` **自己写**的 ✓，
+	 *     桩只给 BIOS 的几种叫法 ✓ —— 所以断言"页面上有那两句实话"才咬得住 ✓，不是拿桩的话自证 ✓）；
+	 *   · `policy` / `wakeTimers` 都是**读回来的真值** ✓（`readable:false` 就是"要管理员、读不到" ✓）——
+	 *     这一条在页面上必须说成"读不到" ✗，**不许**说成"没有" ✓。
+	 */
+	if (path === '/api/pc/wake') {
+		if (options.method === 'POST') {
+			const body = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+			wakeRequests.push(body)
+			if (body.action === 'set') {
+				wakeTaskExists = true
+				return jsonResponse({
+					ok: true, action: 'set', taskName: 'DSH-mobile-bridge-wake',
+					at: '2026-10-17T07:30:00', atText: '2026-10-17 07:30', rolled: '', rolledNote: '',
+					message: 'UNIQ-WAKE-SET-42 已设好：2026-10-17 07:30 到点唤醒 ✓',
+				})
+			}
+			wakeTaskExists = false
+			return jsonResponse({ ok: true, action: 'clear', removed: true, message: 'UNIQ-WAKE-CLEAR-42 已经取消了 ✓' })
+		}
+		return jsonResponse({
+			enabled: true,
+			note: 'UNIQ-WAKE-NOTE-42',
+			policyCommand: 'powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1',
+			taskName: 'DSH-mobile-bridge-wake',
+			truth: {
+				sleep: '睡眠 (S3) 能自己醒 ✓',
+				shutdown: '完全关机 (S5) **软件做不到** ✗ —— 只能靠主板 BIOS 的 RTC 定时开机 ✓',
+				biosUndetectable: 'BIOS 里设没设，Windows 这边**查不到** ✗',
+				biosNames: ['RTC Alarm Power On', 'Resume by RTC Alarm'],
+			},
+			error: '',
+			task: wakeTaskExists === true
+				? { exists: true, startBoundary: '2026-10-17T07:30:00+08:00', wakeToRun: true, enabled: true, command: 'powershell.exe', arguments: '-NoLogo' }
+				: { exists: false, startBoundary: '', wakeToRun: false, enabled: true, command: '', arguments: '' },
+			policy: {
+				ac: 2, dc: 0, acName: '仅限重要的唤醒定时器', dcName: '禁用', level: 'important-only',
+				note: 'UNIQ-WAKE-POLICY-42', battery: 'UNIQ-WAKE-BATTERY-42',
+				command: 'powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP RTCWAKE 1',
+			},
+			// ⚠️ 桩**故意**回 `readable:false` ✓ —— 非管理员跑真桥时就是这个结果 ✓（真机实测 ✓）。
+			wakeTimers: { readable: false, lines: [] },
 		})
 	}
 	/*
@@ -5155,6 +5205,74 @@ await wait(40)
 	powerRequests.push(...powerSnapshotKeep)
 	click($('powerBack'))
 	await wait(60)
+
+	/*
+	 * 4.13.0「定时开机」✓（用户 2026-10-16：「既然有关机那么可以做一个对应的定时开机功能」✓）。
+	 *
+	 * 🔴 这一组最要紧的**不是**"能设" ✗，而是**页面上有没有把两条路分开说** ✓：
+	 *   睡眠 (S3) 能自己醒 ✓ / 完全关机 (S5) **软件做不到** ✗（只能靠主板 BIOS ✓）。
+	 * ⚠️ 判据必须钉在 `mobile.html` **自己写的那两句话**上 ✓ —— 桩里也带一份 `truth` ✓，
+	 * 拿桩的话自证就是假绿 ✗（把桩改了照样绿 ✓）；而页面上那两句一删就必红 ✓。
+	 */
+	{
+		const wakeText = String($('sysBody').textContent).replace(/\s+/g, ' ')
+		check('🔴 面板上**两句话把两条路分开**：睡眠能自己醒 ✓ / 完全关机软件做不到 ✗（这是这一版最要紧的文案 ✓）',
+			wakeText.includes('睡眠') && wakeText.includes('能自己醒')
+			&& wakeText.includes('完全关机') && wakeText.includes('软件做不到')
+			&& wakeText.includes('BIOS'),
+			wakeText.slice(Math.max(0, wakeText.indexOf('定时开机')), 150))
+		check('🔴 面板上**没有**"关机后到点开机"那个键 ✓（软件做不到的事不许摆键 ✗ —— 本项目铁律 ✓）',
+			$('sysBody').querySelectorAll('[data-wake-poweron]').length === 0
+			&& wakeText.includes('软件做不到'),
+			String($('sysBody').querySelectorAll('[data-wake-poweron]').length))
+		check('读回来的东西照实画：唤醒定时器策略 ✓ + 服务端那句 note ✓ + 改它要管理员的那条命令 ✓',
+			wakeText.includes('UNIQ-WAKE-POLICY-42') && wakeText.includes('UNIQ-WAKE-NOTE-42')
+			&& wakeText.includes('仅限重要的唤醒定时器')
+			&& String($('sysBody').querySelector('code')?.textContent ?? '').includes('RTCWAKE 1'),
+			wakeText.slice(Math.max(0, wakeText.indexOf('唤醒定时器')), 120))
+		check('🔴 `powercfg /waketimers` 读不到时**说读不到** ✓ 并点名"要管理员" ✗（不许当成"没有定时器" ✗）',
+			wakeText.includes('读不到') && wakeText.includes('要管理员'),
+			wakeText.slice(Math.max(0, wakeText.indexOf('读不到')), 90))
+		// 空着就点：**一个请求都不发** ✗（页面上说"先写一个时刻" ✓）
+		const wakeEmptyBefore = wakeRequests.length
+		$('wakeAt').value = ''
+		click($('sysBody').querySelector('[data-wake-set]'))
+		await wait(200)
+		check('没写时刻就点「设它」：**一个请求都不发** ✓，只在页面上说先写时刻 ✓',
+			wakeRequests.length === wakeEmptyBefore && String($('toast').textContent).includes('先写一个时刻'),
+			JSON.stringify({ 发了: wakeRequests.length - wakeEmptyBefore, toast: String($('toast').textContent).slice(0, 40) }))
+		// 真设一次：写进去的时刻必须**原样**送上去 ✓（页面不许自己加工时间 ✗）
+		$('wakeAt').value = '10-17 07:30'
+		const wakeSetBefore = requests.filter((entry) => entry.path.startsWith('/api/pc/wake') && entry.options?.method === 'POST').length
+		click($('sysBody').querySelector('[data-wake-set]'))
+		await wait(420)
+		const wakePosts = requests.filter((entry) => entry.path.startsWith('/api/pc/wake') && entry.options?.method === 'POST').slice(wakeSetBefore)
+		let wakeSetBody = {}
+		try { wakeSetBody = JSON.parse(String(wakePosts.at(-1)?.options?.body ?? '{}')) } catch { wakeSetBody = {} }
+		check('🔴 点「设它」：恰好一条 `POST /api/pc/wake {action:set}` ✓，且用户写的时刻**原样**送上去 ✓',
+			wakePosts.length === 1 && wakeSetBody.action === 'set' && wakeSetBody.at === '10-17 07:30',
+			JSON.stringify({ 条数: wakePosts.length, body: wakeSetBody }))
+		check('设完把服务端那句话原样说出来 ✓（`UNIQ-WAKE-SET-42` ✓ —— 页面不自己编一句"已设好" ✗）',
+			String($('toast').textContent).includes('UNIQ-WAKE-SET-42'),
+			String($('toast').textContent).slice(0, 60))
+		const wakeAfterSet = String($('sysBody').textContent).replace(/\s+/g, ' ')
+		check('设完之后面板上摆出那个任务：时刻 ✓ + 带 WakeToRun ✓ + 出现「取消」键 ✓',
+			$('sysBody').querySelector('[data-wake-clear]') !== null
+			&& wakeAfterSet.includes('2026-10-17T07:30:00+08:00')
+			&& wakeAfterSet.includes('WakeToRun'),
+			wakeAfterSet.slice(Math.max(0, wakeAfterSet.indexOf('已设的唤醒')), 130))
+		// 取消：**恰好一条** clear ✓；取消完那个键就没了 ✓
+		const wakeClearBefore = requests.filter((entry) => entry.path.startsWith('/api/pc/wake') && entry.options?.method === 'POST').length
+		click($('sysBody').querySelector('[data-wake-clear]'))
+		await wait(420)
+		const wakeClears = requests.filter((entry) => entry.path.startsWith('/api/pc/wake') && entry.options?.method === 'POST').slice(wakeClearBefore)
+		let wakeClearBody = {}
+		try { wakeClearBody = JSON.parse(String(wakeClears.at(-1)?.options?.body ?? '{}')) } catch { wakeClearBody = {} }
+		check('🔴 点「取消」：恰好一条 `{action:clear}` ✓，回来之后那个键就不在了 ✓（"删完了"要看得出来 ✓）',
+			wakeClears.length === 1 && wakeClearBody.action === 'clear'
+			&& $('sysBody').querySelector('[data-wake-clear]') === null,
+			JSON.stringify({ 条数: wakeClears.length, body: wakeClearBody, 取消键还在: $('sysBody').querySelector('[data-wake-clear]') !== null }))
+	}
 
 	/*
 	 * 4.1.0「顶部分享键」✓（用户 2026-10-14 亲口要的 ✓）：顶栏有键 ✓ → 取到文案原样填进去 ✓
