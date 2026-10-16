@@ -895,7 +895,7 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	check('🔴 素材只从**用户本机目录**读 ✓（`~/.dsh/mobile-bridge-pets/<id>/` ✓ —— 不是插件目录 ✗）',
 		host.includes("join(dshHome(), 'mobile-bridge-pets')") && host.includes('function petDir(id)'))
 	check('🔴 取素材走**白名单 + 逐段洗 + 落在目录内** ✓（文件名只来自 `pet.json` ✗ —— 不拿 URL 拼路径 ✗）',
-		host.includes('const allowed = new Set([meta.body, ...Object.values(meta.faces)])')
+		/const allowed = new Set\(\[meta\.body[^\]]*\]\)/.test(host)
 		&& host.includes('allowed.has(wanted) === false')
 		&& host.includes('function petAssetRef(dir, rel)')
 		&& host.includes('full.startsWith(root + sep) === false'))
@@ -917,6 +917,20 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes("window.dshPet?.mood?.('happy')") && page.includes("window.dshPet?.mood?.('error')"))
 	check('🔴 没有素材也**不会空着** ✓：代码画的那只（内联 SVG ✓，插件自带 ✓）',
 		page.includes('id="petFallback"') && page.includes('<svg id="petFallback"'))
+	/*
+	 * 🔴 4.15.1（用户原话：「非要在头顶搞个圈？」✓）：**那个圈不许回来** ✗ ——
+	 * 表情改成**整只换立绘** ✓（`sprites` ✓），脸是长在她自己身上的 ✓。
+	 * ⚠️ 连**死代码**都要清掉 ✗：留着 `#petFace` 的 CSS/注释会让人以为那个圈还在 ✓。
+	 */
+	check('🔴 头圈**一个字节都不许留** ✗（`petFace` / `petFaceImg` 在页面里彻底没有 ✓ —— 含 CSS 与注释 ✓）',
+		page.includes('petFace') === false)
+	check('🔴 表情是**整只换立绘** ✓：手机按清单里的 `sprites` 换 `#petSprite` ✓，空闲时还会在 `idleCycle` 里轮换 ✓',
+		page.includes('function showSprite(key)')
+		&& page.includes('pet.sprites') && page.includes('idleCycle')
+		&& page.includes('}, 7000)'))
+	check('🔴 服务端也要把 `sprites` 给出来 ✓，而且**白名单里带上它们** ✓（不然整只换立绘会 404 ✗）',
+		host.includes('sprites: Object.fromEntries(Object.entries(meta.sprites)')
+		&& host.includes('const allowed = new Set([meta.body, ...Object.values(meta.sprites), ...Object.values(meta.faces)])'))
 	check('🔴 藏起来之后**有路回来** ✓（「更多」里那个 🐳 键 ✓ —— 不摆它就是"按了再也找不到" ✗）',
 		page.includes('id="petToggle"') && page.includes("$('petToggle').addEventListener"))
 }

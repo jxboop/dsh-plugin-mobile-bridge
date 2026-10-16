@@ -552,12 +552,23 @@ async function stubFetch(input, options = {}) {
 		if (petStubMissing === true) return jsonResponse({ available: false, note: '还没有桌宠素材 ✓' })
 		return jsonResponse({
 			available: true, id: 'probe-pet', name: '小鲸', fullName: '小鲸 / DeepSeek酱',
-			body: 'api/pet/asset?name=body.png',
+			body: 'api/pet/asset?name=moods%2Fidle.png',
+			// 4.15.1：**整只换立绘** ✓（表情长在她脸上 ✓，没有"头顶一个圈" ✗）。
+			sprites: {
+				idle: 'api/pet/asset?name=moods%2Fidle.png',
+				happy: 'api/pet/asset?name=moods%2Fhappy.png',
+				upset: 'api/pet/asset?name=moods%2Fupset.png',
+				eating: 'api/pet/asset?name=moods%2Feating.png',
+			},
 			faces: { happy: 'api/pet/asset?name=faces%2Fhappy.png', eating: 'api/pet/asset?name=faces%2Feating.png' },
 			faceLabels: { happy: '开心', eating: '吃饭' },
 			palette: { main: '#1E3ABA' },
-			moods: { idle: 'eating', happy: 'happy', busy: 'eating', error: 'eating', poke: ['happy', 'eating'] },
-			lines: { happy: ['UNIQ-PET-HAPPY-7'], eating: ['UNIQ-PET-EAT-7'] },
+			moods: {
+				idle: 'idle', happy: 'happy', busy: 'idle', error: 'upset', eat: 'eating',
+				poke: ['happy', 'eating', 'upset', 'idle'],
+				idleCycle: ['idle', 'eating', 'happy'],
+			},
+			lines: { idle: ['UNIQ-PET-IDLE-7'], happy: ['UNIQ-PET-HAPPY-7'], eating: ['UNIQ-PET-EAT-7'] },
 		})
 	}
 	if (path.startsWith('/api/waiting')) {
@@ -2824,21 +2835,33 @@ answerExpired = false
 		&& String(window.localStorage.getItem('dshm.pet') ?? '').includes('"scale"'),
 		`${scaleBefore} → ${window.dshPet.state().scale}`)
 
-	// 点一下有反应 ✓：换一张表情 + 说一句（素材里有 happy/eating 两张 ✓）
+	// 🔴 4.15.1（用户原话：「非要在头顶搞个圈？」✓）：**那个圈必须没了** ✗
+	check('🔴 没有"头顶一个圈"了 ✓（`#petFace` 那个圆形脸整块删掉 ✗ —— 表情改成**长在她自己脸上** ✓）',
+		$('petFace') === null, `#petFace=${String($('petFace') === null)}`)
+	// 点一下有反应 ✓：整只换一张 + 说一句（没移动 = 点一下 ✓）
 	fire('pointerdown', 600, 700)
 	fire('pointerup', 600, 700)
-	await wait(80)
-	check('🔴 点一下有反应 ✓：弹出表情（圆形脸 ✓）并说一句话 ✓（台词来自清单 ✓）',
-		window.getComputedStyle($('petFace')).display !== 'none'
-		&& String($('petFaceImg').getAttribute('src') ?? '').includes('api/pet/asset')
+	await wait(90)
+	check('🔴 点一下有反应 ✓：**整只**换成某一档立绘（`sprites` 里的 ✓）并说一句 ✓ —— 不是弹个圈 ✗',
+		['happy', 'eating', 'upset', 'idle'].includes(window.dshPet.sprite()) === true
+		&& String($('petSprite').getAttribute('src') ?? '').includes('moods%2F')
 		&& String($('petSay').textContent).startsWith('UNIQ-PET-'),
-		JSON.stringify({ face: String($('petFaceImg').getAttribute('src') ?? '').slice(0, 40), say: String($('petSay').textContent) }))
+		JSON.stringify({ sprite: window.dshPet.sprite(), say: String($('petSay').textContent) }))
 
 	// 事件心情 ✓：发成功 → happy（这条挂在真成功那一处 ✓）
 	window.dshPet.mood('happy')
 	await wait(60)
-	check('🔴 跟着事情变表情 ✓：`happy` 时表情与台词都换成清单里那一档 ✓（`UNIQ-PET-HAPPY-7` ✓）',
-		String($('petSay').textContent).includes('UNIQ-PET-HAPPY-7'), String($('petSay').textContent))
+	check('🔴 跟着事情变 ✓：`happy` 时整只换成开心那档立绘 ✓ 并说清单里那一句 ✓（`UNIQ-PET-HAPPY-7` ✓）',
+		window.dshPet.sprite() === 'happy'
+		&& String($('petSprite').getAttribute('src') ?? '').includes('moods%2Fhappy')
+		&& String($('petSay').textContent).includes('UNIQ-PET-HAPPY-7'),
+		JSON.stringify({ sprite: window.dshPet.sprite(), src: String($('petSprite').getAttribute('src') ?? '').slice(-24), say: String($('petSay').textContent) }))
+	window.dshPet.mood('error')
+	await wait(60)
+	check('🔴 报错 → 换成"难受"那档 ✓（不是嘴上说说 ✗）',
+		window.dshPet.sprite() === 'upset'
+		&& String($('petSprite').getAttribute('src') ?? '').includes('moods%2Fupset'),
+		String($('petSprite').getAttribute('src') ?? '').slice(-24))
 
 	// 藏起来 + **有路回来** ✓（「更多」里那个 🐳 键 ✓）
 	click($('petToggle'))

@@ -2564,11 +2564,7 @@
 		#petBody img, #petBody svg { width: 100%; height: 100%; display: block; object-fit: contain; }
 		#petBody.petpop { animation: petpop .45s ease-out; }
 		@keyframes petpop { 0% { transform: translate(-50%, -50%) scale(1); } 35% { transform: translate(-50%, -56%) scale(1.09); } 100% { transform: translate(-50%, -50%) scale(1); } }
-		#petFace { position: absolute; transform: translate(-50%, -50%); pointer-events: none;
-			width: 74px; height: 74px; border-radius: 50%; overflow: hidden; border: 2px solid var(--field-line, #888);
-			background: var(--bg, #12182a); }
-		#petFace img { width: 100%; height: 100%; object-fit: cover; }
-		#petSay { position: absolute; transform: translate(-50%, -100%); max-width: 62vw; padding: 6px 10px; border-radius: 12px;
+		#petSay { position: absolute; transform: translate(-108%, -50%); max-width: 48vw; padding: 6px 10px; border-radius: 12px;
 			font-size: 13px; line-height: 1.4; background: var(--bg, #12182a); color: var(--text, #e8eef7);
 			border: 1px solid var(--field-line, #888); }
 		#petGrip { position: absolute; pointer-events: auto; width: 26px; height: 26px; border-radius: 50%;
@@ -2606,7 +2602,6 @@
 				<circle cx="60" cy="112" r="4" fill="#F5C542"/>
 			</svg>
 		</div>
-		<div id="petFace" style="display:none"><img id="petFaceImg" alt=""></div>
 		<div id="petSay" style="display:none"></div>
 		<div id="petGrip" title="拖我改大小">⤡</div>
 		<div id="petBar" style="display:none">
@@ -2635,12 +2630,13 @@
 			} catch { /* 无痕模式：用默认 ✓ */ }
 			const save = () => { try { window.localStorage.setItem('dshm.pet', JSON.stringify(petState)) } catch { /* 存不下就算了 ✓ */ } }
 			const body = document.getElementById('petBody')
+			const sprite = document.getElementById('petSprite')
 			const grip = document.getElementById('petGrip')
 			const bar = document.getElementById('petBar')
-			const face = document.getElementById('petFace')
-			const faceImg = document.getElementById('petFaceImg')
 			const say = document.getElementById('petSay')
-			const LABELS = { happy: '开心', eating: '吃饭', working: '努力', upset: '懊恼', wronged: '委屈', shy: '害羞', angry: '生气', content: '满足' }
+			const LABELS = { idle: '中性', happy: '开心', upset: '难受', eating: '吃饭' }
+			let spriteKey = 'idle'
+			let idleStep = 0
 
 			function clamp() {
 				petState.x = Math.max(0.04, Math.min(0.96, petState.x))
@@ -2655,16 +2651,26 @@
 				body.style.height = (width * 4 / 3) + 'px'
 				body.style.left = (petState.x * 100) + '%'
 				body.style.top = (petState.y * 100) + '%'
-				face.style.left = (petState.x * 100) + '%'
-				face.style.top = ((petState.y * 100) - 11 * petState.scale) + '%'
+				// 4.15.1：**没有圈了** ✓ —— 说话那行挪到她**旁边**（左边）✓，不再顶在头上 ✗。
 				say.style.left = (petState.x * 100) + '%'
-				say.style.top = ((petState.y * 100) - 22 * petState.scale) + '%'
+				say.style.top = ((petState.y * 100) - 6 * petState.scale) + '%'
 				grip.style.left = ((petState.x * 100) + 7 * petState.scale) + '%'
 				grip.style.top = ((petState.y * 100) + 9 * petState.scale) + '%'
 				bar.style.left = '4vw'
 				bar.style.bottom = '14vh'
 			}
-			function hideFace() { face.style.display = 'none'; say.style.display = 'none' }
+			function hideSay() { say.style.display = 'none' }
+			/** 4.15.1：**整只换立绘** ✓（表情长在她脸上 ✓，不再有"头顶一个圈" ✗）。 */
+			function showSprite(key) {
+				const wanted = String(key ?? '')
+				const src = (pet !== null && pet.available === true)
+					? String((pet.sprites ?? {})[wanted] ?? pet.sprites?.idle ?? pet.body ?? '')
+					: ''
+				if (src === '') return false
+				spriteKey = wanted
+				if (sprite.getAttribute('src') !== src) sprite.src = src
+				return true
+			}
 
 			/* ---------- 拖动（指针事件 ✓ + 指针捕获 ✓ —— 手指划出元素也不会丢 ✓） ---------- */
 			let drag = null
@@ -2718,64 +2724,61 @@
 			}, { passive: true })
 			layer.addEventListener('touchend', () => { if (pinch !== null) { pinch = null; save() } }, { passive: true })
 
-			/* ---------- 表情 / 心情 ---------- */
-			const faceSrc = (key) => (pet !== null && pet.available === true && pet.faces) ? String(pet.faces[key] ?? '') : ''
+			/* ---------- 心情 → 整只立绘（4.15.1：表情长在她脸上 ✓，没有圈 ✗） ---------- */
 			const lineOf = (key) => {
 				const pool = pet?.lines?.[key]
 				return Array.isArray(pool) && pool.length > 0 ? String(pool[Math.floor(Math.random() * pool.length)]) : ''
 			}
-			function faceFor(mood) {
+			/** 心情名 → 立绘档名 ✓（`moods` 表来自清单 ✓；`poke` 是"点一下随机换一张" ✓）。 */
+			function spriteFor(name) {
 				const table = pet?.moods ?? {}
-				if (mood === 'poke') {
-					const pool = Array.isArray(table.poke) && table.poke.length > 0 ? table.poke : ['happy', 'content']
+				if (name === 'poke') {
+					const pool = Array.isArray(table.poke) && table.poke.length > 0 ? table.poke : ['happy', 'eating', 'idle']
 					return String(pool[Math.floor(Math.random() * pool.length)])
 				}
-				return typeof table[mood] === 'string' ? table[mood] : mood
+				return typeof table[name] === 'string' ? table[name] : String(name ?? 'idle')
 			}
-			function showFace(key) {
-				const src = faceSrc(key)
-				if (src === '') { face.style.display = 'none'; return false }
-				faceImg.src = src
-				face.style.display = 'block'
-				return true
-			}
+			/** 点一下有反应 ✓：换一只立绘 + 说一句 + 弹一下 ✓（素材缺了就只弹一下 ✓）。 */
 			function poke() {
-				const key = faceFor('poke')
-				showFace(key)
+				const key = spriteFor('poke')
+				showSprite(key)
 				const line = lineOf(key)
 				if (line !== '') { say.textContent = line; say.style.display = 'block' }
 				body.classList.remove('petpop')
 				void body.offsetWidth
 				body.classList.add('petpop')
-				window.setTimeout(hideFace, 2600)
+				window.setTimeout(hideSay, 2600)
 			}
-			/** 跟着事情变表情 ✓（发送成功 → happy ✓ / 报错 → error ✓ / 在跑 → busy ✓ / 闲着 → idle ✓）。 */
+			/** 跟着事情变 ✓（发送成功 → happy ✓ / 报错 → error ✓ / 在跑 → busy ✓ / 闲着 → idle ✓）。 */
 			function mood(name) {
-				const key = faceFor(name)
-				showFace(key)
+				const key = spriteFor(name)
+				showSprite(key)
 				// 只在"有事发生"的两档（成功 / 报错）说话 ✓ —— 闲着的时候别一直刷屏 ✗。
 				if (name === 'happy' || name === 'error') {
 					const line = lineOf(key)
 					if (line !== '') {
 						say.textContent = line
 						say.style.display = 'block'
-						window.setTimeout(hideFace, 2600)
+						window.setTimeout(hideSay, 2600)
 					}
 				}
 			}
 			window.dshPet = {
 				mood,
+				sprite: () => spriteKey,
 				state: () => ({ ...petState }),
 				set: (patch) => { Object.assign(petState, patch ?? {}); apply(); save() },
 				show: () => { petState.hidden = false; apply(); save() },
 			}
 			window.dshPetApply = (info) => {
 				pet = info
-				if (info !== null && info.available === true && typeof info.body === 'string' && info.body !== '') {
-					const sprite = document.getElementById('petSprite')
-					sprite.src = info.body
-					sprite.style.display = 'block'
-					document.getElementById('petFallback').style.display = 'none'
+				if (info !== null && info.available === true) {
+					const hasSprite = Object.keys(info.sprites ?? {}).length > 0 || typeof info.body === 'string'
+					if (hasSprite === true) {
+						showSprite('idle')
+						sprite.style.display = 'block'
+						document.getElementById('petFallback').style.display = 'none'
+					}
 				}
 				renderBar()
 			}
@@ -2790,7 +2793,9 @@
 			layer.addEventListener('pointerup', cancelHold)
 			const moods = document.getElementById('petMoods')
 			function renderBar() {
-				const keys = Object.keys((pet !== null && pet.available === true && pet.faces) ? pet.faces : {})
+				// 4.15.1：工具条上摆的是**立绘档** ✓（中性 / 开心 / 难受 / 吃饭 ✓）——
+				// 不再是那 8 张"贴在头顶圈里"的脸 ✗（用户原话：「非要在头顶搞个圈？」✓）。
+				const keys = Object.keys((pet !== null && pet.available === true && pet.sprites) ? pet.sprites : {})
 				moods.innerHTML = ''
 				if (keys.length === 0) {
 					const note = document.createElement('div')
@@ -2801,8 +2806,8 @@
 				}
 				for (const key of keys) {
 					const button = document.createElement('button')
-					button.textContent = String(pet?.faceLabels?.[key] ?? LABELS[key] ?? key)
-					button.addEventListener('click', () => { showFace(key); const line = lineOf(key); if (line !== '') { say.textContent = line; say.style.display = 'block' } })
+					button.textContent = String(LABELS[key] ?? key)
+					button.addEventListener('click', () => { showSprite(key); const line = lineOf(key); if (line !== '') { say.textContent = line; say.style.display = 'block' } })
 					moods.appendChild(button)
 				}
 			}
@@ -2816,12 +2821,21 @@
 				if (hit?.getAttribute?.('data-pet-close') === '1') bar.style.display = 'none'
 			})
 
-			/* 每隔一会儿"活一下" ✓：在跑 → 努力 ✓、闲着 → 吃饭 ✓（只换表情、不说话 ✓）。 */
+			/*
+			 * 🔴 4.15.1：**她自己会动** ✓ —— 空闲时在中性 / 吃饭 / 开心之间**整只轮换** ✓（清单里的 `idleCycle` ✓），
+			 * 在跑的时候换成 `busy`（现在是"中性 + 一句在跑了" ✓ —— 没有单独一张"努力"立绘 ✓，如实 ✓）。
+			 * 周期 7 秒 ✓：太快像抽风 ✗、太慢看不出在动 ✗。
+			 */
 			window.setInterval(() => {
 				if (petState.hidden === true) return
-			const running = (typeof window.dshPetRunning === 'function' && window.dshPetRunning() === true)
-				showFace(faceFor(running ? 'busy' : 'idle'))
-			}, 12000)
+				const running = (typeof window.dshPetRunning === 'function' && window.dshPetRunning() === true)
+				if (running === true) { showSprite(spriteFor('busy')); return }
+				const cycle = Array.isArray(pet?.moods?.idleCycle) && pet.moods.idleCycle.length > 0
+					? pet.moods.idleCycle.map(String)
+					: ['idle']
+				idleStep = (idleStep + 1) % cycle.length
+				showSprite(cycle[idleStep])
+			}, 7000)
 
 			apply()
 		})()
