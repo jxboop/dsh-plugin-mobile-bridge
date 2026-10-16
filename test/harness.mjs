@@ -2722,6 +2722,50 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	}
 }
 
+/* --- 4.15.0 桌宠（小鲸）-----------------------------------------------------
+ * 用户 2026-10-16：「帮我做一个手机桌宠，可以移动缩放大小和互动，参考这张图片，电脑端也要有」✓。
+ *
+ * ⚠️ 这一组要钉住的**不是**"能显示图" ✗，而是两条硬规矩 ✓：
+ *   ① **素材只从用户本机读** ✓（`~/.dsh/mobile-bridge-pets/<id>/` ✓）—— 插件包里**一个素材都不许有** ✗；
+ *   ② **路径一个字都不从 URL 拼** ✗ —— 文件名只来自我们自己读的 `pet.json` ✓，而且**只许取清单点过名的** ✓
+ *      ⇒ 所以这里先**真摆一只**（写一份 pet.json + 一张假立绘 ✓），再拿 `../` 去撞它 ✓
+ *      （不摆的话，那条穿越测试会因为"没有素材"而 404 —— **假绿** ✗）。
+ */
+{
+	const petHome = join(scratch, 'mobile-bridge-pets', 'probe-pet')
+	await mkdir(join(petHome, 'faces'), { recursive: true })
+	await writeFile(join(petHome, 'pet.json'), JSON.stringify({
+		version: 1, id: 'probe-pet', name: '探针', body: 'body.png', faces: { happy: 'faces/happy.png' },
+		mooded: true,
+	}), 'utf8')
+	await writeFile(join(petHome, 'body.png'), Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'))
+	await writeFile(join(petHome, 'faces', 'happy.png'), Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'))
+	// 清单里**没有**点名的文件：就算它真在目录里，也不许取 ✓
+	await writeFile(join(petHome, 'secret.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
+
+	check('桌宠清单要登录才读得到 ✓（素材是用户自己的东西 ✓）', (await fetch(`${base}/api/pet`)).status === 401)
+	const petBody = await (await fetch(`${base}/api/pet`, authed)).json()
+	check('🔴 有素材时如实说 `available:true` ✓，并把立绘与表情的地址给全 ✓',
+		petBody.available === true && petBody.name === '探针'
+		&& String(petBody.body).includes('api/pet/asset')
+		&& typeof petBody.faces?.happy === 'string',
+		JSON.stringify(petBody).slice(0, 120))
+	const sprite = await fetch(`${base}/${String(petBody.body)}`, authed)
+	check('立绘真取得到 ✓（application/octet-stream / image 都行 ✓ —— 这里只验"拿到了字节" ✓）',
+		sprite.status === 200 && (await sprite.arrayBuffer()).byteLength > 8, `HTTP ${sprite.status}`)
+	/*
+	 * 🔴 目录穿越：三种写法都必须 404 ✓ —— 而且**不能用"没有素材"来解释** ✓
+	 *（上面已经把素材摆上了 ✓，所以这几条要是回 200 就是真漏了 ✗）。
+	 */
+	for (const evil of ['../../mobile-bridge.json', '..\\..\\mobile-bridge.json', 'secret.png', 'faces/../../pet.json']) {
+		const res = await fetch(`${base}/api/pet/asset?name=${encodeURIComponent(evil)}`, authed)
+		check(`🔴 桌宠素材不许越过白名单/目录：${evil} → 404 ✓`,
+			res.status === 404, `HTTP ${res.status}`)
+	}
+	check('（自检）穿越用例确实打到了"有素材"那一支（否则它会因为"没有素材"而假绿 ✗）',
+		petBody.available === true, JSON.stringify({ available: petBody.available }))
+}
+
 /* --- 剪贴板 & 截屏（2.7.0 池子里的 ★4）-------------------------------------
  * 文档原话：「电脑截图 → 手机立刻看到 ✓；手机复制的文字 → 进电脑剪贴板 ✓」。
  * ⚠️ 这组用例会**动用户真实的剪贴板** —— 所以先备份、测完**还原** ✓（这是礼貌，也是纪律 ✓）。

@@ -206,6 +206,9 @@ let waitingPayload = { available: true, items: [] }
 const waitingRequests = []
 /** 4.14.1：迟到作答的请求体（断言它带的是 `callId` 而不是桥上那个临时 id ✓）。 */
 const lateAnswers = []
+/** 4.15.0：桌宠清单取了几次 + "这台机器没有素材"那一支的开关 ✓。 */
+let petFetches = 0
+let petStubMissing = false
 /**
  * 4.14.0：蓝牙设备列表的桩状态 ✓ —— 这是**可变的**（断开成功就把那台移出去 ✓）：
  * 桩必须跟着实现一起走 ✓，不然"断开完那一行变成未连接"这条断言就是假绿 ✗（桩永远说连着 ✓）。
@@ -539,6 +542,24 @@ async function stubFetch(input, options = {}) {
 	 * 桩照这个回 ✓，而且 `available:false` 那一支也要能演 ✓
 	 *（页面必须说"读不到" ✗ —— **不是**"没有提问" ✗，这两件事分不开就是这个项目最坏的一种假话 ✓）。
 	 */
+	if (path.startsWith('/api/pet/asset')) return jsonResponse({ ok: true })
+	/*
+	 * 4.15.0 桌宠 ✓：桩照服务端的口径回（立绘 + 表情地址 + 心情表 + 台词 ✓）。
+	 * 图片本身在 jsdom 里不会真解码 ✓ —— 这一组钉的是**浮层 / 拖动 / 缩放 / 反应 / 藏起来**这些行为 ✓。
+	 */
+	if (path.startsWith('/api/pet')) {
+		petFetches += 1
+		if (petStubMissing === true) return jsonResponse({ available: false, note: '还没有桌宠素材 ✓' })
+		return jsonResponse({
+			available: true, id: 'probe-pet', name: '小鲸', fullName: '小鲸 / DeepSeek酱',
+			body: 'api/pet/asset?name=body.png',
+			faces: { happy: 'api/pet/asset?name=faces%2Fhappy.png', eating: 'api/pet/asset?name=faces%2Feating.png' },
+			faceLabels: { happy: '开心', eating: '吃饭' },
+			palette: { main: '#1E3ABA' },
+			moods: { idle: 'eating', happy: 'happy', busy: 'eating', error: 'eating', poke: ['happy', 'eating'] },
+			lines: { happy: ['UNIQ-PET-HAPPY-7'], eating: ['UNIQ-PET-EAT-7'] },
+		})
+	}
 	if (path.startsWith('/api/waiting')) {
 		waitingRequests.push(path)
 		return jsonResponse(waitingPayload)
@@ -2763,6 +2784,73 @@ answerExpired = false
 		String($('ask').textContent).includes('另一条会话') === false
 		&& String($('ask').textContent).includes('读不到') === false,
 		String($('ask').textContent).replace(/\s+/g, ' ').slice(0, 40))
+}
+
+/*
+ * 🔴 4.15.0「桌宠」（用户 2026-10-16：「帮我做一个手机桌宠，可以移动缩放大小和互动」✓）。
+ * ⚠️ 这一组钉的是**行为** ✓（浮层在不在、拖了会不会动、缩了会不会大、点一下有没有反应、藏了找不找得回 ✓），
+ * 不是"页面里有没有那几行代码" ✗（那种断言 package 那边已经有了 ✓）。
+ */
+{
+	const layer = $('petLayer')
+	check('🔴 桌宠浮层在 ✓，而且浮在界面上（`position:fixed` ✓）—— 不在任何会被重渲染的容器里 ✓',
+		layer !== null && window.getComputedStyle(layer).position === 'fixed'
+		&& window.getComputedStyle(layer).display !== 'none',
+		`display=${window.getComputedStyle(layer).display} pos=${window.getComputedStyle(layer).position}`)
+	check('🔴 清单取回来了 ✓（`GET /api/pet` ✓），立绘也指到了素材地址 ✓',
+		petFetches >= 1 && String($('petSprite').getAttribute('src') ?? '').includes('api/pet/asset'),
+		`取了 ${petFetches} 次 / src=${String($('petSprite').getAttribute('src') ?? '').slice(0, 40)}`)
+
+	// 拖动：手指按住就走 ✓，而且**存进本机** ✓（换页/刷新还在原地 ✓）
+	const before = window.dshPet.state()
+	const fire = (type, x, y) => layer.dispatchEvent(new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y }))
+	fire('pointerdown', 600, 700)
+	fire('pointermove', 700, 760)
+	fire('pointerup', 700, 760)
+	const after = window.dshPet.state()
+	check('🔴 拖动：位置真的变了 ✓，而且**存进了本机** ✓（不是只在内存里 ✓）',
+		after.x > before.x && after.y > before.y
+		&& String(window.localStorage.getItem('dshm.pet') ?? '').includes('"x"'),
+		JSON.stringify({ before: { x: before.x, y: before.y }, after: { x: after.x, y: after.y } }))
+
+	// 缩放：右下那个把手 ✓（单手也能用 ✓）
+	const scaleBefore = window.dshPet.state().scale
+	const grip = $('petGrip')
+	grip.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }))
+	grip.dispatchEvent(new window.MouseEvent('pointermove', { bubbles: true, clientY: 560 }))
+	grip.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true, clientY: 560 }))
+	check('🔴 缩放：拖右下把手 → 真的变大了 ✓，而且存住 ✓',
+		window.dshPet.state().scale > scaleBefore
+		&& String(window.localStorage.getItem('dshm.pet') ?? '').includes('"scale"'),
+		`${scaleBefore} → ${window.dshPet.state().scale}`)
+
+	// 点一下有反应 ✓：换一张表情 + 说一句（素材里有 happy/eating 两张 ✓）
+	fire('pointerdown', 600, 700)
+	fire('pointerup', 600, 700)
+	await wait(80)
+	check('🔴 点一下有反应 ✓：弹出表情（圆形脸 ✓）并说一句话 ✓（台词来自清单 ✓）',
+		window.getComputedStyle($('petFace')).display !== 'none'
+		&& String($('petFaceImg').getAttribute('src') ?? '').includes('api/pet/asset')
+		&& String($('petSay').textContent).startsWith('UNIQ-PET-'),
+		JSON.stringify({ face: String($('petFaceImg').getAttribute('src') ?? '').slice(0, 40), say: String($('petSay').textContent) }))
+
+	// 事件心情 ✓：发成功 → happy（这条挂在真成功那一处 ✓）
+	window.dshPet.mood('happy')
+	await wait(60)
+	check('🔴 跟着事情变表情 ✓：`happy` 时表情与台词都换成清单里那一档 ✓（`UNIQ-PET-HAPPY-7` ✓）',
+		String($('petSay').textContent).includes('UNIQ-PET-HAPPY-7'), String($('petSay').textContent))
+
+	// 藏起来 + **有路回来** ✓（「更多」里那个 🐳 键 ✓）
+	click($('petToggle'))
+	await wait(60)
+	check('🔴 「🐳 桌宠」键：点一下藏起来 ✓（浮层消失 + 存进本机 ✓）',
+		window.dshPet.state().hidden === true && window.getComputedStyle(layer).display === 'none',
+		`hidden=${window.dshPet.state().hidden} display=${window.getComputedStyle(layer).display}`)
+	click($('petToggle'))
+	await wait(60)
+	check('🔴 再点一下**放出来** ✓（藏起来之后必须有路回来 ✗ —— 不然就是"按了再也找不到" ✓）',
+		window.dshPet.state().hidden === false && window.getComputedStyle(layer).display !== 'none',
+		`hidden=${window.dshPet.state().hidden}`)
 }
 
 /* --- 断线必须【说出来】，不能只把一个 9px 的圆点变红 --------------------- */

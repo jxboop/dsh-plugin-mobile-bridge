@@ -875,5 +875,51 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('void refreshWaiting()'))
 }
 
+/*
+ * 30) 🔴 **4.15.0「桌宠」**（用户 2026-10-16：「帮我做一个手机桌宠，可以移动缩放大小和互动，
+ * 参考这张图片，电脑端也要有」✓）。
+ *
+ * 这一条里最要紧的是**素材规矩** ✓（和"夜行星"那条一字不差 ✓）：
+ * 设定图、抠出来的表情、生成的立绘都是**用户自己的东西** ✓ —— **一个字节都不许进插件** ✗
+ *（进包就等于跟着 Release 发给所有人 ✓）。插件里只有**玩法** + 一只**代码画的兜底** ✓。
+ * 另外三条路径纪律也钉住：文件名只来自 `pet.json` ✓、逐段洗过 ✓、**只许取清单点过名的** ✓。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 用户素材**不进插件** ✓：`lib/` 下没有 body.png / faces/ / pet.json ✗（进包就是跟着发给所有人 ✗）',
+		existsSync(join(ROOT, 'lib', 'body.png')) === false
+		&& existsSync(join(ROOT, 'lib', 'faces')) === false
+		&& existsSync(join(ROOT, 'lib', 'pet.json')) === false
+		&& existsSync(join(ROOT, 'lib', 'pets')) === false)
+	check('🔴 素材只从**用户本机目录**读 ✓（`~/.dsh/mobile-bridge-pets/<id>/` ✓ —— 不是插件目录 ✗）',
+		host.includes("join(dshHome(), 'mobile-bridge-pets')") && host.includes('function petDir(id)'))
+	check('🔴 取素材走**白名单 + 逐段洗 + 落在目录内** ✓（文件名只来自 `pet.json` ✗ —— 不拿 URL 拼路径 ✗）',
+		host.includes('const allowed = new Set([meta.body, ...Object.values(meta.faces)])')
+		&& host.includes('allowed.has(wanted) === false')
+		&& host.includes('function petAssetRef(dir, rel)')
+		&& host.includes('full.startsWith(root + sep) === false'))
+	check('🔴 两条桌宠路由都**要登录** ✓（素材是用户自己的东西 ✓）',
+		/GET \/api\/pet'\)\s*return\s+guard\(\)/.test(host)
+		&& /GET \/api\/pet\/asset'\)\s*return\s+guard\(\)/.test(host))
+	check('🔴 没有素材时回 `available:false` + 一句人话 ✓（不是"读不到" ✗、也不假装有一只 ✗）',
+		host.includes('还没有桌宠素材 ✓ —— 把素材放进') && host.includes('available: false'))
+	check('🔴 手机上的桌宠是**静态节点** ✓（绝不挂在会被重渲染的容器里 ✗ —— 3.5.0 那个入口就是这么栽的 ✓）',
+		page.includes('<div id="petLayer"') && page.includes('#petLayer { position: fixed'))
+	check('🔴 三件事都在：拖动 ✓ / 缩放（把手 + 双指 ✓）/ 点一下有反应 ✓',
+		page.includes("layer.addEventListener('pointerdown'")
+		&& page.includes("grip.addEventListener('pointermove'")
+		&& page.includes("event.touches.length !== 2")
+		&& page.includes('function poke()'))
+	check('🔴 位置与大小**存本机** ✓（各端各一份 ✓），而且是**百分比 + 倍率** ✓（横竖屏切换不会跑到屏幕外 ✗）',
+		page.includes("localStorage.setItem('dshm.pet'") && page.includes('petState.x = Math.max(0.04'))
+	check('🔴 跟着事情变表情 ✓（发成功 → happy ✓ / 报错 → error ✓）—— 挂在**真成功 / 真失败**那两处 ✓',
+		page.includes("window.dshPet?.mood?.('happy')") && page.includes("window.dshPet?.mood?.('error')"))
+	check('🔴 没有素材也**不会空着** ✓：代码画的那只（内联 SVG ✓，插件自带 ✓）',
+		page.includes('id="petFallback"') && page.includes('<svg id="petFallback"'))
+	check('🔴 藏起来之后**有路回来** ✓（「更多」里那个 🐳 键 ✓ —— 不摆它就是"按了再也找不到" ✗）',
+		page.includes('id="petToggle"') && page.includes("$('petToggle').addEventListener"))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

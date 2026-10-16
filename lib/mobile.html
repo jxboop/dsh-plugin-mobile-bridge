@@ -2182,6 +2182,9 @@
 				<button class="moreitem" id="goalBtn"><span class="moreicon">🎯</span><b>目标</b><span class="morehint">这条会话在做什么、跑到第几轮</span></button>
 				<button class="moreitem" id="expBtn"><span class="moreicon">📤</span><b>导出</b><span class="morehint">把这段对话存成 Markdown</span></button>
 				<button class="moreitem" id="schBtn"><span class="moreicon">📅</span><b>定时</b><span class="morehint">到点把一句话发进这个会话</span></button>
+				<!-- 4.15.0：桌宠藏起来之后的**回来的路** ✓ —— 不摆这个键，藏起来就再也找不到了 ✗
+				     （那正是"按了没反应"的同一种病 ✓）。 -->
+				<button class="moreitem" id="petToggle"><span class="moreicon">🐳</span><b>桌宠</b><span class="morehint" id="petToggleHint">显示 / 藏起来（拖动、缩放、点一下有反应）</span></button>
 				<div class="moregroup">电脑</div>
 				<button class="moreitem" id="sysBtn"><span class="moreicon">📊</span><b>电脑状态</b><span class="morehint">CPU / 内存 / 磁盘 / 网速，一键结束卡死的 node</span></button>
 				<button class="moreitem" id="pcBtn"><span class="moreicon">🖥</span><b>控制电脑</b><span class="morehint">静音 / 音量 / 亮度 / 蓝牙 / 电量 / 联网</span></button>
@@ -2549,6 +2552,280 @@
 			</div>
 		</section>
 	</main>
+
+	<!-- 4.15.0 桌宠（小鲸 / DeepSeek酱 ✓）：浮在整个界面之上 ✓，而且是**静态节点** ✓ ——
+	     绝不挂在会被重渲染的容器里 ✗（3.5.0 那个入口就是这么栽的 ✓）。
+	     素材来自用户本机的 `~/.dsh/mobile-bridge-pets/<id>/` ✓（只在本机 ✓、不进插件 ✓、不进 Release ✓）；
+	     取不到素材时 `#petSprite` 不显示 ✗、退到**代码画的那只**（内联 SVG ✓，插件自带 ✓）。 -->
+	<style>
+		#petLayer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+		#petBody { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; touch-action: none;
+			-webkit-user-select: none; user-select: none; cursor: grab; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
+		#petBody img, #petBody svg { width: 100%; height: 100%; display: block; object-fit: contain; }
+		#petBody.petpop { animation: petpop .45s ease-out; }
+		@keyframes petpop { 0% { transform: translate(-50%, -50%) scale(1); } 35% { transform: translate(-50%, -56%) scale(1.09); } 100% { transform: translate(-50%, -50%) scale(1); } }
+		#petFace { position: absolute; transform: translate(-50%, -50%); pointer-events: none;
+			width: 74px; height: 74px; border-radius: 50%; overflow: hidden; border: 2px solid var(--field-line, #888);
+			background: var(--bg, #12182a); }
+		#petFace img { width: 100%; height: 100%; object-fit: cover; }
+		#petSay { position: absolute; transform: translate(-50%, -100%); max-width: 62vw; padding: 6px 10px; border-radius: 12px;
+			font-size: 13px; line-height: 1.4; background: var(--bg, #12182a); color: var(--text, #e8eef7);
+			border: 1px solid var(--field-line, #888); }
+		#petGrip { position: absolute; pointer-events: auto; width: 26px; height: 26px; border-radius: 50%;
+			display: flex; align-items: center; justify-content: center; font-size: 15px;
+			background: color-mix(in srgb, var(--accent, #6cf) 30%, transparent); color: var(--text, #fff);
+			border: 1px solid var(--field-line, #888); touch-action: none; }
+		#petBar { position: absolute; pointer-events: auto; max-width: 78vw; padding: 8px; border-radius: 14px;
+			background: color-mix(in srgb, var(--bg, #12182a) 82%, transparent); border: 1px solid var(--field-line, #888);
+			-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
+		#petMoods { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+		#petMoods button, .petbarrow button { font-size: 12px; padding: 5px 9px; border-radius: 10px;
+			background: color-mix(in srgb, var(--accent, #6cf) 18%, transparent); color: var(--text, #e8eef7);
+			border: 1px solid var(--field-line, #888); }
+		.petbarrow { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+		.petbarrow input[type=range] { flex: 1 1 auto; }
+	</style>
+	<div id="petLayer" style="display:none">
+		<div id="petBody" title="小鲸（按住拖走 / 长按出菜单）">
+			<img id="petSprite" alt="小鲸" draggable="false" style="display:none">
+			<svg id="petFallback" viewBox="0 0 120 160" aria-hidden="true">
+				<ellipse cx="60" cy="150" rx="30" ry="6" fill="#000" opacity=".18"/>
+				<path d="M18 96 C6 118 18 146 34 150 C24 128 26 110 34 100 Z" fill="#1E3ABA"/>
+				<path d="M102 96 C114 118 102 146 86 150 C96 128 94 110 86 100 Z" fill="#1E3ABA"/>
+				<path d="M60 24 C34 24 24 44 24 66 C24 92 40 108 60 108 C80 108 96 92 96 66 C96 44 86 24 60 24 Z" fill="#1E3ABA"/>
+				<path d="M30 62 C22 58 20 50 26 46 C32 42 40 46 42 52 Z" fill="#3B82F6"/>
+				<path d="M90 62 C98 58 100 50 94 46 C88 42 80 46 78 52 Z" fill="#3B82F6"/>
+				<ellipse cx="60" cy="72" rx="24" ry="26" fill="#FDF3EA"/>
+				<path d="M36 60 C40 46 52 38 60 38 C68 38 80 46 84 60 C74 52 66 50 60 50 C54 50 46 52 36 60 Z" fill="#16307F"/>
+				<ellipse cx="50" cy="72" rx="5" ry="6" fill="#2C63C8"/><ellipse cx="70" cy="72" rx="5" ry="6" fill="#2C63C8"/>
+				<circle cx="51.5" cy="70" r="1.6" fill="#fff"/><circle cx="71.5" cy="70" r="1.6" fill="#fff"/>
+				<path d="M56 86 Q60 90 64 86" stroke="#C77" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+				<path d="M28 104 C28 96 44 92 60 92 C76 92 92 96 92 104 L92 128 C92 136 76 142 60 142 C44 142 28 136 28 128 Z" fill="#F4F6F8"/>
+				<path d="M34 108 C34 102 46 98 60 98 C74 98 86 102 86 108 L86 126 C86 132 74 136 60 136 C46 136 34 132 34 126 Z" fill="#233C86"/>
+				<path d="M88 132 C104 126 110 112 106 100 C116 110 116 134 100 142 C94 145 88 142 88 132 Z" fill="#3B82F6"/>
+				<circle cx="60" cy="112" r="4" fill="#F5C542"/>
+			</svg>
+		</div>
+		<div id="petFace" style="display:none"><img id="petFaceImg" alt=""></div>
+		<div id="petSay" style="display:none"></div>
+		<div id="petGrip" title="拖我改大小">⤡</div>
+		<div id="petBar" style="display:none">
+			<div id="petMoods"></div>
+			<div class="petbarrow"><span style="font-size:12px">大小</span><input id="petSize" type="range" min="60" max="220" step="5"></div>
+			<div class="petbarrow">
+				<button data-pet-hide="1">藏起来</button>
+				<button data-pet-close="1">收起</button>
+			</div>
+		</div>
+	</div>
+	<script>
+		/*
+		 * 4.15.0 桌宠：拖动 ✓ / 缩放（把手 + 双指 ✓）/ 点一下有反应 ✓ / 跟着事情变表情 ✓。
+		 * ⚠️ 独立 IIFE ✓（不跟主脚本抢作用域 ✓）；对外只暴露 `window.dshPet` 与 `window.dshPetApply` ✓；
+		 * 位置与大小用**百分比 + 倍率**存本机 ✓（横竖屏切换不会跑到屏幕外 ✗）。
+		 */
+		(function () {
+			const layer = document.getElementById('petLayer')
+			if (layer === null) return
+			let pet = null
+			let petState = { x: 0.72, y: 0.62, scale: 1, hidden: false }
+			try {
+				const saved = JSON.parse(window.localStorage.getItem('dshm.pet') ?? '{}')
+				if (saved !== null && typeof saved === 'object') petState = Object.assign(petState, saved)
+			} catch { /* 无痕模式：用默认 ✓ */ }
+			const save = () => { try { window.localStorage.setItem('dshm.pet', JSON.stringify(petState)) } catch { /* 存不下就算了 ✓ */ } }
+			const body = document.getElementById('petBody')
+			const grip = document.getElementById('petGrip')
+			const bar = document.getElementById('petBar')
+			const face = document.getElementById('petFace')
+			const faceImg = document.getElementById('petFaceImg')
+			const say = document.getElementById('petSay')
+			const LABELS = { happy: '开心', eating: '吃饭', working: '努力', upset: '懊恼', wronged: '委屈', shy: '害羞', angry: '生气', content: '满足' }
+
+			function clamp() {
+				petState.x = Math.max(0.04, Math.min(0.96, petState.x))
+				petState.y = Math.max(0.06, Math.min(0.94, petState.y))
+				petState.scale = Math.max(0.5, Math.min(2.4, petState.scale))
+			}
+			function apply() {
+				clamp()
+				layer.style.display = petState.hidden === true ? 'none' : 'block'
+				const width = 132 * petState.scale
+				body.style.width = width + 'px'
+				body.style.height = (width * 4 / 3) + 'px'
+				body.style.left = (petState.x * 100) + '%'
+				body.style.top = (petState.y * 100) + '%'
+				face.style.left = (petState.x * 100) + '%'
+				face.style.top = ((petState.y * 100) - 11 * petState.scale) + '%'
+				say.style.left = (petState.x * 100) + '%'
+				say.style.top = ((petState.y * 100) - 22 * petState.scale) + '%'
+				grip.style.left = ((petState.x * 100) + 7 * petState.scale) + '%'
+				grip.style.top = ((petState.y * 100) + 9 * petState.scale) + '%'
+				bar.style.left = '4vw'
+				bar.style.bottom = '14vh'
+			}
+			function hideFace() { face.style.display = 'none'; say.style.display = 'none' }
+
+			/* ---------- 拖动（指针事件 ✓ + 指针捕获 ✓ —— 手指划出元素也不会丢 ✓） ---------- */
+			let drag = null
+			layer.addEventListener('pointerdown', (event) => {
+				if (bar.contains(event.target) === true) return
+				if (event.target === grip) return
+				drag = { id: event.pointerId, x: event.clientX, y: event.clientY, sx: petState.x, sy: petState.y, moved: false, at: Date.now() }
+				try { layer.setPointerCapture(event.pointerId) } catch { /* 不支持就算了 ✓ */ }
+			})
+			layer.addEventListener('pointermove', (event) => {
+				if (drag === null || drag.id !== event.pointerId) return
+				const dx = (event.clientX - drag.x) / window.innerWidth
+				const dy = (event.clientY - drag.y) / window.innerHeight
+				if (Math.abs(dx) > 0.012 || Math.abs(dy) > 0.012) drag.moved = true
+				petState.x = drag.sx + dx
+				petState.y = drag.sy + dy
+				apply()
+			})
+			layer.addEventListener('pointerup', (event) => {
+				if (drag === null || drag.id !== event.pointerId) return
+				const tap = drag.moved !== true && Date.now() - drag.at < 600
+				drag = null
+				save()
+				if (tap === true) poke()
+			})
+			layer.addEventListener('pointercancel', () => { drag = null })
+
+			/* ---------- 缩放：右下把手 ✓ + 双指捏合 ✓ ---------- */
+			let gripStart = null
+			grip.addEventListener('pointerdown', (event) => {
+				event.stopPropagation()
+				gripStart = { y: event.clientY, s: petState.scale }
+				try { grip.setPointerCapture(event.pointerId) } catch { /* 同上 */ }
+			})
+			grip.addEventListener('pointermove', (event) => {
+				if (gripStart === null) return
+				petState.scale = gripStart.s + ((event.clientY - gripStart.y) / 90)
+				apply()
+			})
+			grip.addEventListener('pointerup', () => { if (gripStart !== null) { gripStart = null; save() } })
+			let pinch = null
+			layer.addEventListener('touchstart', (event) => {
+				if (event.touches.length !== 2) { pinch = null; return }
+				pinch = { d: Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY), s: petState.scale }
+			}, { passive: true })
+			layer.addEventListener('touchmove', (event) => {
+				if (pinch === null || event.touches.length !== 2 || pinch.d <= 0) return
+				const d = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY)
+				petState.scale = pinch.s * (d / pinch.d)
+				apply()
+			}, { passive: true })
+			layer.addEventListener('touchend', () => { if (pinch !== null) { pinch = null; save() } }, { passive: true })
+
+			/* ---------- 表情 / 心情 ---------- */
+			const faceSrc = (key) => (pet !== null && pet.available === true && pet.faces) ? String(pet.faces[key] ?? '') : ''
+			const lineOf = (key) => {
+				const pool = pet?.lines?.[key]
+				return Array.isArray(pool) && pool.length > 0 ? String(pool[Math.floor(Math.random() * pool.length)]) : ''
+			}
+			function faceFor(mood) {
+				const table = pet?.moods ?? {}
+				if (mood === 'poke') {
+					const pool = Array.isArray(table.poke) && table.poke.length > 0 ? table.poke : ['happy', 'content']
+					return String(pool[Math.floor(Math.random() * pool.length)])
+				}
+				return typeof table[mood] === 'string' ? table[mood] : mood
+			}
+			function showFace(key) {
+				const src = faceSrc(key)
+				if (src === '') { face.style.display = 'none'; return false }
+				faceImg.src = src
+				face.style.display = 'block'
+				return true
+			}
+			function poke() {
+				const key = faceFor('poke')
+				showFace(key)
+				const line = lineOf(key)
+				if (line !== '') { say.textContent = line; say.style.display = 'block' }
+				body.classList.remove('petpop')
+				void body.offsetWidth
+				body.classList.add('petpop')
+				window.setTimeout(hideFace, 2600)
+			}
+			/** 跟着事情变表情 ✓（发送成功 → happy ✓ / 报错 → error ✓ / 在跑 → busy ✓ / 闲着 → idle ✓）。 */
+			function mood(name) {
+				const key = faceFor(name)
+				showFace(key)
+				// 只在"有事发生"的两档（成功 / 报错）说话 ✓ —— 闲着的时候别一直刷屏 ✗。
+				if (name === 'happy' || name === 'error') {
+					const line = lineOf(key)
+					if (line !== '') {
+						say.textContent = line
+						say.style.display = 'block'
+						window.setTimeout(hideFace, 2600)
+					}
+				}
+			}
+			window.dshPet = {
+				mood,
+				state: () => ({ ...petState }),
+				set: (patch) => { Object.assign(petState, patch ?? {}); apply(); save() },
+				show: () => { petState.hidden = false; apply(); save() },
+			}
+			window.dshPetApply = (info) => {
+				pet = info
+				if (info !== null && info.available === true && typeof info.body === 'string' && info.body !== '') {
+					const sprite = document.getElementById('petSprite')
+					sprite.src = info.body
+					sprite.style.display = 'block'
+					document.getElementById('petFallback').style.display = 'none'
+				}
+				renderBar()
+			}
+
+			/* ---------- 长按出小工具条（换表情 / 大小 / 藏起来 ✓） ---------- */
+			let hold = null
+			body.addEventListener('pointerdown', () => {
+				hold = window.setTimeout(() => { hold = null; bar.style.display = bar.style.display === 'none' ? 'block' : 'none' }, 650)
+			})
+			const cancelHold = () => { if (hold !== null) { window.clearTimeout(hold); hold = null } }
+			layer.addEventListener('pointermove', cancelHold)
+			layer.addEventListener('pointerup', cancelHold)
+			const moods = document.getElementById('petMoods')
+			function renderBar() {
+				const keys = Object.keys((pet !== null && pet.available === true && pet.faces) ? pet.faces : {})
+				moods.innerHTML = ''
+				if (keys.length === 0) {
+					const note = document.createElement('div')
+					note.style.fontSize = '12px'
+					note.textContent = '（还没有桌宠素材 —— 现在是代码画的那只 ✓）'
+					moods.appendChild(note)
+					return
+				}
+				for (const key of keys) {
+					const button = document.createElement('button')
+					button.textContent = String(pet?.faceLabels?.[key] ?? LABELS[key] ?? key)
+					button.addEventListener('click', () => { showFace(key); const line = lineOf(key); if (line !== '') { say.textContent = line; say.style.display = 'block' } })
+					moods.appendChild(button)
+				}
+			}
+			const sizeInput = document.getElementById('petSize')
+			sizeInput.value = String(Math.round(petState.scale * 100))
+			sizeInput.addEventListener('input', () => { petState.scale = Number(sizeInput.value) / 100; apply() })
+			sizeInput.addEventListener('change', save)
+			layer.addEventListener('click', (event) => {
+				const hit = event.target
+				if (hit?.getAttribute?.('data-pet-hide') === '1') { petState.hidden = true; apply(); save(); bar.style.display = 'none' }
+				if (hit?.getAttribute?.('data-pet-close') === '1') bar.style.display = 'none'
+			})
+
+			/* 每隔一会儿"活一下" ✓：在跑 → 努力 ✓、闲着 → 吃饭 ✓（只换表情、不说话 ✓）。 */
+			window.setInterval(() => {
+				if (petState.hidden === true) return
+			const running = (typeof window.dshPetRunning === 'function' && window.dshPetRunning() === true)
+				showFace(faceFor(running ? 'busy' : 'idle'))
+			}, 12000)
+
+			apply()
+		})()
+	</script>
 
 	<!-- 提问/审批卡片放在 main【外面】：它属于所有页签。
 	     放在 #view-task 里面时，用户切到「余额」就完全看不到提问 —— 而 agent
@@ -6831,8 +7108,12 @@
 			}).then((result) => {
 				// 2.7.0 ★8：发出去了就从离线箱里撤掉 ✓（重试路径同一条靠 requestId 认领 ✓）。
 				outboxRemove(clientId)
+				// 4.15.0 桌宠：**发出去了** → 开心一下 ✓（真成功才笑 ✓ —— 不拿"点了发送"当成功 ✗）。
+				window.dshPet?.mood?.('happy')
 				return result
 			}).catch((error) => {
+				// 4.15.0 桌宠：**失败** → 懊恼一下 ✓（这是真出了错 ✓，不是"点了发送" ✓）。
+				window.dshPet?.mood?.('error')
 				// 2.7.0 ★8：**只**收网络层失败 ✓ —— 403/400 是"发不出去"，进箱只会一直卡着 ✗。
 				if (isOfflineError(error)) {
 					outboxAdd({ clientId, sessionId: target, text: body, images: inlineImages, fileRefs: refs })
@@ -12066,6 +12347,31 @@
 	 */
 	$('moreBtn').addEventListener('click', () => show($('moreopen')))
 	$('moreBack').addEventListener('click', () => hide($('moreopen')))
+	/*
+	 * 🔴 4.15.0 桌宠的**主脚本这一半** ✓（浮层与拖动缩放都在上面那个独立 IIFE 里 ✓）：
+	 *   ① 开机拉一次清单 ✓（`available:false` 时照实交给它 —— 那边会退到代码画的那只 ✓）；
+	 *   ② 「🐳 桌宠」那个键是**藏起来之后回来的路** ✓（不摆它，藏起来就再也找不到了 ✗）；
+	 *   ③ 把"在不在跑"喂给它 ✓ —— 它读不到主脚本里的 `state.running` ✗，所以这儿开一个小口子 ✓。
+	 */
+	window.dshPetRunning = () => state.running === true
+	async function loadPet() {
+		try {
+			window.dshPetApply?.(await api('api/pet'))
+		} catch {
+			// 读不到照样要有一只 ✓（代码画的那只 ✓）—— 所以这里**什么都不用做** ✓，只是别把它当错误喊出来 ✗。
+			window.dshPetApply?.(null)
+		}
+	}
+	if ($('petToggle') !== null) {
+		$('petToggle').addEventListener('click', () => {
+			const now = window.dshPet?.state?.().hidden === true
+			if (now) window.dshPet?.show?.()
+			else window.dshPet?.set?.({ hidden: true })
+			const hint = $('petToggleHint')
+			if (hint !== null) hint.textContent = now ? '已经放出来了 ✓（拖动 / 缩放 / 点一下有反应）' : '已经藏起来了 ✓（点这里再放出来）'
+		})
+	}
+	void loadPet()
 	$('pcBtn').addEventListener('click', () => { show($('pcopen')); void loadPc() })
 	$('pcBack').addEventListener('click', () => hide($('pcopen')))
 	$('pcRefresh').addEventListener('click', () => { pcPanel.state = null; void loadPc() })
