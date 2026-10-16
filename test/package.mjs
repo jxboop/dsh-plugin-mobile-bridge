@@ -946,5 +946,29 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('id="petToggle"') && page.includes("$('petToggle').addEventListener"))
 }
 
+/*
+ * 31) 🔴 **4.16.0「侧栏预览」**（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓ ——
+ * 电脑端 GUI 的**右侧栏**能挂着文档边读边聊 ✓，而手机这边原来只有**整屏纸** ✗，
+ * 打开文档就把对话整个盖住 ✓）。
+ *
+ * 两条形态都要钉住 ✓（窄屏 / 宽屏各一个 ✓），以及"**只盖一部分**"这个本质 ✓ ——
+ * 那才是"侧栏"的意思 ✓（整屏就不叫侧栏了 ✗）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const css = /#docopen\.doc-split \{([^}]*)\}/.exec(page)?.[1] ?? ''
+	check('🔴 窄屏（手机竖屏）：文档占**下面 58vh** ✓（`inset: auto 0 0 0` ✓ —— **上面那半留给对话** ✓）',
+		css.includes('inset: auto 0 0 0') && css.includes('height: 58vh'))
+	check('🔴 宽屏（≥760px，横屏 / 平板）：就是**右侧栏** ✓（贴右边 44% 宽、整屏高 ✓）',
+		/@media \(min-width: 760px\) \{[\s\S]{0,200}#docopen\.doc-split \{ inset: 0 0 0 auto; width: 44%; height: 100%/.test(page))
+	check('🔴 开关在这台手机上**记得住** ✓（`dshm.docSplit` ✓ —— 下次打开文档还是那个形态 ✓）',
+		page.includes("localStorage.getItem('dshm.docSplit')")
+		&& page.includes("localStorage.setItem('dshm.docSplit'"))
+	check('🔴 打开文档时**照着记着的形态**摆 ✓（`applyDocSplit(docSplitOn())` ✓ —— 不许每次悄悄回全屏 ✗）',
+		page.includes('applyDocSplit(docSplitOn())'))
+	check('🔴 「返回」**不重置形态** ✓（用户选了侧栏就该记住 ✓ —— 顺手改掉人家的选择是最烦的那种 ✗）',
+		/\$\('docBack'\)\.addEventListener\('click', \(\) => \{ hide\(\$\('docopen'\)\); \$\('docBody'\)\.textContent = '' \}\)/.test(page))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

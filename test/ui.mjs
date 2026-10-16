@@ -3343,6 +3343,38 @@ check('说明指向了下拉框或读取状态',
 		window.document.body.className)
 }
 
+/*
+ * 🔴 4.16.0「侧栏预览」（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓ ——
+ * 电脑端 GUI 的右侧栏能挂着文档边读边聊 ✓，手机这边原来只有**整屏纸** ✗）。
+ * 判据钉在**行为**上 ✓：默认整屏 ✓ → 点「侧栏」变成**只盖一部分**（上面留给你说话 ✓）→
+ * 选择**记在本机** ✓ → 再打开一份文档还是侧栏 ✓（不许悄悄回全屏 ✗）。
+ */
+{
+	// 起点：本机标记清成"整屏" ✓（页面加载时还没应用过形态 ✓ —— 类要等打开文档/点开关才加 ✓）
+	window.localStorage.setItem('dshm.docSplit', '0')
+	check('（前置）没打开文档时，纸面上还没有 `doc-split` 类，按钮写着「侧栏」✓',
+		$('docopen').classList.contains('doc-split') === false
+		&& String($('docSplit').textContent).includes('侧栏'),
+		`class=${$('docopen').className} btn=${$('docSplit').textContent}`)
+
+	click($('docSplit'))
+	await wait(80)
+	check('🔴 点「侧栏」：纸面加上 `doc-split`（CSS 里那条"只盖下面 58vh / 宽屏贴右边 44%"才生效 ✓）、'
+		+ '按钮变成「全屏」✓ —— 上面那半留给你说话 ✓',
+		$('docopen').classList.contains('doc-split') === true
+		&& String($('docSplit').textContent).includes('全屏'),
+		`class=${$('docopen').className} btn=${$('docSplit').textContent}`)
+	check('🔴 而且选择**记在这台手机上** ✓（`dshm.docSplit=1` ✓ —— 不是只在内存里 ✓，下次打开文档还是侧栏 ✓）',
+		window.localStorage.getItem('dshm.docSplit') === '1',
+		String(window.localStorage.getItem('dshm.docSplit')))
+	click($('docSplit'))
+	await wait(80)
+	check('再点一下回**整屏** ✓（开关两个方向都生效 ✓）',
+		$('docopen').classList.contains('doc-split') === false
+		&& window.localStorage.getItem('dshm.docSplit') === '0',
+		`class=${$('docopen').className} flag=${window.localStorage.getItem('dshm.docSplit')}`)
+}
+
 /* --- 换背景：手机自己挑一张（以前要 agent 改配置 + 重载插件） ------------- */
 /*
  * 现场：想换背景得「把文件发给桥 → 让 agent 把文件名写进 mobile-bridge.json 的

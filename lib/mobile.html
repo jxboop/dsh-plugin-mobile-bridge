@@ -1240,6 +1240,22 @@
 		background: color-mix(in srgb, var(--bg) 88%, transparent);
 	}
 	/*
+	 * 🔴 4.16.0「侧栏预览」（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓ ——
+	 * 电脑端 GUI 的右侧栏挂文档预览 ✓，手机这边原来只有**整屏纸** ✗）。
+	 *
+	 * 手机上真正的"侧栏"不能是窄窄一条 ✗（390px 宽屏上 30% 只有 117px ✓，读文档等于不能用 ✗），
+	 * 所以分两种宽度各给一个形态 ✓：
+	 *   · **窄屏（手机竖屏）**：文档占**下面 ~58vh** ✓ —— 上面那半留给你和 agent 说话 ✓
+	 *     （"边看文档边聊"就是这一条 ✓）；
+	 *   · **宽屏（≥760px，横屏 / 平板）**：就是**右侧栏** ✓ —— 贴右边 44% 宽、整屏高 ✓。
+	 * 两种形态都**只盖住一部分** ✓ → 对话区照旧能滚、能发消息 ✓（这才是"侧栏"的意思 ✓）。
+	 */
+	#docopen.doc-split { inset: auto 0 0 0; height: 58vh; border-radius: 16px 16px 0 0; box-shadow: 0 -12px 30px rgba(0,0,0,.4); }
+	#docopen.doc-split .sheetbar { padding-top: 10px; }
+	@media (min-width: 760px) {
+		#docopen.doc-split { inset: 0 0 0 auto; width: 44%; height: 100%; border-radius: 16px 0 0 16px; box-shadow: -12px 0 30px rgba(0,0,0,.4); }
+	}
+	/*
 	 * 说明页自己的背景（用户 2026-10-11：「给说明加一个背景，贴合我们手机桥的氛围」）：
 	 * 深色渐变打底 + 一点点"连线/桥"的网格（两端点 + 中间那条线，就是这个插件的隐喻：
 	 * 手机 ←→ 电脑）。只加在 #welcome 上，别的面板和你的壁纸逻辑一个字都不动 ✓。
@@ -1973,6 +1989,11 @@
 				<button class="iconbtn" id="docBack">← 返回</button>
 				<span class="title" id="docTitle">文档</span>
 				<span class="spacer"></span>
+				<!-- 🔴 4.16.0「侧栏预览」✓（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓ ——
+				     电脑端 GUI 的右侧栏挂文档预览 ✓，手机这边原来只有整屏纸 ✗）。
+				     窄屏 = **下半屏分屏**（上面那半留给你和 agent 说话 ✓）；
+				     宽屏（≥760px）= **右侧栏** ✓。选择**记在这台手机上** ✓。 -->
+				<button class="iconbtn" id="docSplit" title="侧栏预览：边看文档边聊">侧栏</button>
 				<!-- 下载**必须开新标签**：手机上（尤其 iOS）`download` 属性会被忽略，直接在当前页
 				     打开文件 → 我们的页面被顶掉、连返回按钮都没了 ✗（用户现场：「下载之后就没有
 				     返回按钮了」）。加 target=_blank 后当前页原地不动，退回来还是原来那样 ✓。
@@ -13203,6 +13224,26 @@
 	let docPathNow = ''
 	let docNameNow = ''
 
+	/**
+	 * 🔴 4.16.0：**侧栏预览**（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓）。
+	 *
+	 * 为什么要有它：电脑端 GUI 的**右侧栏**能挂着文档一边读一边聊 ✓，手机这边原来只有**整屏纸** ✗
+	 *（打开文档就把对话整个盖住 ✓ —— 读半句想插一句就得先返回来 ✗）。
+	 * 现在两种宽度各一个形态 ✓（见 CSS 里那段 ✓），开关**记在这台手机上** ✓。
+	 */
+	function docSplitOn() {
+		try { return window.localStorage.getItem('dshm.docSplit') === '1' } catch { return false }
+	}
+	function applyDocSplit(on) {
+		const sheet = $('docopen')
+		if (sheet === null) return
+		sheet.classList.toggle('doc-split', on === true)
+		const button = $('docSplit')
+		if (button !== null) button.textContent = on === true ? '全屏' : '侧栏'
+		try { window.localStorage.setItem('dshm.docSplit', on === true ? '1' : '0') } catch { /* 无痕模式 ✓ */ }
+	}
+	$('docSplit')?.addEventListener('click', () => { applyDocSplit(docSplitOn() !== true) })
+
 	async function openDoc(path, name) {
 		const body = $('docBody')
 		const src = 'api/file?path=' + encodeURIComponent(path)
@@ -13215,6 +13256,8 @@
 		$('docDownload').setAttribute('download', name === '' ? 'file' : name)
 		$('docOpenTab').setAttribute('href', src + '&inline=1')
 		body.textContent = '正在打开…'
+		// 4.16.0：打开时**照这台手机上记着的形态**摆 ✓（侧栏 / 全屏 ✓）—— 别每次都快照回全屏 ✗。
+		applyDocSplit(docSplitOn())
 		show($('docopen'))
 		const kind = docKindOf(name === '' ? path : name)
 		if (kind === 'image') { body.innerHTML = '<img src="' + src + '" alt="">'; return }
@@ -13247,6 +13290,7 @@
 		}
 	}
 
+	// ⚠️ 返回**不重置形态** ✗ —— 用户选了「侧栏」就该记住 ✓（下一份文档还是侧栏 ✓）；类留着无害 ✓。
 	$('docBack').addEventListener('click', () => { hide($('docopen')); $('docBody').textContent = '' })
 
 	/* ------------------------------------------------- 3.5.0：这条会话的「目标」（只读） */
