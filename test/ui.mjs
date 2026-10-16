@@ -198,6 +198,20 @@ const powerRequests = []
 const wakeRequests = []
 /** 4.13.0：桩里"那个唤醒任务在不在"的开关 —— 设成功就变成在 ✓，取消就变回不在 ✓。 */
 let wakeTaskExists = false
+/**
+ * 4.14.0：蓝牙设备列表的桩状态 ✓ —— 这是**可变的**（断开成功就把那台移出去 ✓）：
+ * 桩必须跟着实现一起走 ✓，不然"断开完那一行变成未连接"这条断言就是假绿 ✗（桩永远说连着 ✓）。
+ * ⚠️ 特意留了两台"不好办"的：一台**没有地址**（页面不许给它摆「断开」✗）、
+ * 一台**地址存在但断不掉**（页面必须照实说没断成 ✗ —— 真机上 iPhone 就是这样 ✓）。
+ */
+const btConnected = new Set(['542A438FA1D7', 'FFFFFFFFFFFF'])
+const btDevices = () => ([
+	{ name: '杰的AirPods', address: '542A438FA1D7', connected: btConnected.has('542A438FA1D7') },
+	{ name: 'WI-C200', address: '907A584103BA', connected: false },
+	// ⚠️ 这一台**故意**是"连着但读不到地址" ✓ —— 页面**不许**给它摆「断开」✗（没目标 = 死键 ✓）。
+	{ name: '老设备（读不到地址）', connected: true },
+	{ name: '断不掉的那台', address: 'FFFFFFFFFFFF', connected: btConnected.has('FFFFFFFFFFFF') },
+])
 /** 2.7.0 ★4：发到电脑剪贴板的请求体。 */
 const clipboardWrites = []
 /** 2.7.0 ★6：定时任务的请求体。 */
@@ -613,12 +627,30 @@ async function stubFetch(input, options = {}) {
 	if (path === '/api/pc' && String(options?.method ?? 'GET').toUpperCase() === 'POST') {
 		const body = JSON.parse(String(options?.body ?? '{}'))
 		pcRequests.push(body)
-		if (body.action === 'bluetoothDevices') return jsonResponse({ ok: true, action: body.action, bluetooth: { devices: [{ name: '杰的AirPods', connected: true }, { name: 'WI-C200', connected: false }] } })
+		if (body.action === 'bluetoothDevices') return jsonResponse({ ok: true, action: body.action, bluetooth: { devices: btDevices() } })
 		if (body.action === 'mute' || body.action === 'unmute') return jsonResponse({ ok: true, action: body.action, audio: { volume: 37, muted: body.action === 'mute' } })
 		if (body.action === 'volumeUp' || body.action === 'volumeDown') return jsonResponse({ ok: true, action: body.action, audio: { volume: body.action === 'volumeUp' ? 42 : 32, muted: false } })
 		if (body.action === 'brightnessUp' || body.action === 'brightnessDown') return jsonResponse({ ok: true, action: body.action, brightness: { supported: true, level: body.action === 'brightnessUp' ? 90 : 70 } })
 		if (body.action === 'bluetoothSettings') return jsonResponse({ ok: true, action: body.action, message: '已经在电脑上打开蓝牙设置 —— 连接 / 配对新设备在那儿点一下 ✓' })
 		if (body.action === 'bluetoothOn' || body.action === 'bluetoothOff') return jsonResponse({ ok: true, action: body.action, radio: body.action === 'bluetoothOn' ? 'On' : 'Off' })
+		/*
+		 * 🔴 4.14.0「断开某一台」✓：桩要照**服务端的真实口径**回 ✓ —— 而且两种答案都要能演 ✓：
+		 *   · `FFFFFFFFFFFF`（"断不掉的那台"）→ `ok:false` + **真机上 iPhone 就是这个结果** ✓
+		 *     （试了 14 种服务都不断 ✓）→ 页面必须照实说"没能断开" ✗；
+		 *   · 别的地址 → `ok:true`（回读确认 ✓）→ 之后 `bluetoothDevices` 要能读到**它真的变成未连接** ✓
+		 *     （桩落后于实现 = 假绿 ✗ —— 所以这里真的改状态 ✓）。
+		 */
+		if (body.action === 'bluetoothDisconnect') {
+			const address = String(body.device ?? '')
+			if (address === 'FFFFFFFFFFFF') {
+				return jsonResponse({ ok: false, action: body.action, state: 'refused', service: '', message: 'UNIQ-BT-REFUSED-42 没能断开 ✗ —— 试了 12 种蓝牙服务，它还是连着 ✓' })
+			}
+			if (btConnected.has(address) === false) {
+				return jsonResponse({ ok: false, action: body.action, state: 'not-paired', service: '', message: 'UNIQ-BT-NOTPAIRED-42 这台设备不在已配对的列表里 ✓ —— 什么都没有断 ✓' })
+			}
+			btConnected.delete(address)
+			return jsonResponse({ ok: true, action: body.action, state: 'disconnected', service: '111E', message: 'UNIQ-BT-OFF-42 已经断开了 ✓（回读确认过 ✓；起作用的是 111E 服务 ✓）' })
+		}
 		return jsonResponse({ ok: true, action: body.action, audio: { volume: 37, muted: false }, brightness: { supported: true, level: 80 } })
 	}
 	if (path === '/api/pc') {
@@ -4794,6 +4826,46 @@ check('说明指向了下拉框或读取状态',
 	check('🔴 设备列表里**点一台** → 发的是「打开蓝牙设置」✓（连接做不到，就给一下点到设置 ✓）',
 		pcRequests.length === 1 && pcRequests[0].action === 'bluetoothSettings' && String(pcRequests[0].device ?? '').length > 0,
 		JSON.stringify(pcRequests[0] ?? null))
+	/*
+	 * 🔴 4.14.0「断开某一台」（用户 2026-10-16：「还有蓝牙功能的断开设备连接，现在只有连接设备」✓）。
+	 * ⚠️ 这一组钉的是**三条纪律** ✓，不是"按钮在不在" ✗：
+	 *   ① 只有「已连接 **且有地址**」的行才摆「断开」✓（没地址 = 没目标 = 不摆死键 ✗）；
+	 *   ② 点「断开」**只发一条** ✓ —— 那一行里嵌着按钮、而它也在 `[data-bt]` 行**里面** ✓，
+	 *      判据顺序写反就会**同时**发"断开 + 打开设置"✗（3.5.0 那个"一次点击两条请求"的同款坑 ✓）；
+	 *   ③ 断**不掉**时**照服务端原话说** ✓（真机实测：iPhone 试了 14 种服务都不掉 ✓）。
+	 */
+	check('🔴 已连接**且有地址**的行才有「断开」✓；未连接的行没有 ✓；**连着的但没地址**那台也不给 ✗（死键 ✓）',
+		$('pcBluetooth').querySelectorAll('[data-bt-off]').length === 2
+		&& Array.from($('pcBluetooth').querySelectorAll('[data-bt-off]')).map((el) => el.getAttribute('data-bt-off')).join(',') === '542A438FA1D7,FFFFFFFFFFFF',
+		JSON.stringify(Array.from($('pcBluetooth').querySelectorAll('[data-bt-off]')).map((el) => el.getAttribute('data-bt-off'))))
+	pcRequests.length = 0
+	click($('pcBluetooth').querySelector('[data-bt-off]'))
+	await wait(220)
+	check('🔴 点「断开」：恰好一条 `bluetoothDisconnect` + 带**地址** ✓，而且**没有**多出一条 `bluetoothSettings` ✓（嵌在行里的按钮最容易一发两条 ✗）',
+		pcRequests.filter((row) => row.action === 'bluetoothDisconnect').length === 1
+		&& pcRequests[0]?.action === 'bluetoothDisconnect' && pcRequests[0]?.device === '542A438FA1D7'
+		&& pcRequests.some((row) => row.action === 'bluetoothSettings') === false,
+		JSON.stringify(pcRequests))
+	check('🔴 断开成功之后**重读一次设备列表** ✓（那一行变成"未连接" —— 显示的是**回读到的真状态** ✓）',
+		pcRequests.some((row) => row.action === 'bluetoothDevices')
+		&& $('pcBluetooth').textContent.includes('未连接')
+		&& $('pcBluetooth').querySelectorAll('[data-bt-off]').length === 1,
+		JSON.stringify({ 请求: pcRequests.map((row) => row.action), 断开键: $('pcBluetooth').querySelectorAll('[data-bt-off]').length }))
+	check('断开成功时把**服务端那句话**原样说出来 ✓（`UNIQ-BT-OFF-42` ✓ —— 页面不自己编"已断开"✗）',
+		String($('pcMessage').textContent).includes('UNIQ-BT-OFF-42'), String($('pcMessage').textContent).slice(0, 46))
+	/*
+	 * 断不掉那台（桩里 `FFFFFFFFFFFF` 回 `ok:false` ✓）：**必须照实说没断成** ✓，
+	 * 而且**不许**自己把那一行改成"未连接" ✗、也不该白重读一遍列表 ✓（那等于假装成功 ✓）。
+	 */
+	pcRequests.length = 0
+	click($('pcBluetooth').querySelector('[data-bt-off]'))
+	await wait(220)
+	check('🔴 断不掉时：照服务端原话说"没能断开" ✓（`UNIQ-BT-REFUSED-42` ✓）+ **不重读列表** + 那一行还是"已连接" ✓',
+		String($('pcMessage').textContent).includes('UNIQ-BT-REFUSED-42')
+		&& pcRequests.some((row) => row.action === 'bluetoothDevices') === false
+		&& $('pcBluetooth').textContent.includes('已连接')
+		&& $('pcBluetooth').querySelectorAll('[data-bt-off]').length === 1,
+		JSON.stringify({ 话: String($('pcMessage').textContent).slice(0, 40), 请求: pcRequests.map((row) => row.action) }))
 	check('调完音量/亮度后，状态行显示的是**返回的真实值** ✓（不是"已调低"这种糊话 ✓）',
 		$('pcState').textContent.includes('70%'), $('pcState').textContent.replace(/\s+/g, ' ').slice(0, 60))
 	click($('pcBack'))

@@ -11922,14 +11922,32 @@
 		 * ⚠️ 「连接」这个动作 Windows 没有可靠接口 ✓（底层试到底是 rc=87 ✓，见 lib/pccontrol.js ✓）——
 		 * 所以每一行**点一下 = 打开系统蓝牙设置** ✓（从"找到那台设备"到"能动手的地方"只要一下 ✓），
 		 * 而不是摆一个按了没反应的"连接"键 ✗。
+		 *
+		 * 🔴 4.14.0：**「断开」反过来是能做的** ✓（同一个接口的 DISABLE 那半 ✓）——
+		 * 所以**已连接**的那几行右边多一个「断开」键 ✓（用户 2026-10-16：「还有蓝牙功能的断开设备连接」✓）。
+		 * ⚠️ 两个"不许" ✗：① **没拿到地址就不摆这个键** ✗（地址读不到 = 没有目标，摆了就是死键 ✓）；
+		 * ② 断不掉时服务端会回 `ok:false` + 原因 ✓，这里**照原话显示** ✓（不许自己写成"已断开" ✗）。
 		 */
 		box.innerHTML = '<div class="hint">已配对 ' + data.devices.length + ' 台（点一台就到系统蓝牙设置里去连 ✓）：</div>'
-			+ data.devices.map((row) =>
-				'<button class="moreitem" data-bt="' + escapeHtml(row.name) + '">'
-				+ '<span class="moreicon">' + (row.connected === true ? '🔗' : '📶') + '</span>'
-				+ '<b>' + escapeHtml(row.name) + '</b>'
-				+ '<span class="morehint">' + (row.connected === true ? '已连接' : '未连接') + '</span>'
-				+ '</button>').join('')
+			+ data.devices.map((row) => {
+				const connected = row.connected === true
+				const address = String(row.address ?? '')
+				const head = '<span class="moreicon">' + (connected ? '🔗' : '📶') + '</span>'
+					+ '<b>' + escapeHtml(row.name) + '</b>'
+				if (connected === true && /^[0-9A-F]{12}$/.test(address) === true) {
+					return '<div class="moreitem" data-bt="' + escapeHtml(row.name) + '">' + head
+						+ '<span class="morehint" style="flex:0 0 auto">已连接</span>'
+						+ '<button class="go" data-bt-off="' + escapeHtml(address) + '" style="flex:0 0 auto; padding:6px 12px; font-size:13px">断开</button>'
+						+ '</div>'
+				}
+				return '<button class="moreitem" data-bt="' + escapeHtml(row.name) + '">' + head
+					+ '<span class="morehint">' + (connected === true ? '已连接' : '未连接') + '</span>'
+					+ '</button>'
+			}).join('')
+			+ '<div class="hint">「断开」走的是系统那个"关掉某个蓝牙服务"的接口 ✓：断没断**以回读到的连接状态为准** ✓'
+			+ '（本机实测：耳机的免提服务一关就断 ✓；**iPhone 试了 14 种服务都断不掉** ✗ —— 那种情况会照实说"没断成" ✓）。'
+			+ '要连回来得在系统蓝牙设置里点一下 ✓（「连接」这一步 Windows 没有可靠接口 ✗）；'
+			+ '想一刀切可以用「蓝牙关掉再打开」—— 那会把**所有**连接一起断掉 ✗（耳机 / 手机热点都会断 ✓）。</div>'
 	}
 
 	async function loadPc() {
@@ -11975,10 +11993,40 @@
 				message.textContent = failed ? (text === '' ? '这一步没成功' : text)
 					: (text === '' ? '做好了 ✓' : text)
 			}
+			// 4.14.0：把结果**原样**交给调用方 ✓（「断开」成功之后要靠它决定要不要重读设备列表 ✓）。
+			return result
 		} catch (error) {
 			// 403 + needPin 时 api() 已经自己弹 PIN 门 ✓ —— 这里只把话说清 ✓。
 			if (message !== null) message.textContent = '没做成：' + error.message
+			return null
 		}
+	}
+
+	/**
+	 * 4.14.0「断开某一台」✓（用户 2026-10-16：「还有蓝牙功能的断开设备连接，现在只有连接设备」✓）。
+	 *
+	 * ⚠️ 只有**回读确认断开了**（`ok:true`）才重读设备列表 ✓ ——
+	 * 那一行显示的是**真状态** ✓，不是"请求发出去了所以它应该断了" ✗（真机实测有用例回 rc=0 却没断 ✓）。
+	 * 断不掉时服务端会给原因 ✓，`pcAction` 已经把原话写在 `#pcMessage` 上了 ✓，这里不用再编一句 ✗。
+	 */
+	async function disconnectBt(address) {
+		const result = await pcAction('bluetoothDisconnect', { device: address })
+		if (result === null || result === undefined || result.ok !== true) return
+		/*
+		 * ⚠️ 重读列表**不能再走 `pcAction`** ✗ —— 它会把 `#pcMessage` 覆盖成"做好了 ✓" ✓，
+		 * 于是屏幕上刚写下的那句"已经断开了 ✓（回读确认过 ✓）"**当场被冲掉** ✗
+		 *（2026-10-16 实测：`test/ui.mjs` 那条"要把服务端原话说出来"当场红 ✓ —— 这就是它的用处 ✓）。
+		 * 所以：**只要新数据、不动那句话** ✓；重读失败也无所谓 ✓（"已经断开了"这个结论不靠它 ✓）。
+		 */
+		try {
+			const fresh = await api('api/pc', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'bluetoothDevices' }),
+			})
+			if (fresh?.bluetooth !== undefined && fresh.bluetooth !== null) pcPanel.bluetooth = fresh.bluetooth
+			renderPcBluetooth()
+		} catch { /* 重读失败不影响结论 ✓ */ }
 	}
 
 	/*
@@ -12004,7 +12052,17 @@
 	 *（详见 lib/pccontrol.js 顶部那段账 ✓）。所以给的是"一下点到能动手的地方" ✓，不是假键 ✗。
 	 */
 	$('pcBluetooth').addEventListener('click', (event) => {
-		const row = event.target?.closest?.('[data-bt]')
+		const target = event.target
+		if (target === null || target === undefined || typeof target.closest !== 'function') return
+		/*
+		 * ⚠️ 4.14.0：**「断开」这一支必须写在最前面** ✗ —— 已连接那一行里**嵌着**「断开」这个按钮 ✓，
+		 * 而它也在 `[data-bt]` 那一行**里面** ✓：先判 `[data-bt]` 的话，点一次「断开」会**同时**发两条
+		 * （断开 ✓ + 打开设置 ✗）—— 这正是 3.5.0 那个"一个入口两份接法 = 一次点击两条请求"的同款坑 ✓。
+		 * `test/ui.mjs` 有一条用例专门盯这个顺序 ✓（点「断开」时**不许**多出一条 `bluetoothSettings` ✓）。
+		 */
+		const off = target.closest('[data-bt-off]')
+		if (off !== null && off !== undefined) { void disconnectBt(String(off.getAttribute('data-bt-off') ?? '')); return }
+		const row = target.closest('[data-bt]')
 		if (row === null || row === undefined) return
 		void pcAction('bluetoothSettings', { device: row.dataset.bt })
 	})

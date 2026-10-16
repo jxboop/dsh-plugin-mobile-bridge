@@ -785,5 +785,53 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/^[\x00-\x7F]+$/.test(WAKE_TASK_NAME), WAKE_TASK_NAME)
 }
 
+/*
+ * 28) 🔴 **4.14.0「断开某一台蓝牙设备」**（用户 2026-10-16：「还有蓝牙功能的断开设备连接，现在只有连接设备」✓）。
+ *
+ * 2026-10-16 真机实测 —— **把上一版的推断推翻了** ✗：
+ *   · `rc=0` **完全不代表断开了** ✗：耳机那台 `110B`(A2DP) / `110E`(AVRCP) 都回 rc=0 ✓，
+ *     可 `fConnected` 照样是 `true` ✗；真正让它断开的是 **`111E`（免提 HFP）** ✓；
+ *   · 而同一台机器上的 iPhone，**14 种服务**全试过 ✗（其中 4 种还回 rc=0 ✗）→ 它一直连着 ✗。
+ *   ⇒ 所以判据**只能**写在**回读到的 `fConnected`** 上 ✓ —— `disconnectVerdict` 是这条判据的唯一一份 ✓，
+ *     它必须能同时认出"真断了 ✓ / rc=0 但没断 ✗ / 本来就没连 ✓ / 没配对 ✓ / 没无线电 ✓"。
+ * 另外两条形状纪律：**绝不用 `BluetoothRemoveDevice`** ✗（那是"取消配对" ✓ 不是"断开" ✗）、
+ * 页面里点「断开」的那一支**必须写在 `[data-bt]` 之前** ✓（顺序反了 = 一次点击两条请求 ✗）。
+ */
+{
+	const { disconnectVerdict } = await import('../lib/pccontrol.js')
+	const control = await readFile(join(ROOT, 'lib', 'pccontrol.js'), 'utf8')
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const worked = disconnectVerdict({ target: 'AA', before: 'true', after: 'false', tried: ['111E:rc=0:false'] })
+	const refused = disconnectVerdict({ target: 'AA', before: 'true', after: 'true', tried: ['110B:rc=0:true', '110E:rc=0:true'] })
+	check('🔴 真断了（回读 `fConnected` 由 true 变 false）→ `ok:true` + 说出是哪个服务起的作用 ✓',
+		worked.ok === true && worked.state === 'disconnected' && worked.service === '111E'
+		&& worked.message.includes('回读确认'), JSON.stringify(worked).slice(0, 120))
+	check('🔴 **rc=0 但状态没变 → `ok:false` + "没能断开"** ✓（这条正是今天真机推翻的那个假设 ✗ —— 只看返回值就会假成功 ✓）',
+		refused.ok === false && refused.state === 'refused' && refused.message.includes('没能断开'), refused.message.slice(0, 60))
+	check('断不掉时**给两条真能用的替代** ✓（打开设置手动关 ✓ / 关掉蓝牙再打开 = 全断，且把代价说清 ✓）',
+		refused.message.includes('打开蓝牙设置') && refused.message.includes('所有'))
+	const notPaired = disconnectVerdict({ before: 'missing', after: 'missing', tried: [] })
+	const notConnected = disconnectVerdict({ before: 'false', after: 'false', tried: [] })
+	const noRadio = disconnectVerdict({ before: 'no-radio', after: 'no-radio', tried: [] })
+	check('🔴 没配对 / 本来就没连 / 没有无线电：三种都**如实说** ✓（都是 `ok:false` + 各自说清，绝不说成"已断开" ✗）',
+		notPaired.ok === false && notPaired.state === 'not-paired' && notPaired.message.includes('不在已配对')
+		&& notConnected.ok === false && notConnected.state === 'was-not-connected' && notConnected.message.includes('本来就没有连着')
+		&& noRadio.ok === false && noRadio.state === 'no-radio' && noRadio.message.includes('没有蓝牙无线电'),
+		JSON.stringify([notPaired.state, notConnected.state, noRadio.state]))
+	const script = /const BT_DISCONNECT_SCRIPT = `([\s\S]*?)`/.exec(control)?.[1] ?? ''
+	check('（自检）断开那段脚本块抠出来了（别把下面几条写成永远通过）',
+		script.includes('BluetoothSetServiceState') && script.includes('BluetoothFindFirstRadio'), `${script.length} 字符`)
+	check('🔴 关服务用的是 **DISABLE（flags = 0）** ✓；而且脚本里**一个 `BluetoothRemoveDevice` 都没有** ✗（那是取消配对 ✓ 不是断开 ✗）',
+		script.includes('BluetoothSetServiceState(radio, ref d, ref g, 0)') && script.includes('BluetoothRemoveDevice') === false)
+	check('🔴 脚本**自己先读一次、关完再读一次** ✓（"到底断没断"必须在同一次调用里回读 ✓ —— 不然判据还是空的 ✓）',
+		script.includes('$before=[DshBtOff]::State($target)') && script.includes('$after=[DshBtOff]::State($target)'))
+	check('🔴 页面里「断开」那一支**写在 `[data-bt]` 之前** ✓（顺序反了 = 点一次「断开」同时发"断开 + 打开设置"✗）',
+		page.indexOf("closest('[data-bt-off]')") > 0
+		&& page.indexOf("closest('[data-bt-off]')") < page.indexOf("closest('[data-bt]')"),
+		`off@${page.indexOf("closest('[data-bt-off]')")} row@${page.indexOf("closest('[data-bt]')")}`)
+	check('🔴 没拿到地址就**不摆**那个键（要 12 位十六进制才认 ✓ —— 摆了就是死键 ✗）',
+		page.includes('connected === true && /^[0-9A-F]{12}$/.test(address) === true'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

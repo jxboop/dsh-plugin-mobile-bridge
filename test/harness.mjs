@@ -3013,6 +3013,48 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		 * 那条改由**源码形状**在 `test/package.mjs` 里钉 ✓（`POST /api/pc` 必须包在 `guardWrite()` 里 ✓），
 		 * 这一条也**不假装测过** ✗ —— 照项目纪律：测不了就说测不了 ✓。
 		 */
+		/*
+		 * 🔴 4.14.0「断开某一台」（用户 2026-10-16：「还有蓝牙功能的断开设备连接，现在只有连接设备」✓）。
+		 *
+		 * ⚠️ 这里**绝不真的去断用户的设备** ✗（那是在别人机器上拔耳机 ✓）—— 所以用一个
+		 * **格式合法但没配对过的地址** ✓：真机上的结果必然落到"这台设备不在已配对列表里" ✓，
+		 * 而这条正好是我们要钉的那条纪律：**没断成就要如实说没断成** ✓
+		 *（判据在服务端是**回读到的 `fConnected`** ✓ —— `rc=0` 不算数 ✓，真机实测过它骗人 ✗）。
+		 */
+		{
+			const btList = await fetch(`${base}/api/pc`, {
+				method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' }, body: JSON.stringify({ action: 'bluetoothDevices' }),
+			})
+			const btDevices = (await btList.json().catch(() => ({}))).bluetooth?.devices ?? []
+			/*
+			 * ⚠️ 这条依赖"这台机器真的有蓝牙且配对过设备" ✓（本机 5 台 ✓）。
+			 * 所以判据分两截：列表**必须是数组** ✓（永远成立）+ 每一台都带 `address` 字段 ✓
+			 * （4.14.0 起「断开」靠它指名道姓 ✓）。没有蓝牙的机器上后半截会空转 ✓ —— 这条**不假装**在任何机器上都硬 ✓。
+			 */
+			check('🔴 设备列表每台都带**地址** ✓（4.14.0「断开某一台」就是靠它指名道姓 ✓ —— 名字会重 ✗）',
+				Array.isArray(btDevices) && btDevices.every((row) => typeof row.name === 'string' && typeof row.address === 'string'
+					&& (row.address === '' || /^[0-9A-F]{12}$/.test(row.address))),
+				JSON.stringify(btDevices.slice(0, 3)))
+			const notPaired = await fetch(`${base}/api/pc`, {
+				method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'bluetoothDisconnect', device: '000000000000' }),
+			})
+			const notPairedBody = await notPaired.json().catch(() => ({}))
+			check('🔴 断一台**没配对过**的设备 → 如实回 `ok:false` + "不在已配对列表 / 什么都没有断" ✓（不许因为命令发出去了就说断了 ✗）',
+				notPaired.status === 200 && notPairedBody.ok === false && notPairedBody.state === 'not-paired'
+				&& String(notPairedBody.message ?? '').includes('不在已配对')
+				&& String(notPairedBody.message ?? '').includes('什么都没有断'),
+				JSON.stringify(notPairedBody).slice(0, 140))
+			const badAddress = await fetch(`${base}/api/pc`, {
+				method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' },
+				body: JSON.stringify({ action: 'bluetoothDisconnect', device: '不是地址' }),
+			})
+			const badAddressBody = await badAddress.json().catch(() => ({}))
+			check('🔴 地址看不懂时**直接回"没有断任何东西"** ✓（连 PowerShell 都不用起 ✓ —— 读不到目标就别动手 ✓）',
+				badAddress.status === 200 && badAddressBody.ok === false && badAddressBody.state === 'bad-address'
+				&& String(badAddressBody.message ?? '').includes('没有断任何东西'),
+				JSON.stringify(badAddressBody).slice(0, 120))
+		}
 		await writeRecordConfig({ pcControl: false })
 	}
 
