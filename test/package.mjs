@@ -833,5 +833,47 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('connected === true && /^[0-9A-F]{12}$/.test(address) === true'))
 }
 
+/*
+ * 29) 🔴 **4.14.1「手机上错过的提问」**（用户 2026-10-16：「我看不见你的问题手机端」✗）。
+ *
+ * 病根**不在渲染** ✗（手机上的提问卡片一直在 ✓）—— 在**投递**：
+ * 卡片只在"提问发生那一刻、有手机正在看**这个**会话"时才推 ✗，所以
+ * 「手机在别的会话 / 被系统挂起（选图片）/ 正在重连那几秒」这三种情况一律一个字都收不到 ✓。
+ * 这一版补三样，每样都得钉住：
+ *   ① **诊断**（五个"不交给手机"的出口**每个都要说出为什么** ✓ —— 以前全静默 ✗，
+ *      所以今天"手机上看不见提问"只能靠猜 ✓；现在日志第一行就写明"没人正在看 X（有人在看 Y）" ✓）；
+ *   ② **提示帧**（`ask-waiting` ✓）里**只许有 id** ✗（桥支持多台设备，广播正文 = 跨会话泄漏 ✓）；
+ *   ③ **迟到作答**走宿主的 `callId` ✓（桥上那个临时 id 120 秒就没了 ✗ —— 那正是"错过的答不了" ✓）。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 诊断：五个"不交给手机"的出口各自要说清**为什么** ✓（以前全是静默 return null ✗ —— 今天就是这么卡住的 ✓）',
+		host.includes('ask(${kind}) -> 桌面：answerOnPhone 关着')
+		&& host.includes('ask(${kind}) -> 桌面：请求里没有会话 id')
+		&& host.includes('ask(${kind}) -> 桌面：队列满')
+		&& host.includes('ask(${kind}) -> 桌面：现在没有手机在看'))
+	check('🔴 诊断：手机**开始看 / 不看**哪个会话都要记一行 ✓（"提问在 A 会话、手机在看 B"这种错位一眼可见 ✓）',
+		host.includes('手机开始看 ${sessionId}（此刻共 ${state.streams.size} 条流）')
+		&& host.includes('手机不看 ${sessionId} 了（还剩 ${state.streams.size} 条流）'))
+	check('🔴 提示帧里**只有 id** ✓（`pushToAll({ t: \'ask-waiting\', sessionId, callId })` —— 带上 questions 就是跨会话泄漏 ✗）',
+		/pushToAll\(\{ t: 'ask-waiting', sessionId, callId \}\)/.test(host)
+		&& /pushToAll\(\{ t: 'ask-waiting'[\s\S]{0,120}questions/.test(host) === false)
+	check('🔴 迟到作答走**宿主的 `callId`** ✓（`questions.answer(agent, lateCallId, …)` ✓ —— 桥上那个临时 id 120 秒就没了 ✗）',
+		host.includes('questions.answer(agent, lateCallId, lateAnswers)'))
+	check('🔴 两个新接口的门禁：`GET /api/waiting` → `guard()` ✓、`POST /api/answer` → `guardWrite()` ✓',
+		/GET \/api\/waiting'\)\s*return\s+guard\(\)/.test(host)
+		&& /POST \/api\/answer'\)\s*return\s+guardWrite\(\)/.test(host))
+	check('🔴 「读不到」与「没有」在服务端就是分开的两个东西 ✓（`available` 字段 ✓ —— 混成一个就是假话 ✓）',
+		host.includes('return { available: false, items: [] }') && host.includes('return { available: true, items }'))
+	check('🔴 手机上要有一条**能点的横幅** ✓（"另一条会话在等你回答" —— 用户原话就是"我看不见" ✓）',
+		page.includes('另一条会话在等你回答') && page.includes("go.addEventListener('click', () => { switchSession(sessionId); renderAsks() })"))
+	check('🔴 手机上的迟到卡片要**登记进 `state.asks`** ✓（否则提交时走错分支 ✗、草稿还会每渲染一次就丢 ✗ —— 两条都被 ui 用例咬到过 ✓）',
+		page.includes("lateId = LATE_PREFIX + String(state.sessionId ?? '') + ':' + lateMine.callId")
+		&& page.includes("if (String(id).startsWith(LATE_PREFIX)) continue"))
+	check('回到前台要**主动补问一次** ✓（选图片/切出去那段正是错过提问的时刻 ✓）',
+		page.includes('void refreshWaiting()'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

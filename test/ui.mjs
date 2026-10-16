@@ -199,6 +199,14 @@ const wakeRequests = []
 /** 4.13.0：桩里"那个唤醒任务在不在"的开关 —— 设成功就变成在 ✓，取消就变回不在 ✓。 */
 let wakeTaskExists = false
 /**
+ * 4.14.1：**手机上错过的提问** ✓ —— 桩里这一份是**可变**的 ✓：
+ * `available` 决定页面上是"有一条在等你"还是"读不到" ✓（这两件事在页面上必须分开说 ✗）。
+ */
+let waitingPayload = { available: true, items: [] }
+const waitingRequests = []
+/** 4.14.1：迟到作答的请求体（断言它带的是 `callId` 而不是桥上那个临时 id ✓）。 */
+const lateAnswers = []
+/**
  * 4.14.0：蓝牙设备列表的桩状态 ✓ —— 这是**可变的**（断开成功就把那台移出去 ✓）：
  * 桩必须跟着实现一起走 ✓，不然"断开完那一行变成未连接"这条断言就是假绿 ✗（桩永远说连着 ✓）。
  * ⚠️ 特意留了两台"不好办"的：一台**没有地址**（页面不许给它摆「断开」✗）、
@@ -437,6 +445,8 @@ function bootstrapBody() {
 		addresses: [{ address: '192.168.1.20', interface: 'WLAN', label: 'WLAN', url: 'http://192.168.1.20:3081/0123456789abcdef/' }],
 		// 和页面当前 origin 不同的正式地址：用来验证「切到当前地址」。
 		publicUrl: 'https://example.ts.net/0123456789abcdef/',
+		// 4.14.1：开机就把"手机上错过的提问"带过来 ✓（页面不用额外往返 ✓）。
+		waiting: waitingPayload,
 	}
 }
 
@@ -518,8 +528,20 @@ async function stubFetch(input, options = {}) {
 		})
 	}
 	if (path.startsWith('/api/answer')) {
+		const answered = (() => { try { return JSON.parse(String(options.body ?? '{}')) } catch { return {} } })()
+		// 4.14.1：**迟到作答**单独记一份账 ✓ —— 断言页面发的是宿主认的那个身份（`callId` + `sessionId`）✓。
+		if (String(answered.callId ?? '') !== '') lateAnswers.push(answered)
 		if (answerExpired) return jsonResponse({ error: '这条提问已经失效（可能超时，或已在别处回答）' }, 409)
 		return jsonResponse({ ok: true })
+	}
+	/*
+	 * 4.14.1：宿主那边的口径是 `{ available, items:[{sessionId, callId, questions}] }` ✓ ——
+	 * 桩照这个回 ✓，而且 `available:false` 那一支也要能演 ✓
+	 *（页面必须说"读不到" ✗ —— **不是**"没有提问" ✗，这两件事分不开就是这个项目最坏的一种假话 ✓）。
+	 */
+	if (path.startsWith('/api/waiting')) {
+		waitingRequests.push(path)
+		return jsonResponse(waitingPayload)
 	}
 	if (path.startsWith('/api/boot')) {
 		// 卡住回包：验证"本地那份先铺上，不用等下载"（松手由测试控制）。
@@ -2673,6 +2695,75 @@ await wait(160)
 check('提问已结束时撤掉卡片，而不是永远报错',
 	window.getComputedStyle($('ask')).display === 'none')
 answerExpired = false
+
+/*
+ * 🔴 4.14.1「手机上错过的提问」✓（用户 2026-10-16：「我看不见你的问题手机端」✓）。
+ *
+ * 病根：卡片只在「提问发生的那一刻、有手机正在看**这个**会话」时才推 ✗ ——
+ * 手机在别的会话 ✓ / 被系统挂起（选图片、切出去 ✓）/ 正在重连那几秒 ✗，都会一个字都收不到 ✓。
+ * 现在宿主把**超时后仍然收得住**的提问也告诉手机（`/api/waiting` ✓），于是：
+ *   ① 提问在**别的会话** → 一条能点的横幅 ✓（点一下切过去 ✓）；
+ *   ② 切过去之后那条提问**直接画出来** ✓ 并且**答得出去** ✓（带 `callId` ✓，不是 120 秒就没的临时 id ✗）；
+ *   ③ 读不到（`available:false`）→ 页面**说读不到** ✓，**不许**说成"没有提问" ✗。
+ */
+{
+	waitingPayload = { available: false, items: [] }
+	source.emit({ t: 'ask-waiting', sessionId: 'session-elsewhere', callId: 'call-none' })
+	await wait(160)
+	check('🔴 读不到"还有没有待答提问"时，页面上留一句话 ✓（空着会让人以为"没有" ✗ —— 这两件事必须分开 ✓）',
+		String($('ask').textContent).includes('读不到'), String($('ask').textContent).slice(0, 48))
+
+	waitingPayload = {
+		available: true,
+		items: [{
+			sessionId: 'session-elsewhere',
+			callId: 'call-elsewhere',
+			questions: [{ id: 'q1', question: '另一个会话的问题？', options: [{ label: '好' }] }],
+		}],
+	}
+	source.emit({ t: 'ask-waiting', sessionId: 'session-elsewhere', callId: 'call-elsewhere' })
+	await wait(180)
+	check('🔴 别的会话有提问 → 画一条**能点的横幅** ✓（这就是"手机上看不见提问"那个补丁 ✓）',
+		String($('ask').textContent).includes('另一条会话在等你回答')
+		&& $('ask').querySelector('.row button') !== null,
+		String($('ask').textContent).replace(/\s+/g, ' ').slice(0, 70))
+
+	const switchBefore = requests.length
+	click($('ask').querySelector('.row button'))
+	await wait(260)
+	check('🔴 点「切过去答」真的切了会话 ✓（切完才会去取那个会话的流/对话 —— 光改文案不算 ✓）',
+		requests.slice(switchBefore).some((entry) => entry.path.includes('session-elsewhere')),
+		JSON.stringify(requests.slice(switchBefore).map((entry) => entry.path).slice(0, 5)))
+
+	const beforeLate = lateAnswers.length
+	check('🔴 切过去之后那条**迟到提问直接画出来** ✓（写明"手机上刚才没弹出来 ✓ 现在还能答" ✓）',
+		$('ask').querySelector('.opt') !== null
+		&& String($('ask').textContent).includes('另一个会话的问题？')
+		&& String($('ask').textContent).includes('现在还能答'),
+		String($('ask').textContent).replace(/\s+/g, ' ').slice(0, 80))
+	click($('ask').querySelector('.opt'))
+	await wait(60)
+	click($('ask').querySelector('.go'))
+	await wait(220)
+	check('🔴 迟到作答发的是**宿主的身份**（`callId` + `sessionId` ✓）—— 桥上那个临时 id 120 秒就没了 ✗',
+		lateAnswers.length === beforeLate + 1
+		&& lateAnswers.at(-1)?.callId === 'call-elsewhere'
+		&& lateAnswers.at(-1)?.sessionId === 'session-elsewhere'
+		&& Array.isArray(lateAnswers.at(-1)?.answers),
+		JSON.stringify(lateAnswers.at(-1) ?? null))
+	check('答完之后那条横幅/卡片撤掉 ✓（那条已经从"等你回答"里删掉了 ✓）',
+		String($('ask').textContent).includes('另一条会话') === false,
+		String($('ask').textContent).replace(/\s+/g, ' ').slice(0, 60))
+
+	// 收尾：清干净，别给后面的用例留一条横幅 ✓
+	waitingPayload = { available: true, items: [] }
+	source.emit({ t: 'ask-waiting', sessionId: 'session-elsewhere', callId: 'call-elsewhere' })
+	await wait(140)
+	check('（收尾）横幅清干净了 ✓（后面的用例不该看见它 ✓）',
+		String($('ask').textContent).includes('另一条会话') === false
+		&& String($('ask').textContent).includes('读不到') === false,
+		String($('ask').textContent).replace(/\s+/g, ' ').slice(0, 40))
+}
 
 /* --- 断线必须【说出来】，不能只把一个 9px 的圆点变红 --------------------- */
 /*

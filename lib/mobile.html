@@ -2623,6 +2623,20 @@
 		 * draft 必须留在这里：卡片每次重建都从它恢复，否则用户勾到一半会被清空。
 		 */
 		asks: new Map(),
+		/**
+		 * 🔴 4.14.1：**手机上错过的提问** ✓（用户 2026-10-16：「我看不见你的问题手机端」✓）。
+		 * sessionId -> { callId, questions, available } ✓。
+		 *
+		 * 为什么要有它：卡片原本**只在"提问发生的那一刻、有手机正在看这个会话"时**才会推过来 ✗
+		 * （`watchersOf(sessionId).length === 0` → 直接交给桌面 ✓）—— 于是
+		 * 「手机在别的会话 ✓ / 手机正被系统挂起（选图片、切出去）✓ / 正在重连的那几秒 ✗」
+		 * 这三种情况下，提问**一个字都不会出现在手机上** ✗。
+		 * 现在：宿主把**超时后仍然收得住**的那些提问（`userQuestions.continued` ✓）通过
+		 * `/api/waiting` 给过来 ✓，手机就能显示「另一条会话在等你回答 ✓」，切过去还能**迟到作答** ✓。
+		 * ⚠️ `available: false` = **读不到** ✓，不是"没有提问" ✗（这两个必须分开说 ✓）。
+		 */
+		waiting: new Map(),
+		waitingReadable: true,
 		/** 宿主编出来的局域网候选地址（含密钥段的完整 URL），断线时拿来兜底。 */
 		addresses: [],
 		/**
@@ -5065,6 +5079,14 @@
 			} else if (payload.t === 'interaction-end') {
 				state.asks.delete(payload.id)
 				renderAsks()
+			} else if (payload.t === 'ask-waiting') {
+				/*
+				 * 🔴 4.14.1：**另一条会话有提问，而这条流没收到卡片** ✓ ——
+				 * 宿主在"没交给手机"的那一刻推的就是这一帧 ✓（帧里**只有 id** ✓，正文要登录后另外取 ✓）。
+				 * 手机据此去 `/api/waiting` 取正文 ✓，然后显示一条能点的横幅 ✓；
+				 * 点进去 = 切到那个会话 ✓，在那儿**迟到作答** ✓（那条路 4.14.1 新开的 ✓）。
+				 */
+				void refreshWaiting(true)
 			}
 			scheduleRender()
 		}
@@ -6578,6 +6600,8 @@
 			// 记着"这台电脑有没有背景"：换背景那张纸要据此显示「去掉背景」。
 			hasBackdrop = body.background !== null && body.background !== undefined
 			if (body.welcomed === true) welcomedOnServer = true
+			// 4.14.1：开机顺手把"手机上错过的提问"收下 ✓（页面不用额外往返 ✓）。
+			if (body.waiting !== undefined && body.waiting !== null) applyWaiting(body.waiting)
 			/*
 			 * 2.8.0 ★2「陌生设备提醒」在手机这一侧的落点 ✓：bootstrap 只给**时间**（不给 IP ✗ ——
 			 * IP 属于"要现输 PIN 才看得到"的那份账 ✓）。24 小时内出现过新设备就在 🛡 上挂个记号，
@@ -9110,6 +9134,13 @@
 			return
 		}
 		if (state.sessionId !== null) pullTranscript()
+		/*
+		 * 🔴 4.14.1：回到前台**顺便问一句"有没有提问在等我"** ✓ ——
+		 * 这正是用户那两次的情形：他在选图片（iOS 把页面挂起了 ✗），提问就在那几十秒里发生 ✓，
+		 * 页面回来时宿主可能已经把卡片退回桌面了 ✓。补这一下，回来就能看见「另一条会话在等你回答」✓
+		 *（而且超时的那条**仍然答得上** ✓ —— 见 `submitAsk` 的迟到那支 ✓）。
+		 */
+		void refreshWaiting()
 	})
 
 	// 装成 App（PWA）：有 service worker 就能"从主屏幕点开不用等网络"。
@@ -12432,30 +12463,142 @@
 		return node
 	}
 
+	/* ------------------------------- 4.14.1 手机上错过的提问（回到手机也能补答 ✓） */
+
+	/**
+	 * 收下宿主给的"还有哪些提问收得住" ✓（`/api/waiting` 与 bootstrap 共用这一份 ✓）。
+	 *
+	 * ⚠️ `available: false` 是**读不到** ✓ —— 必须和"没有提问"分开说 ✗
+	 *（这台宿主没有那两个服务时就是读不到 ✓；把"读不到"显示成"没有"正是本项目最较真的那种假话 ✓）。
+	 */
+	function applyWaiting(payload) {
+		const available = payload?.available === true
+		state.waitingReadable = available
+		state.waiting.clear()
+		if (available === true) {
+			for (const item of Array.isArray(payload?.items) ? payload.items : []) {
+				const sessionId = String(item?.sessionId ?? '')
+				const callId = String(item?.callId ?? '')
+				if (sessionId === '' || callId === '') continue
+				state.waiting.set(sessionId, { callId, questions: Array.isArray(item?.questions) ? item.questions : [] })
+			}
+		}
+		renderAsks()
+	}
+
+	/**
+	 * 主动去取一次 ✓ —— 收到 `ask-waiting` 提示帧时用 ✓（那一帧里**只有 id** ✗，
+	 * 正文必须登录之后另外取 ✓ —— 桥支持多台设备，正文不能广播 ✗）。
+	 */
+	async function refreshWaiting() {
+		try {
+			applyWaiting(await api('api/waiting'))
+		} catch { /* 取不到就保持现状 ✓ —— 下一次 bootstrap 还会给 ✓ */ }
+	}
+
+	/** 这条等待对应的问题正文，是不是已经以"活卡片"的形式在这儿了 ✓（避免同一个问题画两张卡 ✗）。 */
+	function hasLiveCopy(questions) {
+		const wanted = JSON.stringify(questions ?? [])
+		for (const [id, ask] of state.asks) {
+			// ⚠️ **迟到卡自己不算** ✗ —— 它也存在 `state.asks` 里（为了保住草稿 ✓ 见下 ✓），
+			// 算进去的话下一帧就"发现已经有活卡片了" → 卡片自己把自己撤掉 ✗（当场被 ui 用例咬到过 ✓）。
+			if (String(id).startsWith(LATE_PREFIX)) continue
+			if (ask?.kind !== 'question') continue
+			if (JSON.stringify(ask?.payload?.questions ?? []) === wanted) return true
+		}
+		return false
+	}
+
+	/** 迟到卡片的 id 前缀 ✓（它们存在 `state.asks` 里是为了**保住草稿** ✓，但不跟活卡片一起渲染 ✓）。 */
+	const LATE_PREFIX = 'late:'
+
 	function renderAsks() {
 		const box = $('ask')
-		if (state.asks.size === 0) { box.textContent = ''; hide(box); return }
+		const lateMine = state.waiting.get(state.sessionId ?? '') ?? null
+		const others = [...state.waiting.entries()].filter(([sessionId]) => sessionId !== (state.sessionId ?? ''))
+		// 当前会话那条迟到提问：**没有活卡片**时才画 ✓（有的话活卡片更好用 ✓ —— 它能被别的设备撤掉 ✓）。
+		const showLate = lateMine !== null && hasLiveCopy(lateMine.questions) === false
+		let lateId = ''
+		if (showLate === true) {
+			/*
+			 * ⚠️ 迟到卡也**登记进 `state.asks`** ✓ —— 两个理由，都是被测试/实践逼出来的：
+			 *   ① `submitAsk` 要靠它拿到 `late.callId` ✓（不登记就会照活卡片那条路发 ✗ ——
+			 *      发的是桥上 120 秒就没了的临时 id ✗，ui 用例当场红过 ✓）；
+			 *   ② 草稿要有地方存 ✓（否则用户勾一下、下一帧重渲染就没了 ✗）。
+			 * 渲染时用 `LATE_PREFIX` 把它挑出来单独画 ✓（不跟活卡片重复画 ✗）。
+			 */
+			lateId = LATE_PREFIX + String(state.sessionId ?? '') + ':' + lateMine.callId
+			const existing = state.asks.get(lateId)
+			state.asks.set(lateId, {
+				kind: 'question',
+				payload: { questions: lateMine.questions },
+				draft: existing?.draft ?? {},
+				error: existing?.error ?? '',
+				late: { callId: lateMine.callId, sessionId: state.sessionId },
+			})
+		}
+		const readableHint = state.waitingReadable !== true
+		const liveCount = [...state.asks.keys()].filter((id) => String(id).startsWith(LATE_PREFIX) === false).length
+		if (liveCount === 0 && others.length === 0 && showLate !== true) {
+			// 读不到时**留一句话** ✓（不是"什么事都没有" ✗ —— 这一格空着会让人以为"没有提问" ✗）。
+			box.textContent = readableHint ? '（这台电脑没有告诉我们还有没有待答的提问 —— 读不到 ✓）' : ''
+			if (readableHint) show(box)
+			else hide(box)
+			return
+		}
 		show(box)
 		box.textContent = ''
 		for (const [id, ask] of state.asks) {
+			if (String(id).startsWith(LATE_PREFIX)) continue
 			box.appendChild(ask.kind === 'approval' ? approvalCard(id, ask) : questionCard(id, ask))
+		}
+		if (showLate === true) box.appendChild(questionCard(lateId, state.asks.get(lateId)))
+		/*
+		 * 「另一条会话在等你回答」✓ —— **能点的一条横幅** ✓（用户原话就是"手机上看不见"✓）。
+		 * 为什么它必须存在：卡片只在"提问发生那一刻有手机在看这个会话"时才推 ✗ ——
+		 * 手机在别的会话 / 正被系统挂起（选图片、切出去）/ 正在重连的那几秒，都会一个字都收不到 ✓。
+		 */
+		for (const [sessionId, entry] of others) {
+			const card = mk('div', 'askcard')
+			card.appendChild(mk('h4', undefined, '另一条会话在等你回答'))
+			const picked = state.sessions.find((item) => item.sessionId === sessionId)
+			const title = String(picked?.title ?? picked?.name ?? '')
+			card.appendChild(mk('p', 'q', (title === '' ? sessionId : title) + ' 里有一条提问 ✓'))
+			card.appendChild(mk('div', 'qd', '手机上刚才没弹这张卡，是因为提问发生时这个页面不在那个会话上（或被系统挂起了）✓ —— 这条现在还能答 ✓。'))
+			const row = mk('div', 'row')
+			const go = mk('button', 'go', '切过去答')
+			go.addEventListener('click', () => { switchSession(sessionId); renderAsks() })
+			row.appendChild(go)
+			card.appendChild(row)
+			box.appendChild(card)
 		}
 	}
 
 	/** 把答案交给宿主。失败就把原因写在卡片上，不静默吞掉。 */
 	async function submitAsk(id, body) {
+		const askNow = state.asks.get(id)
+		/*
+		 * 🔴 4.14.1「迟到作答」✓：`ask.late` 有值时走**宿主的 callId** ✓
+		 *（那条路是 `userQuestions.continued` ✓ —— 超时之后提问仍然收得住 ✓，所以回来得晚也答得上 ✓）；
+		 * 活卡片照旧走桥上那个临时 id ✓（它 120 秒就没了 ✗ —— 那正是"手机上错过的答不了"的老毛病 ✓）。
+		 */
+		const late = askNow?.late ?? null
 		try {
 			await api('api/answer', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify(Object.assign({ id }, body)),
+				body: JSON.stringify(late === null
+					? Object.assign({ id }, body)
+					: { callId: late.callId, sessionId: late.sessionId, answers: body.answers }),
 			})
 			state.asks.delete(id)
+			if (late !== null) state.waiting.delete(String(late.sessionId ?? ''))
 		} catch (error) {
 			// 404/409 = 这条提问已经结束了（超时、或已在别处回答）。卡片必须撤掉：
 			// 否则它会永远赖在屏幕上，用户点一次报一次错，还不知道该干什么。
 			if (error.status === 404 || error.status === 409) {
 				state.asks.delete(id)
+				if (late !== null) state.waiting.delete(String(late.sessionId ?? ''))
 				flash('这条提问已经结束了（超时，或已在别处回答）')
 			} else {
 				const ask = state.asks.get(id)
@@ -12513,7 +12656,11 @@
 	}
 
 	function questionCard(id, ask) {
-		const holder = askCard(id, ask, 'agent 在问你')
+		// 4.14.1：迟到的那条要**自己说清** ✓（"你错过了，但现在还能答"✓）——
+		// 写成普通的"agent 在问你"会让用户以为它一直在等他 ✗。
+		const holder = askCard(id, ask, ask?.late !== undefined && ask?.late !== null
+			? 'agent 在问你（这条手机上刚才没弹出来 ✓ 现在还能答 ✓）'
+			: 'agent 在问你')
 		const questions = Array.isArray(ask.payload?.questions) ? ask.payload.questions : []
 
 		for (const question of questions) {

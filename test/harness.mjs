@@ -3376,6 +3376,26 @@ async function readInteraction(reader) {
 	return null
 }
 
+/** 从一条 SSE 流里读到第一个指定类型的帧 ✓（4.14.1 的 `ask-waiting` 用得上 ✓）。 */
+async function readFrame(reader, wanted) {
+	const decoder = new TextDecoder()
+	let buffer = ''
+	const deadline = Date.now() + 5000
+	while (Date.now() < deadline) {
+		const { value, done } = await reader.read()
+		if (done) break
+		buffer += decoder.decode(value, { stream: true })
+		const lines = buffer.split('\n')
+		buffer = lines.pop() ?? ''
+		for (const line of lines) {
+			if (!line.startsWith('data: ')) continue
+			const payload = JSON.parse(line.slice(6))
+			if (payload.t === wanted) return payload
+		}
+	}
+	return null
+}
+
 // 没有手机在看这个会话时必须【立刻】next()：桌面上的批准框不能因为我们而迟到。
 {
 	let delegated = false
@@ -3384,6 +3404,55 @@ async function readInteraction(reader) {
 		() => { delegated = true; return Promise.resolve({ answers: [] }) },
 	)
 	check('没有手机在看这个会话时，立刻交还桌面', delegated === true)
+}
+
+/*
+ * 🔴 4.14.1「手机上错过的提问」（用户 2026-10-16：「我看不见你的问题手机端」✓）。
+ *
+ * 病根：卡片**只在"提问发生那一刻、有手机正在看这个会话"时**才推 ✗ ——
+ * 手机在别的会话 / 被系统挂起（选图片、切出去）/ 正在重连那几秒，提问**一个字都到不了手机** ✗。
+ * 这一版补两样：
+ *   ① 没交给手机时，给**所有**在线手机发一条**只有 id** 的提示帧 ✓
+ *      （⚠️ 正文绝不上广播 ✗ —— 桥支持多台设备，广播正文 = 跨会话泄漏 ✓）；
+ *   ② 超时之后仍然收得住的那些（宿主 `userQuestions.continued` ✓），手机可以**迟到作答** ✓。
+ */
+{
+	const stream = await fetch(`${base}/api/stream?sessionId=session-elsewhere`, authed)
+	const reader = stream.body.getReader()
+	let delegated = false
+	await askHandlers[0](
+		{
+			agent: { id: 'nobody-watching-2' },
+			questions: [{ id: 'q1', question: '这条手机看得见吗？', options: [{ label: '看得见' }] }],
+			wait: { callId: 'call-elsewhere' },
+		},
+		() => { delegated = true; return Promise.resolve({ answers: [] }) },
+	)
+	check('没人看的会话：桌面**立刻**接手 ✓（不因为手机而迟到 ✓）', delegated === true)
+	const hint = await readFrame(reader, 'ask-waiting')
+	check('🔴 那条"别的会话有提问"的提示帧到了手机上 ✓（这就是"手机上看不见提问"的那个补丁 ✓）',
+		hint !== null && hint.sessionId === 'nobody-watching-2' && hint.callId === 'call-elsewhere',
+		JSON.stringify(hint)?.slice(0, 120))
+	check('🔴 提示帧里**没有提问正文** ✓（只放 id —— 广播正文等于跨会话泄漏 ✗）',
+		hint !== null && hint.questions === undefined && JSON.stringify(hint).includes('看得见') === false,
+		JSON.stringify(hint))
+	await reader.cancel().catch(() => {})
+
+	check('`GET /api/waiting` 要登录 ✓（"还有哪些提问在等人答"也是隐私 ✓）',
+		(await fetch(`${base}/api/waiting`)).status === 401)
+	const waiting = await (await fetch(`${base}/api/waiting`, authed)).json()
+	check('🔴 `GET /api/waiting`：**能不能读**和**有没有**是两件事 ✓（`available:false` 时表必须是空的 ✓——"读不到"绝不许说成"没有" ✗）',
+		typeof waiting.available === 'boolean' && Array.isArray(waiting.items)
+		&& (waiting.available === true || waiting.items.length === 0),
+		JSON.stringify(waiting).slice(0, 90))
+	const lateBogus = await fetch(`${base}/api/answer`, {
+		method: 'POST', headers: { cookie, 'x-dsh-pin': config.pin, 'content-type': 'application/json' },
+		body: JSON.stringify({ callId: 'call-nope', sessionId: 'session-test', answers: [{ id: 'q1', selected: ['x'] }] }),
+	})
+	const lateBogusBody = await lateBogus.json().catch(() => ({}))
+	check('🔴 迟到作答答不上时**如实回**（409/503 + 一句人话 ✓）—— 不许回 200 假装收下 ✗',
+		(lateBogus.status === 409 || lateBogus.status === 503) && String(lateBogusBody.error ?? '').length > 5,
+		`HTTP ${lateBogus.status} ${JSON.stringify(lateBogusBody).slice(0, 90)}`)
 }
 
 // 有手机在看：问题出现在 SSE 上，答案经 POST /api/answer 回到 waterfall。
