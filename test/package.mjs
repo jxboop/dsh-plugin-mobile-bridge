@@ -970,5 +970,47 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		/\$\('docBack'\)\.addEventListener\('click', \(\) => \{ hide\(\$\('docopen'\)\); \$\('docBody'\)\.textContent = '' \}\)/.test(page))
 }
 
+/*
+ * 32) 🔴 **4.16.1「隧道断了？」**（用户 2026-10-17：「为什么隧道断了？」✓）—— 那次是**误报** ✓：
+ * 隧道一直活着 ✓（外网实测 HTTP 200 ✓、Tailscale Funnel 每 2 分钟健康检查 ✓、证书有效 ✓），
+ * 可徽标上红着「⚠️ 隧道已断，手机连不上」✗；而 `tools\tunnel-status.ps1` 还在**无条件查 cloudflared** ✗
+ * （这台机器走的是 Tailscale Funnel ✓，根本不需要它 ✗）→ 于是体检输出一个假 [X] ✓，
+ * 最后那句「结论：有问题」把自己上面刚打印的「外网能不能打开：HTTP 200」**推翻** ✗。
+ *
+ * 判据钉在这三条上（都是**措辞即事实** ✓）：
+ *   ① 运行时那句**不许把"本机探不通"说成"手机连不上"** ✗（探针在这台电脑上跑 ✓，DNS 抖一下就够了 ✓）；
+ *   ② 徽标同理 ✓；
+ *   ③ 体检脚本要**先认路线** ✓（`*.ts.net` → 查 Tailscale ✓，别再要求 cloudflared ✗）。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const script = await readFile(join(ROOT, 'tools', 'tunnel-status.ps1'), 'utf8')
+	check('🔴 自检失败那句**不再断言"手机连不上"** ✗（改成 "the phone may still be fine" ✓ —— 这是"读不到 ≠ 没有"的同一课 ✓）',
+		host.includes('the phone may still be fine')
+		&& host.includes('tunnel unreachable: the phone cannot connect right now') === false)
+	check('🔴 徽标那句也如实 ✓（「本机自检没连上公网（手机可能仍能连…）」✓ —— 不许再说「隧道已断，手机连不上」✗）',
+		host.includes('本机自检没连上公网') && host.includes('隧道已断，手机连不上') === false)
+	check('🔴 体检脚本**先认路线** ✓：`*.ts.net` → Tailscale Funnel ✓（查服务 + serve 转发 ✓，不再无条件要 cloudflared ✗）',
+		script.includes("$urlIsTailscale = ($url -match '\\.ts\\.net')")
+		&& script.includes('cloudflaredMissing')
+		&& script.includes('Tailscale 已把外网转发到本机'))
+	check('🔴 桌宠清单可以**自带装扮名** ✓（`spriteLabels` ✓ —— 长按工具条按它显示 ✓，没写退回内置四个字 ✓）',
+		(/pet\?\.spriteLabels\?\.\[key\] \?\? LABELS\[key\] \?\? key/).test(await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')))
+	/*
+	 * 🔴 4.16.1「跑动模式」（用户 2026-10-17：「可以有模式缩小一点让他在对话框上面那一条线上跑动，
+	 * 就像电脑上一样」✓）：判据钉在**那三件事**上 ✓ —— 缩小 ✓、贴着**输入框上边**那条线 ✓、会走会掉头 ✓。
+	 */
+	{
+		const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+		check('🔴 跑动时**缩小** ✓（`Math.min(petState.scale, 0.62)` ✓ —— 不覆盖用户手调的倍率 ✓）',
+			page.includes('Math.min(petState.scale, 0.62)'))
+		check('🔴 地面 = **输入框上边那条线** ✓（`$(\'text\').getBoundingClientRect().top` ✓ —— 不是随便飘 ✓）',
+			page.includes("textarea.getBoundingClientRect()") && page.includes('rect.top - (width * 4 / 3)'))
+		check('🔴 会走 ✓ 会掉头 ✓ 有按钮 ✓ 有碎步 ✓（`setRoam` / `roamDir` / `petRoam` / `petwalk` ✓）',
+			page.includes('function setRoam(') && page.includes('roamDir = -1')
+			&& page.includes("roamBtn.id = 'petRoam'") && page.includes('#petBody.petwalk'))
+	}
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

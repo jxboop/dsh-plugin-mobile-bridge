@@ -337,7 +337,12 @@ agent 卡在 `ask_user_question` 上等你选，或者某个工具调用需要�
 1. **改用局域网地址** —— 同一个 WiFi 下，这条链路完全不依赖隧道。地址由宿主在 `bootstrap` 里给（含密钥段的完整 URL）。注意换地址等于换站点，cookie 带不过去，**要重输一次 PIN**。
 2. **重试连接** —— 不换地址，直接重连。
 
-桌面那一侧也不再装死：插件每 120 秒从外网探一次自己的隧道，连续两次探不通就把徽标上的外网地址标红成「⚠️ 隧道已断，手机连不上」，并往 `~/.dsh/mobile-bridge.log` 写一行。**恢复时也会写一行。**
+桌面那一侧也不再装死：插件每 120 秒从外网探一次自己的隧道，连续两次探不通就把徽标上的外网地址标红成「⚠️ 本机自检没连上公网（手机可能仍能连）」，
+并往 `~/.dsh/mobile-bridge.log` 写一行。**恢复时也会写一行。**
+⚠️ **4.16.1 起措辞改准了** ✓：探针是在**这台电脑上**跑的 ✓，本机 DNS / 网络抖一下就会失败 ✓，
+**不等于手机连不上** ✗（旧文案写的是「隧道已断，手机连不上」✗ —— 2026-10-17 就是这么把用户误导的 ✓）。
+要逐项结论就跑 `tools\tunnel-status.ps1` ✓：它会**先认路线**（外网地址是 `*.ts.net` 就按 Tailscale Funnel 查 ✓，
+不再去要求 cloudflared ✗），最后以**外网实测**为准 ✓。
 
 
 ### 手机上是 Cloudflare 错误页？（Error 1033 / 1016）
@@ -441,7 +446,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1764 项**（package **163** · harness **612** · qr 12 · ui **846** · security 54 · crashprobe 17 ·
+**九个套件共 1774 项**（package **170** · harness **612** · qr 12 · ui **849** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。

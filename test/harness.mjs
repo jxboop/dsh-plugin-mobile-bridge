@@ -597,9 +597,17 @@ let cookie = ''
 const pageResponse = await fetch(`${base}/`)
 const pageHtml = await pageResponse.text()
 check('GET / serves the phone page', pageResponse.status === 200 && pageHtml.includes('DSH 手机端'))
-check('the page forbids caching outright',
-	/no-store/.test(pageResponse.headers.get('cache-control') ?? '') && pageResponse.headers.get('pragma') === 'no-cache',
-	`${pageResponse.headers.get('cache-control')} / ${pageResponse.headers.get('pragma')}`)
+/*
+ * 2026-10-18 改了策略（用户：「可以缓存到手机上吗」✓）：
+ * 以前是 `no-store`（**不许存** ✗ → 每次打开都重下 285 KB ✗）；
+ * 现在是 `no-cache` + 强 ETag（**存但必须校验** ✓ → 没变就 304 ✓）。
+ * 旧断言 "forbids caching outright" 已过期 ✗ —— 换成"可缓存、但必须校验" ✓。
+ */
+check('the page is cacheable but always revalidated (no-cache + strong ETag)',
+	/no-cache/.test(pageResponse.headers.get('cache-control') ?? '')
+	&& pageResponse.headers.get('pragma') === 'no-cache'
+	&& /^"page-[0-9a-f]+"$/.test(pageResponse.headers.get('etag') ?? ''),
+	`${pageResponse.headers.get('cache-control')} / ${pageResponse.headers.get('etag')}`)
 
 // The tag is what lets a phone that stayed open across a server restart notice
 // its UI is stale. If the marker ever ships unreplaced, that detection breaks
@@ -752,6 +760,28 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 		check('更新历史里没有"测试/实现细节"这类维护者向的行',
 			noisy.length === 0, noisy.slice(0, 3).join(' | '))
 	}
+}
+
+
+/* --- 页面缓存（2026-10-18 用户：「可以缓存到手机上吗」）-------------------- */
+/*
+ * 之前页面是 `cache-control: no-store` ✗ —— 手机每打开一次就重下整页（gzip 285 KB ✗），
+ * 慢线路上等于永远打不开 ✓。现在：no-cache + 强 ETag ✓，内容没变回 304（几十字节 ✓）。
+ */
+{
+	const first = await fetch(`${base}/index.html`, { headers: { cookie } })
+	const etag = first.headers.get('etag') ?? ''
+	const cc = first.headers.get('cache-control') ?? ''
+	check('页面带强 ETag（手机下次只校验、不重下 ✓）', /^"page-[0-9a-f]+"$/.test(etag), etag)
+	check('页面允许缓存但要校验：no-cache，且不再是 no-store ✗',
+		cc.includes('no-cache') && cc.includes('no-store') === false, cc)
+	const second = await fetch(`${base}/index.html`, { headers: { cookie, 'if-none-match': etag } })
+	const body = await second.text()
+	check('内容没变 → 304 且正文 0 字节 ✓（一次打开的成本从 285 KB 降到几十字节）',
+		second.status === 304 && body.length === 0, `${second.status} / ${body.length} 字节`)
+	const changed = await fetch(`${base}/index.html`, { headers: { cookie, 'if-none-match': '"page-0000000000000000"' } })
+	check('ETag 不对 → 照常 200 全量返回（不会把旧页面塞给用户 ✗）',
+		changed.status === 200 && (await changed.text()).length > 1000, String(changed.status))
 }
 
 const guarded = await fetch(`${base}/api/bootstrap`)

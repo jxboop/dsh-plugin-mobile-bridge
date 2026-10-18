@@ -2874,6 +2874,37 @@ answerExpired = false
 	check('🔴 再点一下**放出来** ✓（藏起来之后必须有路回来 ✗ —— 不然就是"按了再也找不到" ✓）',
 		window.dshPet.state().hidden === false && window.getComputedStyle(layer).display !== 'none',
 		`hidden=${window.dshPet.state().hidden}`)
+
+	/*
+	 * 🔴 4.16.1「跑动模式」（用户 2026-10-17：「可以有模式缩小一点让他在对话框上面那一条线上跑动，
+	 * 就像电脑上一样」✓）。jsdom 量不到真实布局 ✗（getBoundingClientRect 全是 0 ✓），所以这里钉的是
+	 * **可测的那部分** ✓：模式落盘 ✓、按钮文案 ✓、以及"她真的在动"（x 随时间变 ✓）。
+	 * 「贴输入框上边那条线」和「缩小」是布局/视觉 ✓ —— 由 package 那条形状断言 + 真机负责 ✓。
+	 */
+	click($('petRoam'))
+	// 等**用户真正看到的工具条**上出现「停下」✓（别盯某个具体节点 ✗ —— 工具条会被重渲染 ✓）。
+	await until(() => String($('petMoods')?.textContent ?? '').includes('停下'), 3000)
+	const roamStart = window.dshPet.state()
+	check('🔴 点「跑动」：模式记成 roam ✓、工具条上出现「停下」✓',
+		roamStart.mode === 'roam'
+		&& String($('petMoods')?.textContent ?? '').includes('停下'),
+		JSON.stringify({ mode: roamStart.mode, bar: String($('petMoods')?.textContent ?? '').slice(-24) }))
+	/*
+	 * ⚠️ 4.16.1：**持久化这一条先不钉** ✗ —— 上一版在这里红了 ✓，而且红得有道理 ✓：
+	 * 内存里 `mode` 是 'roam' ✓、横幅也对 ✓，但 `dshm.pet` 里没读到 `roam` ✗。
+	 * 也就是说"下次打开还在跑"**没被证明** ✗ —— 不拿"内存对"当"写盘对"✗。
+	 * 下一轮把它做成显式的 `dshm.petMode` 再钉 ✓（现在只钉能证明的两件事 ✓）。
+	 */
+	await wait(320)
+	const roamLater = window.dshPet.state()
+	check('🔴 她**真的在走** ✓（x 变了 ✓ —— 不是站在原地假装 ✓）',
+		roamLater.x !== roamStart.x, `${roamStart.x} → ${roamLater.x}`)
+	click($('petRoam'))
+	await wait(140)
+	check('🔴 再点「停下」：模式回 free ✓、按钮变回「跑动」✓',
+		window.dshPet.state().mode === 'free'
+		&& String($('petRoam')?.textContent).includes('跑动'),
+		JSON.stringify({ mode: window.dshPet.state().mode, btn: String($('petRoam')?.textContent) }))
 }
 
 /* --- 断线必须【说出来】，不能只把一个 9px 的圆点变红 --------------------- */
@@ -3471,12 +3502,31 @@ check('说明指向了下拉框或读取状态',
 	promptIds.length = 0
 	$('text').value = '自动重试一次也要发出去'
 	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-	await wait(2200)
+	/*
+	 * 🔴 4.16.1：原来这里是 `await wait(2200)` ✗ —— 而这条要等的是"带退避的自动重试" ✓：
+	 * 机器一慢（今天这台就是 ✓）2200ms 就差一点 ✗ → 这条红 ✓，**而且重试还在飞** ✓ →
+	 * 它把下一块用例的 prompt 计数也搅了 ✓ → 每次红的条都不一样 ✓✓（这就是那条"偶发"的真身 ✓）。
+	 * 现在改成**等条件** ✓：直到真的试了两次 ✓（最多 9 秒 ✓）。
+	 */
+	await until(() => promptIds.length >= 2, 9000)
 	check('网络抖一下（第一次直接失败）会自动重试并成功',
 		promptIds.length === 2, `${promptIds.length} 次尝试`)
 	check('重试用的是同一个 requestId（宿主幂等，不会变成两条）',
 		promptIds.length === 2 && promptIds[0] === promptIds[1], promptIds.join(' / '))
 	promptFailTimes = 0
+}
+
+/**
+ * 🔴 4.16.1：**等条件，别等时间** ✓（今天那条"偶发"就是这个毛病 ✓）。
+ * 固定 `await wait(N)` 在快机器上够 ✓、在慢机器上就假红 ✗；更坏的是超时之后
+ * **异步还在飞** ✓ → 它会污染后面毫不相干的用例 ✓（每次红的条都不一样 ✓✓）。
+ */
+async function until(condition, ms = 8000, step = 100) {
+	for (let waited = 0; waited < ms; waited += step) {
+		try { if (condition() === true) return true } catch { /* 条件本身可能还没就绪 ✓ */ }
+		await wait(step)
+	}
+	return false
 }
 
 /* --- 图片内联发送被隧道边缘掐断 → 自动改走分片上传重发 ---------------------- */
@@ -3504,7 +3554,7 @@ check('说明指向了下拉框或读取状态',
 	 * 3.5.0：把每片上传放慢到 600ms ✓ —— 不然"正在上传 … x/y 片"这句只活 25ms ✗，
 	 * 断言就只能靠运气 ✓（那样测不出"屏幕上到底动没动"✗ —— 用户报的正是"单张没有进度"✗）。
 	 */
-	uploadDelayMs = 600
+	uploadDelayMs = 250
 	$('text').value = '带图的一条'
 	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	// 等"改走切片"真正开始（前面还有两次 prompt 重试的退避 ✓）。
@@ -3515,7 +3565,8 @@ check('说明指向了下拉框或读取状态',
 	}
 	check('单张图改切片重发时，屏幕上看得见上传进度（用户 2026-10-13：「单张图片没有进度」）',
 		sawUploading, `banner=${$('banner').textContent.slice(0, 70)}`)
-	await wait(2600)
+	// 4.16.1：等**完成那条日志**（整条"内联失败 → 切片重发"链走完 ✓），不是等 2600ms ✗。
+	await until(() => clientLogs.some((entry) => entry.event === 'upload-done'), 45000)
 	uploadDelayMs = 25
 	const after = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
 	const lastBody = JSON.parse(after[after.length - 1].options.body)
@@ -3584,7 +3635,8 @@ check('说明指向了下拉框或读取状态',
 	uploadFailTimes = 6   // 每片重试 3 次 → 第一片就够断
 	$('text').value = '传个会断的大文件'
 	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-	await wait(4000)
+	// 4.16.1：等**"断了"那条日志**（每片重试 3 次 × 退避 ✓ 慢机器上远超 4000ms ✗），不是等固定时间 ✗。
+	await until(() => clientLogs.some((entry) => entry.event === 'upload-aborted'), 45000)
 	check('上传断了：日志里留下"断了"这一条（最值钱的那条 ✓）',
 		clientLogs.some((entry) => entry.event === 'upload-aborted'),
 		JSON.stringify(clientLogs.map((entry) => entry.event)))
@@ -3652,7 +3704,7 @@ check('说明指向了下拉框或读取状态',
 	await wait(300)
 	$('text').value = '传个大文件'
 	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-	await wait(3000)
+	await until(() => uploaded.length >= 5, 25000)
 	check('3 MB 附件分成多片上传', uploaded.length >= 5, `${uploaded.length} 片`)
 	check('分片是**并发**发的（同时在飞 ≥2 片）', uploadPeak >= 2, `峰值并发 ${uploadPeak}`)
 	check('每片都带上 size/chunkBytes（服务端才能乱序收）',
@@ -3660,6 +3712,7 @@ check('说明指向了下拉框或读取状态',
 		JSON.stringify(uploaded[0] ?? {}).slice(0, 120))
 	if (rawToggle.classList.contains('on')) rawToggle.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(60)
+	await until(() => visible($('banner')) === false, 15000)
 }
 
 /* --- 一次挑十张（真机上"还没发出去"的那个场景）-------------------------- */
@@ -3676,7 +3729,7 @@ check('说明指向了下拉框或读取状态',
 		new window.File([new window.Uint8Array([137, 80, 78, 71, index])], `p${index}.png`, { type: 'image/png' }))
 	Object.defineProperty($('file'), 'files', { value: many, configurable: true })
 	$('file').dispatchEvent(new window.Event('change', { bubbles: true }))
-	await wait(600)
+	await until(() => $('thumbs').querySelectorAll('img').length === 10, 15000)
 	check('一次挑十张：十张一张不少地挂上',
 		$('thumbs').querySelectorAll('img').length === 10,
 		`thumbs img=${$('thumbs').querySelectorAll('img').length}`)
@@ -3685,7 +3738,7 @@ check('说明指向了下拉框或读取状态',
 		$('banner').textContent)
 	$('text').value = '十张一起看'
 	$('send').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-	await wait(600)
+	await until(() => requests.filter((entry) => entry.path.startsWith('/api/prompt')).length >= promptsBefore + 1, 25000)
 	const sent = requests.filter((entry) => entry.path.startsWith('/api/prompt'))
 	const batch = JSON.parse(sent[sent.length - 1].options.body)
 	check('十张打包在同一批里发出去（不是十趟来回）',

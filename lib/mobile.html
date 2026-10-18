@@ -2580,6 +2580,9 @@
 	     取不到素材时 `#petSprite` 不显示 ✗、退到**代码画的那只**（内联 SVG ✓，插件自带 ✓）。 -->
 	<style>
 		#petLayer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
+		/* 4.16.1：跑动时的小碎步 ✓（只在 .petwalk 时动 ✓ —— 停下就是静止的 ✓）。 */
+		@keyframes petwalkbob { 0%,100% { translate: 0 0; } 50% { translate: 0 -3px; } }
+		#petBody.petwalk { animation: petwalkbob .38s ease-in-out infinite; }
 		#petBody { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; touch-action: none;
 			-webkit-user-select: none; user-select: none; cursor: grab; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
 		#petBody img, #petBody svg { width: 100%; height: 100%; display: block; object-fit: contain; }
@@ -2666,12 +2669,34 @@
 			}
 			function apply() {
 				clamp()
+				// 4.16.1：**跑动模式** ✓（用户 2026-10-17：「缩小一点让他在对话框上面那一条线上跑动，就像电脑上一样」✓）。
+				// 老状态里没有 mode 这一格 → 缺省 free ✓（各端各存 ✓）。
+				if (petState.mode !== 'roam') petState.mode = 'free'
+				// 4.16.1：**按钮文案跟着状态走** ✓ —— 放在 apply() 里（状态的唯一落点 ✓），
+				// 这样任何一次重渲染都不会把它冲掉 ✗（只在点击那一刻设一次就吃过这个亏 ✓）。
+				const roamButton = document.getElementById('petRoam')
+				if (roamButton !== null) roamButton.textContent = petState.mode === 'roam' ? '停下' : '跑动'
+				// 记着的模式是"跑动"时，**开机就走起来** ✓（幂等 ✓ —— startRoam 自己会挡重复 ✓）。
+				if (petState.mode === 'roam' && petState.hidden !== true) startRoam()
 				layer.style.display = petState.hidden === true ? 'none' : 'block'
-				const width = 132 * petState.scale
+				const roam = petState.mode === 'roam'
+				// 跑的时候**小一点** ✓（"缩小一点" ✓）—— 用 0.62 与用户自己拖的倍率取小 ✓，不覆盖他的手调 ✓。
+				const scale = roam === true ? Math.min(petState.scale, 0.62) : petState.scale
+				const width = 132 * scale
 				body.style.width = width + 'px'
 				body.style.height = (width * 4 / 3) + 'px'
+				// 跑动模式：**贴着输入框上边那条线** ✓（那一条就是"地面"✓ —— 她在那条线上跑 ✓）。
+				let topPct = petState.y * 100
+				if (roam === true) {
+					const textarea = $('text')
+					const rect = textarea === null ? null : textarea.getBoundingClientRect()
+					const ground = rect !== null && rect.top > 0
+						? rect.top - (width * 4 / 3) + width * 0.12   // 脚落在输入框上边 ✓
+						: window.innerHeight * 0.72                    // 量不到也要有个稳定地面 ✓
+					topPct = (ground / Math.max(1, window.innerHeight)) * 100
+				}
 				body.style.left = (petState.x * 100) + '%'
-				body.style.top = (petState.y * 100) + '%'
+				body.style.top = topPct + '%'
 				// 4.15.1：**没有圈了** ✓ —— 说话那行挪到她**旁边**（左边）✓，不再顶在头上 ✗。
 				say.style.left = (petState.x * 100) + '%'
 				say.style.top = ((petState.y * 100) - 6 * petState.scale) + '%'
@@ -2759,7 +2784,33 @@
 				}
 				return typeof table[name] === 'string' ? table[name] : String(name ?? 'idle')
 			}
-			/** 点一下有反应 ✓：换一只立绘 + 说一句 + 弹一下 ✓（素材缺了就只弹一下 ✓）。 */
+			/* ---------- 4.16.1：跑动模式 ✓（沿着输入框上边那条线走 ✓，像电脑上的桌宠 ✓） ---------- */
+			const ROAM_SPEED = 0.55   // 每次 tick 走的屏幕百分比（约等于每秒 4~6% 宽 ✓ 慢慢晃 ✓）
+			let roamTimer = 0
+			let roamDir = 1
+			function stopRoam() {
+				if (roamTimer !== 0) { window.clearInterval(roamTimer); roamTimer = 0 }
+				body.classList.remove('petwalk')
+			}
+			function startRoam() {
+				if (roamTimer !== 0) return
+				body.classList.add('petwalk')
+				roamTimer = window.setInterval(() => {
+					if (petState.hidden === true || petState.mode !== 'roam') { stopRoam(); return }
+					petState.x += (roamDir * ROAM_SPEED) / 100
+					// 走到两头就掉头 ✓（碰到边就转 ✓ —— 不让她跑出屏幕 ✗）
+					if (petState.x > 0.9) { petState.x = 0.9; roamDir = -1 }
+					if (petState.x < 0.08) { petState.x = 0.08; roamDir = 1 }
+					apply()
+				}, 90)
+			}
+			function setRoam(on) {
+				petState.mode = on === true ? 'roam' : 'free'
+				if (on === true) startRoam(); else stopRoam()
+				apply()
+				save()
+			}
+			/** 点一下她：跑动时只弹一下换个表情 ✓，不打断跑 ✓；自由模式照旧换脸 + 说话 ✓。 */
 			function poke() {
 				const key = spriteFor('poke')
 				showSprite(key)
@@ -2827,10 +2878,25 @@
 				}
 				for (const key of keys) {
 					const button = document.createElement('button')
-					button.textContent = String(LABELS[key] ?? key)
+					// 4.16.1：清单可以**自带装扮名** ✓（`spriteLabels` ✓ —— 比如 Coopanion 那套「女仆 / 披风」✓）；
+					// 没写就退回内置那四个字 ✓（中性 / 开心 / 难受 / 吃饭 ✓）。
+					button.textContent = String(pet?.spriteLabels?.[key] ?? LABELS[key] ?? key)
 					button.addEventListener('click', () => { showSprite(key); const line = lineOf(key); if (line !== '') { say.textContent = line; say.style.display = 'block' } })
 					moods.appendChild(button)
 				}
+				// 4.16.1：**跑动 / 停下** ✓（用户：「缩小一点让他在对话框上面那一条线上跑动，就像电脑上一样」✓）
+				const roamBtn = document.createElement('button')
+				roamBtn.id = 'petRoam'
+				roamBtn.textContent = petState.mode === 'roam' ? '停下' : '跑动'
+				roamBtn.addEventListener('click', () => {
+					setRoam(petState.mode !== 'roam')
+					// ⚠️ **只改这一个按钮的字** ✓ —— 原来这里调 renderBar() 重建整条工具条 ✗：
+					// 点的那一下按钮会被换掉 ✓，读它文案的人（测试 / 读屏）拿到的是**旧节点** ✗。
+					roamBtn.textContent = petState.mode === 'roam' ? '停下' : '跑动'
+					const line = lineOf(petState.mode === 'roam' ? 'happy' : 'idle')
+					if (line !== '') { say.textContent = line; say.style.display = 'block' }
+				})
+				moods.appendChild(roamBtn)
 			}
 			const sizeInput = document.getElementById('petSize')
 			sizeInput.value = String(Math.round(petState.scale * 100))
@@ -7177,8 +7243,16 @@
 			}).catch((error) => {
 				// 4.15.0 桌宠：**失败** → 懊恼一下 ✓（这是真出了错 ✓，不是"点了发送" ✓）。
 				window.dshPet?.mood?.('error')
-				// 2.7.0 ★8：**只**收网络层失败 ✓ —— 403/400 是"发不出去"，进箱只会一直卡着 ✗。
-				if (isOfflineError(error)) {
+				/*
+				 * 🔴 4.16.1 回归（用户报"发送图片发不出去"✓）：**带图的失败不能进离线发件箱** ✗。
+				 *
+				 * 原来的顺序是"先进发件箱 ✓ → 再抛出去 ✓ → 外层再想改切片"✗ —— 发件箱一旦收了，
+				 * 它自己会按内联把这条**又发一遍** ✓（于是最后一条 prompt 里 `images: 1` ✗），
+				 * 而"内联被掐断 → 自动改走切片上传"那条路**永远走不到** ✗（ui 里 7 条红就是它 ✓）。
+				 * 现在：**带图时一律交给外层去切片重发** ✓；只有不带图（或切片也失败 ✓）
+				 * 才进离线发件箱 ✓。
+				 */
+				if (isOfflineError(error) && inlineImages.length === 0) {
 					outboxAdd({ clientId, sessionId: target, text: body, images: inlineImages, fileRefs: refs })
 					toast('现在没网：这条已经收进「离线发件箱」，有网就自动发 ✓', 3200)
 				}
@@ -7217,13 +7291,29 @@
 						inlineNow[index].name || 'image', index + 1, inlineNow.length,
 						uploadProgressOne(inlineNow[index].name || 'image')))
 				}
-				return post([], fileRefs.concat(again))
+				// 切片传完再发一次（这次 body 里只有 fileRefs ✓）。它要是也断 ✗ → 那是真没网 ✓
+				// → 这时才进离线发件箱 ✓（带着已经传好的 fileRefs ✓，有网直接补发 ✓）。
+				return post([], fileRefs.concat(again)).catch((lastError) => {
+					if (isOfflineError(lastError)) {
+						outboxAdd({ clientId, sessionId: target, text: body, images: [], fileRefs: fileRefs.concat(again) })
+						toast('图片已传好，但这条没发出去：已收进「离线发件箱」，有网自动发 ✓', 3600)
+					}
+					throw lastError
+				})
 			})
 		}).then((result) => {
 			clearFlashIf('📡 正在发送…')
 			// 3.5.0：切片重发那条路的进度是**后弹**的 ✓（见 `clearUploadProgress` 的说明 ✓）——
 			// 发成功了就把它收掉 ✗，别让屏幕上永远停着"正在上传…"✓。
 			clearUploadProgress()
+			/*
+			 * 🔴 4.16.1：「**发送失败…重试**」也要收掉 ✗ —— 内联那次失败会弹一条**不会自动消失**的失败横幅 ✓
+			 *（`flash(..., 0, {label:'重试'})` ✓），接着自动改走切片重发**成功了** ✗ →
+			 * 可横幅还挂着"发送失败" ✓（用户以为没发出去 ✓，而实际上早到了 ✓）。
+			 * 这就是 3.5.0 那条回归的**高负载版本** ✓：ui 里「切片重发成功之后…」在忙机上两次都红在它上面 ✓。
+			 * 只按**前缀**收 ✓（`clearFlashIf` 的语义 ✓）—— 不吞别人刚弹的提示 ✓。
+			 */
+			clearFlashIf('发送失败')
 			// ★11：`sendNote`（弱网模式留下的附件 / 存不下改一起发）**现在**才弹 ✓ ——
 			// 发送前弹会被「正在发送…」盖掉 ✓。
 			if (sendNote !== '') flash(sendNote, 8000)
