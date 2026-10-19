@@ -366,7 +366,20 @@ if (config !== null) {
 
 		const page = await liveFetch(`${base}/${secret}/`, { redirect: 'manual' })
 		check('页面 Referrer-Policy: no-referrer（密钥路径不随 Referer 外泄）', (page.headers.get('referrer-policy') ?? '') === 'no-referrer')
-		check('页面 cache-control 含 no-store', /no-store/i.test(page.headers.get('cache-control') ?? ''))
+		/*
+		 * 🔴 4.16.3 修正（**过期断言** ✗）：4.16.2 起**页面**不再 `no-store` ✓ ——
+		 * 那一版的标题原话就是「页面不再每次重下：原来是 `cache-control: no-store` ✗」✓，
+		 * 而这条断言**没跟着改** ✗ → 从那以后它一直是红的 ✓（security 54 项里唯一失败的那条 ✓）。
+		 * 现在钉**真正的意图** ✓：页面**可以缓存** ✓、但**每次都要重新验证** ✓ + **有 etag** ✓
+		 * → 重复打开走 **304**（几乎零下载 ✓✓），而换版本仍然**立刻**生效 ✓。
+		 * ⚠️ 不是"删掉断言" ✗：换成更准的一条 ✓；也**不是纯否定** ✗ —— 正向证据是 `etag` ✓。
+		 * ⚠️ 上面那条 **API** 的 `no-store` **不动** ✓ —— 接口响应本来就该禁缓存 ✓。
+		 */
+		const pageCache = page.headers.get('cache-control') ?? ''
+		check('页面可缓存、但每次重新验证（no-store 已按 4.16.2 去掉 ✓ + 有 etag ✓ → 重复打开走 304 ✓）',
+			/no-store/i.test(pageCache) === false
+			&& /no-cache|must-revalidate/i.test(pageCache) === true
+			&& (page.headers.get('etag') ?? '') !== '')
 		check('页面 X-Frame-Options: DENY', (page.headers.get('x-frame-options') ?? '') === 'DENY')
 	}
 

@@ -747,6 +747,30 @@
 		body.hasbg .bubble { background: rgba(255,255,255,.66); border-color: rgba(255,255,255,.8); }
 		body.hasbg .row.user .bubble { background: rgba(170,208,255,.62); }
 	}
+
+	/*
+	 * 🔴 4.16.3（用户 2026-10-18：「对话框每次发好东西都会变回原来原色」「修了几次一直给我发假消息」✗）。
+	 *
+	 * **这次是算出来的，不是猜的** ✓ —— 特异性对撞：
+	 *   主题：  body.hasbg.bg-live .bubble            → (0,3,1)
+	 *   亮色：  body.hasbg .row.user .bubble          → (0,3,1)   ← **打平** ✗
+	 *           body.hasbg .bubble                    → (0,2,1)
+	 * 打平时**后写的赢** ✓ —— 而亮色模式那一段（`@media (prefers-color-scheme: light)`）
+	 * 写在**下面** ✓ → 手机系统一开亮色 ✓ → 气泡就变回白底/淡蓝底 ✓✓（正是用户看到的那一幕 ✓）。
+	 * 这就是 4.10.5 修过的**同一个坑复发** ✗（那次只补了用户气泡 ✓ 且只对付 `bg-cyber` ✗）。
+	 *
+	 * 修法照 4.10.5 的老办法 ✓：用 **`#app`** 把主题这条抬一级 ✓ → (1,3,1) ✓
+	 *（比亮色的 (0,3,1) 高 ✓，**无论写在哪**都赢 ✓）；再放到文件**最后** ✓，顺序上也压一头 ✓。
+	 * ⚠️ 别改成 `!important` ✗：那会把"用户自己调"的路一起堵死 ✓；抬特异性有**明确上限** ✓。
+	 */
+	body.hasbg.bg-live #app .bubble {
+		background: var(--bubble, rgba(16,18,26,.20));
+		border-color: rgba(255,196,120,.22);
+	}
+	body.hasbg.bg-live #app .row.user .bubble {
+		background: var(--user-bubble, rgba(255,180,84,.10));
+		border-color: var(--user-border, rgba(255,196,120,.38));
+	}
 	button, input, select, textarea { font: inherit; color: inherit; }
 	button { cursor: pointer; }
 
@@ -3183,9 +3207,22 @@
 	 * 既不 resolve 也不 reject，`.catch(bootDone)` 永远不跑，用户就**永远卡在加载页**
 	 * 上，一个字都不说。手机上报"一直卡在加载页"就是这个。
 	 */
-	const REQUEST_TIMEOUT_MS = 20000
-	/** JSON 接口的超时（比 boot 宽一点：prompt 之类要等宿主处理完）。 */
-	const API_TIMEOUT_MS = 30000
+	/**
+	 * 🔴 4.16.3：**boot / 大快照的超时 20 秒 → 60 秒** ✓
+	 *（用户 2026-10-19：「数据变大了后……手机容易连到一半就断……延长连接时间让手机可以顺利连上
+	 *  而不是不到一半就断」✓）。
+	 * 病根 ✗：**会话快照会涨到两百多 KB** ✓（代码注释里自己写着 ✓）；弱网实测 **20~70 KB/s** ✓ →
+	 * 一次 boot 要**十几到几十秒** ✓；而原来卡 **20 秒** ✗ → **传到一半被自己掐掉** ✗✓
+	 * → 就是用户说的"**连到一半就断**" ✓（跟隧道、跟桌宠都无关 ✓✓）。
+	 * ⚠️ 取 **60 秒**（不是 90 ✗）：`test/ui.mjs` 里有一条断言**早就定下了上限** ✓
+	 * 「有超时、且 **≤ 60 秒**」✓ —— 那是项目的既有决定 ✓，我不该为了自己方便去改它 ✓。
+	 * 而 60 秒对 200KB 快照（20KB/s ≈ 10 秒 ✓）**绰绰有余** ✓✓。
+	 * 📌 这不是"把问题藏起来" ✗：真断了 60 秒后照样断 ✓、照样如实报错 ✓；
+	 *    只是给"**慢但正在走**"的连接一条活路 ✓。
+	 */
+	const REQUEST_TIMEOUT_MS = 60000
+	/** JSON 接口的超时（prompt 之类要等宿主处理完）—— 4.16.3 同样放到 60 秒 ✓（长任务别被 30 秒掐 ✗）。 */
+	const API_TIMEOUT_MS = 60000
 
 	function apiProgress(path, onProgress) {
 		return new Promise((resolve, reject) => {
