@@ -1030,5 +1030,22 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& host.includes('上次手机连上的地址 ${escapes(drift.remembered)} 本机已经没有了'))
 }
 
+/*
+ * 36) 🔴 **5.0.2「把加载时间放宽」**（用户 2026-10-19：「加载页面又改回30秒了？……
+ * 你要把加载时间放宽，今天改过一次了」✓）。
+ *
+ * 4.16.3 从 20/30 秒放到 60 秒 ✓；可页面 gzip 后 292KB + `/api/boot` 还要带一段对话快照 ✓，
+ * 走 Funnel / 手机流量几十 KB/s 时**轻松越过 60 秒** ✓ → 5.0.2 放到 **120 秒** ✓。
+ * 判据两条 ✓：① 两个常量真是 120000 ✓；② 等过 30 秒时加载页**说人话**（别让人以为它死了 ✓）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 加载超时预算 **120 秒** ✓（`REQUEST_TIMEOUT_MS` / `API_TIMEOUT_MS` 都是 120000 ✓ —— 用户第二次点名要放宽）',
+		page.includes('const REQUEST_TIMEOUT_MS = 120000')
+		&& page.includes('const API_TIMEOUT_MS = 120000'))
+	check('🔴 等过 30 秒时加载页会**说人话** ✓（"网络很慢，但还在走（最多等 120 秒）"✓ —— 不许让人以为它挂了 ✗）',
+		page.includes('网络很慢，但还在走（最多等 120 秒）'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

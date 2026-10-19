@@ -1458,7 +1458,7 @@ const switchTo = async (sessionId) => {
 	// 连接被黑洞（丢包/NAT 超时）时请求永远 pending，boot 的 promise 既不成功也不失败，
 	// `.catch(bootDone)` 永远不跑，加载页就永远挂在那儿。这条断言守的就是那个 timeout。
 	check('boot 请求设了超时（不设 = 连接被黑洞时永远卡在加载页）',
-		xhrRequests.length >= 1 && xhrRequests[0].timeout > 0 && xhrRequests[0].timeout <= 60000,
+		xhrRequests.length >= 1 && xhrRequests[0].timeout > 0 && xhrRequests[0].timeout <= 120000,
 		`timeout=${xhrRequests[0]?.timeout}`)
 	check('boot 请求挂了 ontimeout 处理（超时要能落到"断线"那条路，而不是静默悬挂）',
 		typeof xhrRequests[0]?.ontimeout === 'function')
