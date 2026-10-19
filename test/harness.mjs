@@ -664,8 +664,8 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 		&& eras.every((row) => Array.isArray(row) && String(row[1] ?? '').length > 30),
 		(Array.isArray(eras) ? eras.map((row) => String(row?.[0])) : []).join(' / '))
 	const nextUp = readBlock('nextup')
-	check('🔴 5.0 预告真的发到了手机上 ✓（版本 + 主题 + 愿景条目 + "不是排期"的说明 ✓）',
-		nextUp !== null && typeof nextUp === 'object' && nextUp.version === '5.0.0'
+	check('🔴 下一版预告真的发到了手机上 ✓（版本 + 主题 + 愿景条目 + "不是排期"的说明 ✓）',
+		nextUp !== null && typeof nextUp === 'object' && nextUp.version === '5.1.0'
 		&& typeof nextUp.title === 'string' && nextUp.title !== ''
 		&& Array.isArray(nextUp.items) && nextUp.items.length >= 3
 		&& String(nextUp.note ?? '').includes('愿景'),
@@ -674,7 +674,7 @@ check('注入标记一处都没漏（replaceAll 而不是 replace）',
 	 * ⚠️ 预告里**不许出现日期** ✗ —— 它没排期 ✓。这条钉的是"以后有人往数据里写日期" ✓：
 	 * 项目里那份定稿就明写着"这一段是愿景，不是待办" ✓，写成有日期的清单就是在骗用户 ✗。
 	 */
-	check('⚠️ 5.0 预告里不写日期（愿景 ≠ 排期 ✓ —— 写日期就是承诺 ✗）',
+	check('⚠️ 下一版预告里不写日期（愿景 ≠ 排期 ✓ —— 写日期就是承诺 ✗）',
 		JSON.stringify(nextUp ?? {}).search(/20\d\d-\d\d-\d\d/) < 0,
 		JSON.stringify(nextUp ?? {}).slice(0, 120))
 }
@@ -2884,11 +2884,17 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	const wholeDomains = installWhole.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []
 	const wholeIps = installWhole.match(/\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b/g) || []
 	const wholeIpsBad = wholeIps.filter((ip) => ip !== '0.0.0.0')
+	/*
+	 * 🔴 5.0.0：文案里多了两处**公开的**域名 ✓ —— Tailscale 下载地址（`tailscale.com` ✓）
+	 * 与外网地址的占位后缀（`ts.net` ✓，真实电脑名不出现 ✓）。它们不是"你的地址" ✗，
+	 * 所以白名单加上它们 ✓；除此之外仍然一个域名都不许有 ✓。
+	 */
+	const allowedDomains = ['github.com', 'tailscale.com', 'ts.net']
 	check('🔴 **整个回包**里没有任何凭据 ✓：pathSecret / PIN / 本机或内网地址 / 任何域名都不许有 ✗（只查 text 会漏 ✓ —— 复查点名）',
 		installWhole.includes(config.pathSecret) === false
 		&& installWhole.includes(config.pin) === false
 		&& installWhole.includes('127.0.0.1') === false && wholeIpsBad.length === 0
-		&& wholeDomains.length > 0 && wholeDomains.every((hit) => hit.toLowerCase() === 'github.com'),
+		&& wholeDomains.length > 0 && wholeDomains.every((hit) => allowedDomains.includes(hit.toLowerCase())),
 		'长度=' + installWhole.length + ' 含路径密钥=' + installWhole.includes(config.pathSecret)
 		+ ' 出现的域名=' + JSON.stringify(wholeDomains) + ' IPv4=' + JSON.stringify(wholeIps))
 	/*
@@ -2901,7 +2907,7 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 		String(install.version ?? '') === pkgVersion
 		&& installText.includes('手机桥 v' + pkgVersion)
 		&& installText.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
-		&& installText.includes('三步装好'),
+		&& installText.includes('照着装好'),
 		JSON.stringify({ 回包版本: install.version, 期望: pkgVersion }))
 	/*
 	 * 4.2.0「网页版分享」✓（用户要的「方便同学阅读」✓）：`?format=html` 给一份**单文件静态页** ✓。
@@ -2924,28 +2930,54 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	 * 现在：**三段各自切出来、各自比对、并各自要求条数** ✓（哪段漂、哪段少一条都会红 ✓）。
 	 */
 	const stripMd = (value) => value.replace(/\*\*/g, '').replace(/`/g, '')
+	/*
+	 * 🔴 5.0.0：比对前要**解掉 HTML 实体** ✓ —— 新文案里有 `"`、`<电脑名>`、`&`（命令行），
+	 * 网页版把这三个转成了 `&quot;` / `&lt;` / `&amp;` ✓；原来只剥标签 ✗ → 同样的句子
+	 * 在网页版这边带着实体、文本版那边没有 ✓ → 同源那条**假红** ✓（我这一版当场撞上 ✓）。
+	 */
+	const htmlToText = (row) => row.replace(/<[^>]+>/g, '')
+		.replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+		.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
 	const itemsOf = (chunk) => (chunk.match(/<li>([\s\S]*?)<\/li>/g) || [])
-		.map((row) => stripMd(row.replace(/<[^>]+>/g, '').trim())).filter((row) => row !== '')
+		.map((row) => stripMd(htmlToText(row).trim())).filter((row) => row !== '')
 	const sectionOf = (source, from, to) => {
 		const tail = source.split(from)[1]
 		return tail === undefined ? '' : (to === undefined ? tail : tail.split(to)[0])
 	}
-	const needHtml = itemsOf(sectionOf(installHtml, '装之前要有的东西', '三步装好'))
-	const stepsHtml = itemsOf(sectionOf(installHtml, '三步装好', '卡住了看这里'))
+	const needHtml = itemsOf(sectionOf(installHtml, '装之前要有的东西', '照着装好'))
+	const stepsHtml = itemsOf(sectionOf(installHtml, '照着装好', '卡住了看这里'))
 	const troubleHtml = itemsOf(sectionOf(installHtml, '卡住了看这里', '安全'))
-	const needText = stripMd(sectionOf(installText, '装之前要有的东西', '三步装好'))
-	const stepsText = stripMd(sectionOf(installText, '三步装好', '卡住了看这里'))
+	const needText = stripMd(sectionOf(installText, '装之前要有的东西', '照着装好'))
+	const stepsText = stripMd(sectionOf(installText, '照着装好', '卡住了看这里'))
 	const troubleText = stripMd(sectionOf(installText, '卡住了看这里', '安全'))
 	const partOk = (htmlItems, textSection, min) =>
 		htmlItems.length >= min && textSection.length > 50 && htmlItems.every((row) => textSection.includes(row))
-	const sameSource = partOk(needHtml, needText, 4) && partOk(stepsHtml, stepsText, 7) && partOk(troubleHtml, troubleText, 5)
+	const sameSource = partOk(needHtml, needText, 5) && partOk(stepsHtml, stepsText, 10) && partOk(troubleHtml, troubleText, 8)
 	check('🔴 网页版与文本版**同源** ✓（三段各自逐条比对 + 各自条数下限 ✓ —— 两边各写一份必然漂 ✗）',
-		installHtml.includes('三步装好') && installHtml.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
+		installHtml.includes('照着装好') && installHtml.includes('github.com/jxboop/dsh-plugin-mobile-bridge')
 		&& sameSource
 		&& installHtml.includes('手机桥 v' + pkgVersion) && installHtml.includes('加到主屏幕'),
 		`要什么 ${needHtml.length}/${needText.length} 字符 步骤 ${stepsHtml.length}/${stepsText.length} 字符`
 		+ ` 卡住了 ${troubleHtml.length}/${troubleText.length} 字符；同源=${sameSource}`
 		+ ` 版本=${installHtml.includes('手机桥 v' + pkgVersion)}`)
+	/*
+	 * 🔴 5.0.0（用户 2026-10-19：「这个分享功能里面的 tails 软件必须装上，你改一下，要能从外网连」✓）：
+	 * 之前文案把 Tailscale 写成**可选** ✗ —— 分享给朋友之后，人家只能在同一 WiFi 下用 ✓。
+	 * 现在钉四件事：① Tailscale 是**必装**前置 ✓；② 步骤里真有开外网入口的命令 ✓；
+	 * ③ 真写了怎么让手机桥用那条 https 地址（`publicUrl` ✓）；④ 网页版里下载地址**点得动** ✓。
+	 */
+	check('🔴 Tailscale 写成**必装** ✓（不再标"可选" ✗ —— 用户 2026-10-19 点名 ✓）',
+		needText.includes('Tailscale') && needText.includes('必装')
+		&& installText.includes('（可选 —— 最后一步会说）') === false,
+		needText.slice(0, 80))
+	check('🔴 外网步骤真的写了：开 Funnel 的命令 ✓ + 固定 https 地址 ✓ + 从外网验一次（关 WiFi 用流量）✓',
+		stepsText.includes('tailscale funnel') && stepsText.includes('ts.net')
+		&& stepsText.includes('关掉 WiFi') && stepsText.includes('从外网验一次'),
+		stepsText.slice(-160))
+	check('🔴 写了怎么让手机桥用那条 https 地址 ✓（`publicUrl` 写进 mobile-bridge.json ✓ —— 不然日志里还是 192.168 ✗）',
+		stepsText.includes('publicUrl') && stepsText.includes('mobile-bridge.json') && troubleText.includes('publicUrl'))
+	check('🔴 网页版里 Tailscale 下载地址是**可点的链接** ✓（不是让同学手抄 ✓）',
+		installHtml.includes('<a href="https://tailscale.com/download"'))
 	/*
 	 * ⚠️ 4.3.0 检修（冷视角复查的橙 ✓）：这条原来只查字面 `127.0.0.1` ✗ ——
 	 * 名字写着"本机地址 / 内网地址统统不许有" ✓，可 `192.168.x` / `10.x` / `172.16-31.x` / `100.64.x`
@@ -2960,10 +2992,11 @@ check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, 
 	 * 现在先取出来、**要求至少有一个**（文案里本来就有仓库地址 ✓），再逐个别名（只放行 github.com ✓）。
 	 */
 	const htmlDomains = installHtml.match(/[a-z0-9-]+\.(net|io|com|dev|app|org)\b/gi) || []
-	check('🔴 网页版**整个页面**里也没有任何凭据 ✓（pathSecret / PIN / 本机或内网地址 / 除 github.com 外的域名统统不许有 ✗）',
+	const htmlDomainsBad = htmlDomains.filter((hit) => ['github.com', 'tailscale.com', 'ts.net'].includes(hit.toLowerCase()) === false)
+	check('🔴 网页版**整个页面**里也没有任何凭据 ✓（pathSecret / PIN / 本机或内网地址 / 除 github.com、tailscale.com、ts.net 外的域名统统不许有 ✗）',
 		installHtml.includes(config.pathSecret) === false && installHtml.includes(config.pin) === false
 		&& installHtml.includes('127.0.0.1') === false && ipv4Bad.length === 0
-		&& htmlDomains.length > 0 && htmlDomains.every((hit) => hit.toLowerCase() === 'github.com'),
+		&& htmlDomains.length > 0 && htmlDomainsBad.length === 0,
 		'出现的域名=' + JSON.stringify(htmlDomains) + ' IPv4=' + JSON.stringify(ipv4All))
 	/*
 	 * ⚠️ 4.3.0（冷视角复查点名的黄 ✓）：网页版原来只把 `**强调**` 转成 `<strong>` ✗，
@@ -4037,7 +4070,19 @@ process.on('uncaughtException', onCrash)
  */
 const welcomeDevice = 'dshm_device=harness-welcome-version'
 await fetch(`${base}/api/welcomed`, { method: 'POST', headers: { cookie: `${cookie}; ${welcomeDevice}` } })
-const welcomeBeforeRestart = await readJsonOrFail(tokensFile)
+/*
+ * ⚠️ 5.0.0 修一条**测试竞态** ✓：`persistTokens()` 是"串行化 + 不阻塞请求"的 ✓
+ * （写盘是异步的，见它的注释 ✓）—— 所以"POST 回来 ⇒ 文件里立刻有"并不成立 ✗。
+ * 发版时这条就在负载下红了一次 ✓（真机没问题 ✓、断言也不该放松 ✓）。
+ * 现在**最多等 1.5 秒**（每 50ms 读一次）✓：等的是"落盘这个动作" ✓，不是放宽判据 ✓
+ *（等不到照样红 ✓）。
+ */
+let welcomeBeforeRestart = {}
+for (let attempt = 0; attempt < 30; attempt += 1) {
+	welcomeBeforeRestart = await readJsonOrFail(tokensFile)
+	if (welcomeBeforeRestart.welcomed?.['harness-welcome-version'] !== undefined) break
+	await new Promise((resolve) => setTimeout(resolve, 50))
+}
 const welcomeVersion = welcomeBeforeRestart.welcomed?.['harness-welcome-version']
 check('说明页的"看过"落盘的是版本号（不是时间戳）',
 	Number.isInteger(welcomeVersion) && welcomeVersion >= 1 && welcomeVersion < 1000,

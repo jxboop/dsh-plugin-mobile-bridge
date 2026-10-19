@@ -35,9 +35,9 @@
 
 ---
 
-## 想分享给同学？照这三步走
+## 想分享给同学？照这四步走（要能从外网连，Tailscale 必装）
 
-1. **同学先得有 DSH**（这个插件是扩展，不是独立程序；Node 22+）。
+1. **同学先得有 DSH**（这个插件是扩展，不是独立程序；Node 22+），**还要有 Git**（装插件那条命令要用）。
 2. **一条命令装插件，然后重启 DSH**：
 
    ```bash
@@ -51,12 +51,20 @@
    [mobile-bridge] phone url: http://192.168.1.20:3081/ab12cd34ef56ab78/  (WLAN)
    ```
 
-3. **手机浏览器打开那条网址**，输 PIN 就能用。桌面 DSH 左下角的徽标上也写着完整网址 + PIN。
+3. **🔴 Tailscale 必装（电脑上）** —— 这是「从外网也能连」的前提，不装就只能和电脑在同一个 WiFi 下用：
+   - 去 <https://tailscale.com/download> 装、登录一次；
+   - 开外网入口：`tailscale funnel --bg 3081`（第一次按它给的链接开一次 HTTPS）；
+   - 把它打印的 `https://<电脑名>.<tailnet>.ts.net` 写进 `~/.dsh/mobile-bridge.json` 的 `"publicUrl"`，再重启 DSH；
+   - **手机关掉 WiFi、只用流量**打开日志里新出现的 https 地址 —— 能看到登录页才算“外网通了”。
+   完整命令与排错见下面《外网访问（**要分享给朋友 → 这一步必做**）》。
 
-两点务必说清楚：
+4. **手机浏览器打开那条网址**，输 PIN 就能用。桌面 DSH 左下角的徽标上也写着完整网址 + PIN。
+
+三点务必说清楚：
 
 - **PIN 和网址里的随机段是每台电脑各自生成的**（`~/.dsh/mobile-bridge.json`）——**别把自己的网址/PIN 发给别人**，那等于把你电脑的后门给对方。
-- **同一个 WiFi（宿舍/家里）一般直接可用**；**校园网常常禁止客户端互访**，那就按下面「外网访问」走 Tailscale Funnel —— 地址固定、手机不用装 App，也还是只认那台电脑自己的 PIN。
+- **同一个 WiFi（宿舍/家里）一般直接可用**；**校园网常常禁止客户端互访** —— 分享给朋友基本都要走外网，**Tailscale 是必装前置** ✓（不装 = 只能同一 WiFi ✗）。
+- Tailscale 只是**通道**：它不碰你的对话内容、也不经过第三方服务器；手机端仍然只认**那台电脑自己的 PIN** ✓。
 
 ---
 
@@ -194,9 +202,11 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 
 ---
 
-## 外网访问（可选）
+## 外网访问（**要分享给朋友 → 这一步必做**）
 
-局域网之外也能连。三条路，**按这个顺序试**：手机也装 Tailscale（最稳）→ Tailscale Funnel（手机不用装东西）→ Cloudflare 快速隧道（临时）。
+要在**局域网之外**（流量 / 别的 WiFi）也能连，**Tailscale 是必装的前置** ✓（不装就只能同一 WiFi ✗）。装好之后三条路，**按这个顺序试**：手机也装 Tailscale（最稳）→ Tailscale Funnel（手机不用装东西）→ Cloudflare 快速隧道（临时）。
+
+> 📤 手机上的「分享 → 复制全文 / 网页版」给的那份**零基础安装文案**，5.0.0 起就是按这一节写的 ✓（Tailscale 必装 + Funnel + `publicUrl` + 关 WiFi 验一次 ✓）—— 分享给朋友时直接发那份就行。
 
 ### 方案 A：手机也装 Tailscale（**最稳**，推荐先试）
 
@@ -446,7 +456,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1755 项**（package **163** · harness **608** · qr 12 · ui **841** · security 54 · crashprobe 17 ·
+**九个套件共 1759 项**（package **163** · harness **612** · qr 12 · ui **841** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。
