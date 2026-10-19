@@ -211,6 +211,10 @@ dsh plugin --profile web add github:jxboop/dsh-plugin-mobile-bridge
 > 📌 **手机之前能打开、突然打不开了**：先看是不是**本机局域网 IP 变了**（校园 WiFi 漫游 / DHCP 续租很常见 ✓ ——
 > 手机上的旧网址会连不上，桥这边**一条请求都收不到** ✓）。**扫桌面徽标（左下角）的二维码重新打开一次**即可 ✓；
 > 想以后不再遇到：手机「加到主屏幕」时用**固定的外网地址**（`*.ts.net` 那条）✓，局域网 IP 会随网络变 ✗。
+>
+> 🔎 桥的「外网隧道」自检现在会**真的从公网入口去测**（不再被本机 Tailscale MagicDNS 骗 ✓）。
+> 如果自检/徽标说「**外网入口不通**」，在电脑上跑 `tailscale funnel --bg 3081` 重开一次即可 ✓
+>（WiFi 漫游 / 换 IP 之后它偶尔会卡在这 ✓ —— 5.0.3 起自检会直接把这个命令写给你 ✓）。
 
 ### 方案 A：手机也装 Tailscale（**最稳**，推荐先试）
 
@@ -460,7 +464,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1766 项**（package **168** · harness **614** · qr 12 · ui **841** · security 54 · crashprobe 17 ·
+**九个套件共 1769 项**（package **171** · harness **614** · qr 12 · ui **841** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。

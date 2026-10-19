@@ -936,8 +936,8 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 	check('🔴 自检失败那句**不再断言"手机连不上"** ✗（改成 "the phone may still be fine" ✓ —— 这是"读不到 ≠ 没有"的同一课 ✓）',
 		host.includes('the phone may still be fine')
 		&& host.includes('tunnel unreachable: the phone cannot connect right now') === false)
-	check('🔴 徽标那句也如实 ✓（「本机自检没连上公网（手机可能仍能连…）」✓ —— 不许再说「隧道已断，手机连不上」✗）',
-		host.includes('本机自检没连上公网') && host.includes('隧道已断，手机连不上') === false)
+	check('🔴 徽标那句也如实 ✓（「外网入口不通」+ 直接给修法「tailscale funnel --bg … 重开一次」✓ —— 不许再说「隧道已断，手机连不上」✗）',
+		host.includes('外网入口不通') && host.includes('tailscale funnel --bg') && host.includes('隧道已断，手机连不上') === false)
 	check('🔴 体检脚本**先认路线** ✓：`*.ts.net` → Tailscale Funnel ✓（查服务 + serve 转发 ✓，不再无条件要 cloudflared ✗）',
 		script.includes("$urlIsTailscale = ($url -match '\\.ts\\.net')")
 		&& script.includes('cloudflaredMissing')
@@ -1045,6 +1045,30 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& page.includes('const API_TIMEOUT_MS = 120000'))
 	check('🔴 等过 30 秒时加载页会**说人话** ✓（"网络很慢，但还在走（最多等 120 秒）"✓ —— 不许让人以为它挂了 ✗）',
 		page.includes('网络很慢，但还在走（最多等 120 秒）'))
+}
+
+/*
+ * 37) 🔴 **5.0.3「外网自检不再被 MagicDNS 骗」**（用户 2026-10-19：「连了几秒后跳转连不上电脑页面」✓）。
+ *
+ * 现场：WiFi 漫游 / 换 IP 后 **Tailscale Funnel 的 ingress → 本机 卡死** ✓
+ *（公网入口 IP 的 TCP 通、TLS 被 reset ✗；直连 tailnet IP 一切正常 ✓）。
+ * 可桥的自检是**从本机 fetch publicUrl** ✓ —— 本机 `*.ts.net` 走 **MagicDNS** → `100.x` ✗
+ * → **绕过 Funnel ingress** → 一直报「外网可达 ✓」，而手机根本连不上 ✗✗（假绿）。
+ * 判据三条 ✓：① 本机解析到 tailnet 地址时改用**公网 DoH 查 ingress IP + 强制连那个 IP** ✓；
+ * ② 公网 DNS 也不通时**不许报可达** ✗（`unverifiable` ✓）；③ 失败时给出**修法**（重开 Funnel ✓）。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	check('🔴 本机 `*.ts.net` 走 MagicDNS 时：改用**公网 DoH** 解析出真正的 ingress IP，再**强制连那个 IP**（SNI/Host 仍写域名 ✓ —— `curl --resolve` 的等价物 ✓）',
+		host.includes('function resolvePublicAddresses') && host.includes('const isTailnetAddress = (address)')
+		&& host.includes('function probeExternalEntry') && host.includes('servername: hostname')
+		&& host.includes('https://223.5.5.5/resolve'))
+	check('🔴 公网 DNS 也不通时**不许报"可达"** ✗（记 `unverifiable` ✓，自检/徽标都说"没法验证" ✓ —— 宁可说不知道，也不说假话 ✓）',
+		host.includes("tunnel.mode = 'unverifiable'")
+		&& host.includes('没法从本机验证外网入口'))
+	check('🔴 探不通时直接给**修法** ✓：在电脑上跑 `tailscale funnel --bg <port>` 重开一次 ✓（这次现场就是它救回来的 ✓）',
+		host.includes('tailscale funnel --bg ${config.port}')
+		&& host.includes('tailscale funnel --bg ${state.config.port}'))
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
