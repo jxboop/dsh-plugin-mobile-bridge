@@ -2354,6 +2354,26 @@ await rawGet(`${secret}/api/bootstrap`, cookie, `127.0.0.1:${config.port}`)
 await new Promise((resolve) => setTimeout(resolve, 200))
 const afterLoopback = JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8'))
 check('a loopback Host is never remembered', afterLoopback.phoneHost === CABLE, String(afterLoopback.phoneHost ?? null))
+/*
+ * 🔴 5.0.1（用户 2026-10-19：「手机桥又登不上去了」✓）：
+ * 现场是**本机局域网 IP 变了** ✓（校园 WiFi 漫游 → DHCP 续租，`113.54.216.122` → `113.54.205.169` ✓），
+ * 而手机上"加到主屏幕"的旧网址还是旧 IP ✗ → 手机连过去的请求**一条都到不了桥** ✓。
+ *
+ * 桥这边能做的只有**说清楚**（手机那边救不了 ✗）：`bootstrap` 要明确告诉页面
+ * "记着的那条地址已经不属于本机了" ✓；而且**不许偷偷改配置** ✗ ——
+ * `phoneHost` 的语义是"手机上次真的从哪个地址连上来" ✓（可以是 USB 网段 / 热点 ✓，
+ * 拔了线就不在网卡列表里 ✓），自动改写会把 Host 头学习顶掉 ✗。
+ * 上面那组学习用例正好留下了 `phoneHost = CABLE`（172.20.10.2，本机没有这张网卡 ✓）——
+ * 直接拿它当"变了"的现实素材 ✓（不用再改配置 ✓，也不给后面的用例留脏状态 ✓）。
+ */
+{
+	const stale = await (await fetch(`${base}/api/bootstrap`, authed)).json()
+	check('🔴 记着的地址已经不属于本机：bootstrap 明确报 `phoneHostStale:true` ✓（页面/徽标据此提示"换当前地址或用固定外网地址"✓ —— 不许闷着 ✗）',
+		stale.phoneHostStale === true && stale.phoneHost === CABLE,
+		JSON.stringify({ phoneHost: stale.phoneHost, phoneHostStale: stale.phoneHostStale }))
+	check('🔴 而且**没有偷偷改配置** ✓（`phoneHost` 仍是 CABLE ✓ —— "不在当前网卡 ≠ 记错了"；改写会把 Host 头学习顶掉 ✗）',
+		JSON.parse(await readFile(join(scratch, 'mobile-bridge.json'), 'utf8')).phoneHost === CABLE)
+}
 
 /* --- 桌面角标 / 启动完整性 ------------------------------------------------ */
 /*

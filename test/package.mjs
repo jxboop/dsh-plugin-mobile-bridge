@@ -1002,5 +1002,33 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 			.every((id) => page.includes('id="' + id + '"')))
 }
 
+/*
+ * 35) 🔴 **5.0.1「手机桥又登不上去了」—— 本机局域网 IP 会变** ✓
+ * （用户 2026-10-19 原话 ✓）。
+ *
+ * 现场：校园 WiFi 20:12 漫游 → 20:15 DHCP 续租，本机从 `113.54.216.122` 变成
+ * `113.54.205.169` ✓；手机上"加到主屏幕"的旧网址还写着旧 IP ✗ → 手机连过去的请求
+ * **一个都到不了桥** ✓（日志里之后一条都没有 ✓）。
+ *
+ * 三处判据 ✓：① 有固定外网地址时**先打它**（推荐加到主屏幕 ✓）；② `phoneHost` 变了
+ * **自动修**（并且不许修成 Tailscale 的 100.x ✗ —— 那等于让没装 Tailscale 的手机进不来）；
+ * ③ 徽标上把"地址会变 / 固定地址用哪条"写清楚 ✓。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	check('🔴 启动日志：配了固定外网地址就**先打它** ✓（`外网 · 地址固定` ✓ —— 手机加到主屏幕该用这条 ✗ 局域网 IP 会变）',
+		host.includes('外网 · 地址固定 ✓ 推荐加到主屏幕')
+		&& /if \(typeof config\.publicUrl === 'string' && config\.publicUrl !== ''\) \{[\s\S]{0,400}phone url:/.test(host)
+		&& host.includes('局域网，本机 IP 一变就失效'))
+	check('🔴 上次手机连上的地址变了：**只报事实、不偷偷改配置** ✓（`phoneHostDrift` ✓ —— 那个值可能是手机上次从 USB 网段连上来的 ✓，"不在当前网卡 ≠ 记错了" ✗；自动改写会把 Host 头学习顶掉 ✗）',
+		/function phoneHostDrift\(config\)/.test(host)
+		&& host.includes('phoneHostStale: phoneHostDrift(state.config) !== null')
+		&& host.includes('stored.phoneHost = best.address') === false)
+	check('🔴 徽标上写清楚 ✓（有外网地址 → "固定，加到主屏幕用它" ✓；只有局域网 → "这条会变" ✓；记着的旧地址没了也点名 ✓）',
+		host.includes('外网」地址是**固定**的')
+		&& host.includes('这条局域网地址会变')
+		&& host.includes('上次手机连上的地址 ${escapes(drift.remembered)} 本机已经没有了'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
