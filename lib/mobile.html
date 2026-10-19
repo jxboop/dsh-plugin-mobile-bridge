@@ -721,7 +721,13 @@
 	}
 
 	body.hasbg { background: #05060d; }
-	body.hasbg #backdrop { display: block; }
+	/*
+	 * 🔴 4.17.0：**配色和"背景层真的显示"是两件事** ✗（用户 2026-10-19：「刷新后界面又回原来颜色了」✓）。
+	 * `hasbg` / `bg-live` 从这一版起**一拿到背景信息就挂** ✓（否则弱网下媒体永远下不完 ⇒ 配色永远不回 ✓）；
+	 * 但 `#backdrop` 这一层（视频/图 + 纱）**要等媒体真能显示了才显示** ✓ —— 否则就是"一整块黑" ✓。
+	 * 所以给它单独一个类 `bg-shown` ✓（由 `reveal()` 加、`conceal()` 摘 ✓）。
+	 */
+	body.hasbg.bg-shown #backdrop { display: block; }
 	body.hasbg #gate, body.hasbg #app { position: relative; z-index: 1; }
 	/* 有背景时把面板再压实一点：毛玻璃透出来的画面越亮，越需要这点对比度。
 	   注意【不要】动 --bg：toast 的前景/背景、以及没背景时的渐变都靠它。 */
@@ -1258,6 +1264,19 @@
 	/* Full-screen panel rather than a third tab: the tab bar is covered while
 	   it is open, so the primary action can never sit under a thumb that is
 	   reaching for a tab, and 取消 is always on screen. */
+	/*
+	 * 🔴 4.17.0：**「更多」永远在所有功能页下面** ✓（用户 2026-10-19：「更多功能里面点击每一个功能时
+	 * 有的没有出现对应的界面要么就是界面被覆盖，统一改为点功能键后出现对应的界面，每个功能的界面单独做一页」✓）。
+	 *
+	 * 病根：`.sheet` 全是 `z-index: 50` ✓，打平时**后写的赢** ✓ —— 而 `#moreopen` 写在**中间** ✗：
+	 * 排在它**前面**的那些功能页（目标 / 电脑状态 / 背景 / 搜一搜 / 工作流 / 面板…）一点开就被「更多」
+	 * 盖在下面 ✓✓ = 用户说的"点了没出现 / 被覆盖" ✓；排在后面的（定时 / 导出 / 控制电脑…）就正常 ✗
+	 *（同一个动作一半能用一半不能用 —— 最难查的那种 ✓）。
+	 *
+	 * 修法：给它一个**低一档**的层级 ✓ —— 它只是"入口那一页" ✓，任何功能页都该盖住它 ✓。
+	 * 功能页自己的「← 返回」一按，它又露出来 ✓（这就是"每个功能单独一页"的手感 ✓）。
+	 */
+	#moreopen { z-index: 49; }
 	.sheet {
 		position: fixed; inset: 0; z-index: 50; flex-direction: column;
 		/* 半透明 + blur：背景视频还在后面，但盖一层足够厚的纱，读长文不费眼。 */
@@ -1964,17 +1983,21 @@
 			<div class="scroll pad" id="goalBody"></div>
 		</section>
 		<style>
-			/* 3.5.0「目标」：目标卡（只读 ✓）。 */
-			.goalcard { border: 1px solid #2b3557; border-radius: 10px; padding: 12px 14px; background: #161d33 }
-			.goalphase { color: #8ce0a0; font-weight: 700; font-size: 13px; margin-bottom: 6px }
-			.goaltext { color: #e6ebff; font-size: 15px; line-height: 1.75; white-space: pre-wrap; word-break: break-word }
-			.goalmeta { color: #7f93ad; font-size: 12px; margin-top: 8px }
+			/*
+			 * 3.5.0「目标」：目标卡（只读 ✓）。
+			 * 🔴 4.17.0：颜色**全部走主题变量** ✓（用户 2026-10-19：「便签计时器和每日做了什么
+			 * 没有和背景风格一致」✓ —— 这里原来写死深蓝灰 ✓，挂了暖色背景之后就是一块"蓝板子" ✗）。
+			 */
+			.goalcard { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--panel-2) }
+			.goalphase { color: var(--ok); font-weight: 700; font-size: 13px; margin-bottom: 6px }
+			.goaltext { color: var(--text); font-size: 15px; line-height: 1.75; white-space: pre-wrap; word-break: break-word }
+			.goalmeta { color: var(--muted); font-size: 12px; margin-top: 8px }
 			.goalblocked { color: #ffd7d7; margin: 8px 0 0 }
-			#goalNote { color: #9fb3d0 }
-			#goalBtn.hasgoal { color: #8ce0a0 }
+			#goalNote { color: var(--muted) }
+			#goalBtn.hasgoal { color: var(--ok) }
 			/* 3.5.0「免手对话」：状态行要说人话、并且**看得见**（不许"开了没开不知道" ✗）。 */
-			.voiceline { display: block; margin: 8px 0; color: #e6ebff; font-size: 15px; line-height: 1.75; white-space: pre-wrap }
-			#voiceNote { color: #9fb3d0 }
+			.voiceline { display: block; margin: 8px 0; color: var(--text); font-size: 15px; line-height: 1.75; white-space: pre-wrap }
+			#voiceNote { color: var(--muted) }
 		</style>
 
 		<!-- 3.5.0：**免手对话**（语音环）—— 一直听 → 转成文字 → （勾了就）自动发 → 继续听 ✓。
@@ -2110,7 +2133,7 @@
 				<span class="title" id="panelTitle">面板</span>
 				<span class="spacer"></span>
 			</div>
-			<iframe id="panelFrame" title="面板" style="flex:1;min-height:0;width:100%;border:0;background:#0f1620"></iframe>
+			<iframe id="panelFrame" title="面板" style="flex:1;min-height:0;width:100%;border:0;background:transparent"></iframe>
 			<div class="hint" id="panelNote" style="flex:none;padding:6px 12px calc(10px + env(safe-area-inset-bottom))">
 				面板是外挂进来的页面 ✓ —— 它与手机页**同源**，等于把手机端交给它 ✓（所以默认关 ✓，谁需要谁开 ✓）。
 			</div>
@@ -2227,9 +2250,6 @@
 				<button class="moreitem" id="goalBtn"><span class="moreicon">🎯</span><b>目标</b><span class="morehint">这条会话在做什么、跑到第几轮</span></button>
 				<button class="moreitem" id="expBtn"><span class="moreicon">📤</span><b>导出</b><span class="morehint">把这段对话存成 Markdown</span></button>
 				<button class="moreitem" id="schBtn"><span class="moreicon">📅</span><b>定时</b><span class="morehint">到点把一句话发进这个会话</span></button>
-				<!-- 4.15.0：桌宠藏起来之后的**回来的路** ✓ —— 不摆这个键，藏起来就再也找不到了 ✗
-				     （那正是"按了没反应"的同一种病 ✓）。 -->
-				<button class="moreitem" id="petToggle"><span class="moreicon">🐳</span><b>桌宠</b><span class="morehint" id="petToggleHint">显示 / 藏起来（拖动、缩放、点一下有反应）</span></button>
 				<div class="moregroup">电脑</div>
 				<button class="moreitem" id="sysBtn"><span class="moreicon">📊</span><b>电脑状态</b><span class="morehint">CPU / 内存 / 磁盘 / 网速，一键结束卡死的 node</span></button>
 				<button class="moreitem" id="pcBtn"><span class="moreicon">🖥</span><b>控制电脑</b><span class="morehint">静音 / 音量 / 亮度 / 蓝牙 / 电量 / 联网</span></button>
@@ -2598,359 +2618,6 @@
 		</section>
 	</main>
 
-	<!-- 4.15.0 桌宠（小鲸 / DeepSeek酱 ✓）：浮在整个界面之上 ✓，而且是**静态节点** ✓ ——
-	     绝不挂在会被重渲染的容器里 ✗（3.5.0 那个入口就是这么栽的 ✓）。
-	     素材来自用户本机的 `~/.dsh/mobile-bridge-pets/<id>/` ✓（只在本机 ✓、不进插件 ✓、不进 Release ✓）；
-	     取不到素材时 `#petSprite` 不显示 ✗、退到**代码画的那只**（内联 SVG ✓，插件自带 ✓）。 -->
-	<style>
-		#petLayer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
-		/* 4.16.1：跑动时的小碎步 ✓（只在 .petwalk 时动 ✓ —— 停下就是静止的 ✓）。 */
-		@keyframes petwalkbob { 0%,100% { translate: 0 0; } 50% { translate: 0 -3px; } }
-		#petBody.petwalk { animation: petwalkbob .38s ease-in-out infinite; }
-		#petBody { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; touch-action: none;
-			-webkit-user-select: none; user-select: none; cursor: grab; filter: drop-shadow(0 6px 10px rgba(0,0,0,.35)); }
-		#petBody img, #petBody svg { width: 100%; height: 100%; display: block; object-fit: contain; }
-		#petBody.petpop { animation: petpop .45s ease-out; }
-		@keyframes petpop { 0% { transform: translate(-50%, -50%) scale(1); } 35% { transform: translate(-50%, -56%) scale(1.09); } 100% { transform: translate(-50%, -50%) scale(1); } }
-		#petSay { position: absolute; transform: translate(-108%, -50%); max-width: 48vw; padding: 6px 10px; border-radius: 12px;
-			font-size: 13px; line-height: 1.4; background: var(--bg, #12182a); color: var(--text, #e8eef7);
-			border: 1px solid var(--field-line, #888); }
-		#petGrip { position: absolute; pointer-events: auto; width: 26px; height: 26px; border-radius: 50%;
-			display: flex; align-items: center; justify-content: center; font-size: 15px;
-			background: color-mix(in srgb, var(--accent, #6cf) 30%, transparent); color: var(--text, #fff);
-			border: 1px solid var(--field-line, #888); touch-action: none; }
-		#petBar { position: absolute; pointer-events: auto; max-width: 78vw; padding: 8px; border-radius: 14px;
-			background: color-mix(in srgb, var(--bg, #12182a) 82%, transparent); border: 1px solid var(--field-line, #888);
-			-webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur); }
-		#petMoods { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-		#petMoods button, .petbarrow button { font-size: 12px; padding: 5px 9px; border-radius: 10px;
-			background: color-mix(in srgb, var(--accent, #6cf) 18%, transparent); color: var(--text, #e8eef7);
-			border: 1px solid var(--field-line, #888); }
-		.petbarrow { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-		.petbarrow input[type=range] { flex: 1 1 auto; }
-	</style>
-	<div id="petLayer" style="display:none">
-		<div id="petBody" title="小鲸（按住拖走 / 长按出菜单）">
-			<img id="petSprite" alt="小鲸" draggable="false" style="display:none">
-			<svg id="petFallback" viewBox="0 0 120 160" aria-hidden="true">
-				<ellipse cx="60" cy="150" rx="30" ry="6" fill="#000" opacity=".18"/>
-				<path d="M18 96 C6 118 18 146 34 150 C24 128 26 110 34 100 Z" fill="#1E3ABA"/>
-				<path d="M102 96 C114 118 102 146 86 150 C96 128 94 110 86 100 Z" fill="#1E3ABA"/>
-				<path d="M60 24 C34 24 24 44 24 66 C24 92 40 108 60 108 C80 108 96 92 96 66 C96 44 86 24 60 24 Z" fill="#1E3ABA"/>
-				<path d="M30 62 C22 58 20 50 26 46 C32 42 40 46 42 52 Z" fill="#3B82F6"/>
-				<path d="M90 62 C98 58 100 50 94 46 C88 42 80 46 78 52 Z" fill="#3B82F6"/>
-				<ellipse cx="60" cy="72" rx="24" ry="26" fill="#FDF3EA"/>
-				<path d="M36 60 C40 46 52 38 60 38 C68 38 80 46 84 60 C74 52 66 50 60 50 C54 50 46 52 36 60 Z" fill="#16307F"/>
-				<ellipse cx="50" cy="72" rx="5" ry="6" fill="#2C63C8"/><ellipse cx="70" cy="72" rx="5" ry="6" fill="#2C63C8"/>
-				<circle cx="51.5" cy="70" r="1.6" fill="#fff"/><circle cx="71.5" cy="70" r="1.6" fill="#fff"/>
-				<path d="M56 86 Q60 90 64 86" stroke="#C77" stroke-width="1.6" fill="none" stroke-linecap="round"/>
-				<path d="M28 104 C28 96 44 92 60 92 C76 92 92 96 92 104 L92 128 C92 136 76 142 60 142 C44 142 28 136 28 128 Z" fill="#F4F6F8"/>
-				<path d="M34 108 C34 102 46 98 60 98 C74 98 86 102 86 108 L86 126 C86 132 74 136 60 136 C46 136 34 132 34 126 Z" fill="#233C86"/>
-				<path d="M88 132 C104 126 110 112 106 100 C116 110 116 134 100 142 C94 145 88 142 88 132 Z" fill="#3B82F6"/>
-				<circle cx="60" cy="112" r="4" fill="#F5C542"/>
-			</svg>
-		</div>
-		<div id="petSay" style="display:none"></div>
-		<div id="petGrip" title="拖我改大小">⤡</div>
-		<div id="petBar" style="display:none">
-			<div id="petMoods"></div>
-			<div class="petbarrow"><span style="font-size:12px">大小</span><input id="petSize" type="range" min="60" max="220" step="5"></div>
-			<div class="petbarrow">
-				<button data-pet-hide="1">藏起来</button>
-				<button data-pet-close="1">收起</button>
-			</div>
-		</div>
-	</div>
-	<script>
-		/*
-		 * 4.15.0 桌宠：拖动 ✓ / 缩放（把手 + 双指 ✓）/ 点一下有反应 ✓ / 跟着事情变表情 ✓。
-		 * ⚠️ 独立 IIFE ✓（不跟主脚本抢作用域 ✓）；对外只暴露 `window.dshPet` 与 `window.dshPetApply` ✓；
-		 * 位置与大小用**百分比 + 倍率**存本机 ✓（横竖屏切换不会跑到屏幕外 ✗）。
-		 */
-		(function () {
-			const layer = document.getElementById('petLayer')
-			if (layer === null) return
-			let pet = null
-			let petState = { x: 0.72, y: 0.62, scale: 1, hidden: false }
-			try {
-				const saved = JSON.parse(window.localStorage.getItem('dshm.pet') ?? '{}')
-				if (saved !== null && typeof saved === 'object') petState = Object.assign(petState, saved)
-			} catch { /* 无痕模式：用默认 ✓ */ }
-			const save = () => { try { window.localStorage.setItem('dshm.pet', JSON.stringify(petState)) } catch { /* 存不下就算了 ✓ */ } }
-			const body = document.getElementById('petBody')
-			const sprite = document.getElementById('petSprite')
-			const grip = document.getElementById('petGrip')
-			const bar = document.getElementById('petBar')
-			const say = document.getElementById('petSay')
-			const LABELS = { idle: '中性', happy: '开心', upset: '难受', eating: '吃饭' }
-			let spriteKey = 'idle'
-			let idleStep = 0
-
-			function clamp() {
-				petState.x = Math.max(0.04, Math.min(0.96, petState.x))
-				petState.y = Math.max(0.06, Math.min(0.94, petState.y))
-				petState.scale = Math.max(0.5, Math.min(2.4, petState.scale))
-			}
-			function apply() {
-				clamp()
-				// 4.16.1：**跑动模式** ✓（用户 2026-10-17：「缩小一点让他在对话框上面那一条线上跑动，就像电脑上一样」✓）。
-				// 老状态里没有 mode 这一格 → 缺省 free ✓（各端各存 ✓）。
-				if (petState.mode !== 'roam') petState.mode = 'free'
-				// 4.16.1：**按钮文案跟着状态走** ✓ —— 放在 apply() 里（状态的唯一落点 ✓），
-				// 这样任何一次重渲染都不会把它冲掉 ✗（只在点击那一刻设一次就吃过这个亏 ✓）。
-				const roamButton = document.getElementById('petRoam')
-				if (roamButton !== null) roamButton.textContent = petState.mode === 'roam' ? '停下' : '跑动'
-				// 记着的模式是"跑动"时，**开机就走起来** ✓（幂等 ✓ —— startRoam 自己会挡重复 ✓）。
-				if (petState.mode === 'roam' && petState.hidden !== true) startRoam()
-				layer.style.display = petState.hidden === true ? 'none' : 'block'
-				const roam = petState.mode === 'roam'
-				// 跑的时候**小一点** ✓（"缩小一点" ✓）—— 用 0.62 与用户自己拖的倍率取小 ✓，不覆盖他的手调 ✓。
-				const scale = roam === true ? Math.min(petState.scale, 0.62) : petState.scale
-				const width = 132 * scale
-				body.style.width = width + 'px'
-				body.style.height = (width * 4 / 3) + 'px'
-				// 跑动模式：**贴着输入框上边那条线** ✓（那一条就是"地面"✓ —— 她在那条线上跑 ✓）。
-				let topPct = petState.y * 100
-				if (roam === true) {
-					const textarea = $('text')
-					const rect = textarea === null ? null : textarea.getBoundingClientRect()
-					const ground = rect !== null && rect.top > 0
-						? rect.top - (width * 4 / 3) + width * 0.12   // 脚落在输入框上边 ✓
-						: window.innerHeight * 0.72                    // 量不到也要有个稳定地面 ✓
-					topPct = (ground / Math.max(1, window.innerHeight)) * 100
-				}
-				body.style.left = (petState.x * 100) + '%'
-				body.style.top = topPct + '%'
-				// 4.15.1：**没有圈了** ✓ —— 说话那行挪到她**旁边**（左边）✓，不再顶在头上 ✗。
-				say.style.left = (petState.x * 100) + '%'
-				say.style.top = ((petState.y * 100) - 6 * petState.scale) + '%'
-				grip.style.left = ((petState.x * 100) + 7 * petState.scale) + '%'
-				grip.style.top = ((petState.y * 100) + 9 * petState.scale) + '%'
-				bar.style.left = '4vw'
-				bar.style.bottom = '14vh'
-			}
-			function hideSay() { say.style.display = 'none' }
-			/** 4.15.1：**整只换立绘** ✓（表情长在她脸上 ✓，不再有"头顶一个圈" ✗）。 */
-			function showSprite(key) {
-				const wanted = String(key ?? '')
-				const src = (pet !== null && pet.available === true)
-					? String((pet.sprites ?? {})[wanted] ?? pet.sprites?.idle ?? pet.body ?? '')
-					: ''
-				if (src === '') return false
-				spriteKey = wanted
-				if (sprite.getAttribute('src') !== src) sprite.src = src
-				return true
-			}
-
-			/* ---------- 拖动（指针事件 ✓ + 指针捕获 ✓ —— 手指划出元素也不会丢 ✓） ---------- */
-			let drag = null
-			layer.addEventListener('pointerdown', (event) => {
-				if (bar.contains(event.target) === true) return
-				if (event.target === grip) return
-				drag = { id: event.pointerId, x: event.clientX, y: event.clientY, sx: petState.x, sy: petState.y, moved: false, at: Date.now() }
-				try { layer.setPointerCapture(event.pointerId) } catch { /* 不支持就算了 ✓ */ }
-			})
-			layer.addEventListener('pointermove', (event) => {
-				if (drag === null || drag.id !== event.pointerId) return
-				const dx = (event.clientX - drag.x) / window.innerWidth
-				const dy = (event.clientY - drag.y) / window.innerHeight
-				if (Math.abs(dx) > 0.012 || Math.abs(dy) > 0.012) drag.moved = true
-				petState.x = drag.sx + dx
-				petState.y = drag.sy + dy
-				apply()
-			})
-			layer.addEventListener('pointerup', (event) => {
-				if (drag === null || drag.id !== event.pointerId) return
-				const tap = drag.moved !== true && Date.now() - drag.at < 600
-				drag = null
-				save()
-				if (tap === true) poke()
-			})
-			layer.addEventListener('pointercancel', () => { drag = null })
-
-			/* ---------- 缩放：右下把手 ✓ + 双指捏合 ✓ ---------- */
-			let gripStart = null
-			grip.addEventListener('pointerdown', (event) => {
-				event.stopPropagation()
-				gripStart = { y: event.clientY, s: petState.scale }
-				try { grip.setPointerCapture(event.pointerId) } catch { /* 同上 */ }
-			})
-			grip.addEventListener('pointermove', (event) => {
-				if (gripStart === null) return
-				petState.scale = gripStart.s + ((event.clientY - gripStart.y) / 90)
-				apply()
-			})
-			grip.addEventListener('pointerup', () => { if (gripStart !== null) { gripStart = null; save() } })
-			let pinch = null
-			layer.addEventListener('touchstart', (event) => {
-				if (event.touches.length !== 2) { pinch = null; return }
-				pinch = { d: Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY), s: petState.scale }
-			}, { passive: true })
-			layer.addEventListener('touchmove', (event) => {
-				if (pinch === null || event.touches.length !== 2 || pinch.d <= 0) return
-				const d = Math.hypot(event.touches[0].clientX - event.touches[1].clientX, event.touches[0].clientY - event.touches[1].clientY)
-				petState.scale = pinch.s * (d / pinch.d)
-				apply()
-			}, { passive: true })
-			layer.addEventListener('touchend', () => { if (pinch !== null) { pinch = null; save() } }, { passive: true })
-
-			/* ---------- 心情 → 整只立绘（4.15.1：表情长在她脸上 ✓，没有圈 ✗） ---------- */
-			const lineOf = (key) => {
-				const pool = pet?.lines?.[key]
-				return Array.isArray(pool) && pool.length > 0 ? String(pool[Math.floor(Math.random() * pool.length)]) : ''
-			}
-			/** 心情名 → 立绘档名 ✓（`moods` 表来自清单 ✓；`poke` 是"点一下随机换一张" ✓）。 */
-			function spriteFor(name) {
-				const table = pet?.moods ?? {}
-				if (name === 'poke') {
-					const pool = Array.isArray(table.poke) && table.poke.length > 0 ? table.poke : ['happy', 'eating', 'idle']
-					return String(pool[Math.floor(Math.random() * pool.length)])
-				}
-				return typeof table[name] === 'string' ? table[name] : String(name ?? 'idle')
-			}
-			/* ---------- 4.16.1：跑动模式 ✓（沿着输入框上边那条线走 ✓，像电脑上的桌宠 ✓） ---------- */
-			const ROAM_SPEED = 0.55   // 每次 tick 走的屏幕百分比（约等于每秒 4~6% 宽 ✓ 慢慢晃 ✓）
-			let roamTimer = 0
-			let roamDir = 1
-			function stopRoam() {
-				if (roamTimer !== 0) { window.clearInterval(roamTimer); roamTimer = 0 }
-				body.classList.remove('petwalk')
-			}
-			function startRoam() {
-				if (roamTimer !== 0) return
-				body.classList.add('petwalk')
-				roamTimer = window.setInterval(() => {
-					if (petState.hidden === true || petState.mode !== 'roam') { stopRoam(); return }
-					petState.x += (roamDir * ROAM_SPEED) / 100
-					// 走到两头就掉头 ✓（碰到边就转 ✓ —— 不让她跑出屏幕 ✗）
-					if (petState.x > 0.9) { petState.x = 0.9; roamDir = -1 }
-					if (petState.x < 0.08) { petState.x = 0.08; roamDir = 1 }
-					apply()
-				}, 90)
-			}
-			function setRoam(on) {
-				petState.mode = on === true ? 'roam' : 'free'
-				if (on === true) startRoam(); else stopRoam()
-				apply()
-				save()
-			}
-			/** 点一下她：跑动时只弹一下换个表情 ✓，不打断跑 ✓；自由模式照旧换脸 + 说话 ✓。 */
-			function poke() {
-				const key = spriteFor('poke')
-				showSprite(key)
-				const line = lineOf(key)
-				if (line !== '') { say.textContent = line; say.style.display = 'block' }
-				body.classList.remove('petpop')
-				void body.offsetWidth
-				body.classList.add('petpop')
-				window.setTimeout(hideSay, 2600)
-			}
-			/** 跟着事情变 ✓（发送成功 → happy ✓ / 报错 → error ✓ / 在跑 → busy ✓ / 闲着 → idle ✓）。 */
-			function mood(name) {
-				const key = spriteFor(name)
-				showSprite(key)
-				// 只在"有事发生"的两档（成功 / 报错）说话 ✓ —— 闲着的时候别一直刷屏 ✗。
-				if (name === 'happy' || name === 'error') {
-					const line = lineOf(key)
-					if (line !== '') {
-						say.textContent = line
-						say.style.display = 'block'
-						window.setTimeout(hideSay, 2600)
-					}
-				}
-			}
-			window.dshPet = {
-				mood,
-				sprite: () => spriteKey,
-				state: () => ({ ...petState }),
-				set: (patch) => { Object.assign(petState, patch ?? {}); apply(); save() },
-				show: () => { petState.hidden = false; apply(); save() },
-			}
-			window.dshPetApply = (info) => {
-				pet = info
-				if (info !== null && info.available === true) {
-					const hasSprite = Object.keys(info.sprites ?? {}).length > 0 || typeof info.body === 'string'
-					if (hasSprite === true) {
-						showSprite('idle')
-						sprite.style.display = 'block'
-						document.getElementById('petFallback').style.display = 'none'
-					}
-				}
-				renderBar()
-			}
-
-			/* ---------- 长按出小工具条（换表情 / 大小 / 藏起来 ✓） ---------- */
-			let hold = null
-			body.addEventListener('pointerdown', () => {
-				hold = window.setTimeout(() => { hold = null; bar.style.display = bar.style.display === 'none' ? 'block' : 'none' }, 650)
-			})
-			const cancelHold = () => { if (hold !== null) { window.clearTimeout(hold); hold = null } }
-			layer.addEventListener('pointermove', cancelHold)
-			layer.addEventListener('pointerup', cancelHold)
-			const moods = document.getElementById('petMoods')
-			function renderBar() {
-				// 4.15.1：工具条上摆的是**立绘档** ✓（中性 / 开心 / 难受 / 吃饭 ✓）——
-				// 不再是那 8 张"贴在头顶圈里"的脸 ✗（用户原话：「非要在头顶搞个圈？」✓）。
-				const keys = Object.keys((pet !== null && pet.available === true && pet.sprites) ? pet.sprites : {})
-				moods.innerHTML = ''
-				if (keys.length === 0) {
-					const note = document.createElement('div')
-					note.style.fontSize = '12px'
-					note.textContent = '（还没有桌宠素材 —— 现在是代码画的那只 ✓）'
-					moods.appendChild(note)
-					return
-				}
-				for (const key of keys) {
-					const button = document.createElement('button')
-					// 4.16.1：清单可以**自带装扮名** ✓（`spriteLabels` ✓ —— 比如 Coopanion 那套「女仆 / 披风」✓）；
-					// 没写就退回内置那四个字 ✓（中性 / 开心 / 难受 / 吃饭 ✓）。
-					button.textContent = String(pet?.spriteLabels?.[key] ?? LABELS[key] ?? key)
-					button.addEventListener('click', () => { showSprite(key); const line = lineOf(key); if (line !== '') { say.textContent = line; say.style.display = 'block' } })
-					moods.appendChild(button)
-				}
-				// 4.16.1：**跑动 / 停下** ✓（用户：「缩小一点让他在对话框上面那一条线上跑动，就像电脑上一样」✓）
-				const roamBtn = document.createElement('button')
-				roamBtn.id = 'petRoam'
-				roamBtn.textContent = petState.mode === 'roam' ? '停下' : '跑动'
-				roamBtn.addEventListener('click', () => {
-					setRoam(petState.mode !== 'roam')
-					// ⚠️ **只改这一个按钮的字** ✓ —— 原来这里调 renderBar() 重建整条工具条 ✗：
-					// 点的那一下按钮会被换掉 ✓，读它文案的人（测试 / 读屏）拿到的是**旧节点** ✗。
-					roamBtn.textContent = petState.mode === 'roam' ? '停下' : '跑动'
-					const line = lineOf(petState.mode === 'roam' ? 'happy' : 'idle')
-					if (line !== '') { say.textContent = line; say.style.display = 'block' }
-				})
-				moods.appendChild(roamBtn)
-			}
-			const sizeInput = document.getElementById('petSize')
-			sizeInput.value = String(Math.round(petState.scale * 100))
-			sizeInput.addEventListener('input', () => { petState.scale = Number(sizeInput.value) / 100; apply() })
-			sizeInput.addEventListener('change', save)
-			layer.addEventListener('click', (event) => {
-				const hit = event.target
-				if (hit?.getAttribute?.('data-pet-hide') === '1') { petState.hidden = true; apply(); save(); bar.style.display = 'none' }
-				if (hit?.getAttribute?.('data-pet-close') === '1') bar.style.display = 'none'
-			})
-
-			/*
-			 * 🔴 4.15.1：**她自己会动** ✓ —— 空闲时在中性 / 吃饭 / 开心之间**整只轮换** ✓（清单里的 `idleCycle` ✓），
-			 * 在跑的时候换成 `busy`（现在是"中性 + 一句在跑了" ✓ —— 没有单独一张"努力"立绘 ✓，如实 ✓）。
-			 * 周期 7 秒 ✓：太快像抽风 ✗、太慢看不出在动 ✗。
-			 */
-			window.setInterval(() => {
-				if (petState.hidden === true) return
-				const running = (typeof window.dshPetRunning === 'function' && window.dshPetRunning() === true)
-				if (running === true) { showSprite(spriteFor('busy')); return }
-				const cycle = Array.isArray(pet?.moods?.idleCycle) && pet.moods.idleCycle.length > 0
-					? pet.moods.idleCycle.map(String)
-					: ['idle']
-				idleStep = (idleStep + 1) % cycle.length
-				showSprite(cycle[idleStep])
-			}, 7000)
-
-			apply()
-		})()
-	</script>
 
 	<!-- 提问/审批卡片放在 main【外面】：它属于所有页签。
 	     放在 #view-task 里面时，用户切到「余额」就完全看不到提问 —— 而 agent
@@ -3213,7 +2880,7 @@
 	 *  而不是不到一半就断」✓）。
 	 * 病根 ✗：**会话快照会涨到两百多 KB** ✓（代码注释里自己写着 ✓）；弱网实测 **20~70 KB/s** ✓ →
 	 * 一次 boot 要**十几到几十秒** ✓；而原来卡 **20 秒** ✗ → **传到一半被自己掐掉** ✗✓
-	 * → 就是用户说的"**连到一半就断**" ✓（跟隧道、跟桌宠都无关 ✓✓）。
+	 * → 就是用户说的"**连到一半就断**" ✓（跟隧道无关 ✓✓）。
 	 * ⚠️ 取 **60 秒**（不是 90 ✗）：`test/ui.mjs` 里有一条断言**早就定下了上限** ✓
 	 * 「有超时、且 **≤ 60 秒**」✓ —— 那是项目的既有决定 ✓，我不该为了自己方便去改它 ✓。
 	 * 而 60 秒对 200KB 快照（20KB/s ≈ 10 秒 ✓）**绰绰有余** ✓✓。
@@ -3999,17 +3666,44 @@
 	}
 
 	/**
-	 * 现在开着的是哪个"工具抽屉"（会话 / 删除 / 状态 / 结束进程 / 关机 / 录音 / 生图 / 背景 / 权限…）；没有就 null。
+	 * 现在**最上面**开着的是哪张纸（会话 / 删除 / 状态 / 结束进程 / 关机 / 录音 / 生图 / 背景 / 权限…）；没有就 null。
 	 *
-	 * ⚠️ **每加一张新纸都要登记进这份清单** ✓ —— 它管两件事：左右滑动换页之前先把抽屉收掉 ✓，
-	 * 以及"审批卡片来了先让位"（2.5.1 那条 ✓）。漏登记的后果就是：纸还盖着、底下的页却换了 ✓
-	 * （冷视角复查抓到 2.8.0 的 `secopen`、2.9.0 的 `backupopen` 都漏在这儿 ✗ —— 顺手补上 ✓）。
+	 * 🔴 4.17.0：改成**按 DOM 顺序自动取最上面那张** ✓（用户 2026-10-19：「每个功能的界面单独做一页」✓）。
+	 * 原来是一份**手写清单** ✗ —— 每加一张新纸都要记得登记 ✓，漏一张的后果是：
+	 * 纸还盖着、底下的页却换了 ✓（2.8.0 的 `secopen`、2.9.0 的 `backupopen` 都漏过 ✓），
+	 * 或者"切到余额还盖着一张纸"✓（用户这次报的「余额界面被挡住了」✓）。
+	 * 现在自动扫所有 `.sheet` ✓：
+	 *   · **后写的 DOM = 打平时压在上面** ✓（z-index 全是 50 ✓）→ 取**最后一个可见的** ✓；
+	 *   · `#moreopen` 是**入口那一页** ✓（z-index 49 ✓，永远在功能页下面 ✓）→ 只有当没别的可见时才算它 ✓；
+	 *   · `view-new`（新建）和 `welcome`（说明）不算抽屉 ✓ —— 前者由 `goPage` 专门管 ✓、后者由 `takeoverOpen` 管 ✓。
 	 */
 	function openToolPanel() {
-		for (const id of ['sessopen', 'delopen', 'sysopen', 'pcopen', 'moreopen', 'killopen', 'poweropen', 'clipopen', 'exportopen', 'schopen', 'checkopen', 'backupopen', 'secopen', 'kbopen', 'recopen', 'genopen', 'bgopen', 'permopen', 'topsheet']) {
-			if (nodeShown($(id))) return $(id)
+		let top = null
+		let more = null
+		for (const node of document.querySelectorAll('.sheet')) {
+			if (nodeShown(node) === false) continue
+			const id = String(node.id ?? '')
+			if (id === 'view-new' || id === 'welcome') continue
+			if (id === 'moreopen') { more = node; continue }
+			top = node
 		}
-		return null
+		return top ?? more
+	}
+
+	/**
+	 * 🔴 4.17.0：**换页签时把开着的纸全收掉** ✓（用户 2026-10-19：「我的余额界面被挡住了」✓）。
+	 *
+	 * 只收"最上面那张"不够 ✗ —— 从「更多」点进功能页时是**两张叠着**（更多 49 / 功能页 50 ✓），
+	 * 只收功能页 ⇒ 底下的「更多」还盖着余额 ✓✓。所以切页签 = **回到页面本身** ✓（纸一张不留 ✓）。
+	 * ⚠️ 正在录音的纸条不在这里拦 ✓ —— 页签点击走 `goPage` ✓，那里有"正在录音不让走"的守卫 ✓。
+	 */
+	function closeAllSheets() {
+		for (const node of document.querySelectorAll('.sheet')) {
+			if (nodeShown(node) === false) continue
+			const id = String(node.id ?? '')
+			if (id === 'welcome') continue
+			hide(node)
+		}
 	}
 
 	/** 现在算"哪一页"（顺序：任务 → 新建 → 录音 → 余额）。 */
@@ -4066,6 +3760,13 @@
 			if (name === 'rec' && panel === $('recopen')) { /* 目标就是它，保持打开 */ }
 			else hide(panel)
 		}
+		/*
+		 * 🔴 4.17.0：翻到**页面本身**（任务 / 新建 / 余额）时，把**所有**开着的纸收掉 ✓
+		 *（用户 2026-10-19：「我的余额界面被挡住了」✓）。
+		 * 上面只收了"最上面那张"✗ —— 从「更多」（49）点进功能页（50）是两张叠着 ✓，
+		 * 只收功能页 ⇒ 底下的「更多」还盖着余额 ✓✓。切页签 = 回到页面本身 ✓。
+		 */
+		if (name === 'task' || name === 'new' || name === 'bill') closeAllSheets()
 		/*
 		 * 「录音」也是一页（2026-10-11 用户报「滑动时出现不了录音界面」）：
 		 * 它和「新建」一样是个面板，但页签栏上看得见它，滑动就得能到它 ✓。
@@ -6251,43 +5952,59 @@
 		if (isCssPreset === true) {
 			backdropKey = 'preset:' + info.preset
 			layer.querySelectorAll('video, img').forEach((node) => node.remove())
-			document.body.classList.add('bg-cyber', 'hasbg')
+			// 从"带素材的背景"切到 CSS 预设：把带素材那套的类也摘掉 ✓（两套叠着就是一团乱 ✗）。
+			document.body.classList.remove('bg-live', 'bg-shown')
+			document.body.classList.add('bg-cyber', 'hasbg', 'bg-shown')
 			// 4.8.0：**动 / 静**跟着配置走 ✓（`motion === false` 才静 ✓ —— 缺省是动 ✓，用户就是要动态 ✓）。
 			document.body.classList.toggle('bg-still', info.motion === false)
 			return
 		}
-		document.body.classList.remove('bg-cyber')
-		document.body.classList.remove('bg-live')
 		/*
 		 * 🔴 4.10.1：**把"赛博朋克"那套类也摘掉** ✗ —— 老代码只在 `conceal()` 里摘 ✓，
 		 * 所以"赛博朋克 → 带素材的风格（夜行星 ✓）"这条路会**两套叠着** ✗：
 		 * cyberpunk 的霓虹地平线/网格 + 视频层同时生效 ✓（画面上就是一团乱 ✓）。
-		 * 走 CSS 预设那条路时下面会**重新加回来** ✓，所以这里可以放心摘 ✓。
+		 * 走 CSS 预设那条路时上面会**重新加回来** ✓，所以这里可以放心摘 ✓。
 		 */
 		document.body.classList.remove('bg-cyber', 'bg-still')
 		const key = info === null || info === undefined ? '' : String(info.url) + ':' + String(info.bytes)
+		/*
+		 * 🔴🔴 4.17.0：**配色类先上身，媒体照旧等能播再显示** ✓（用户 2026-10-19：
+		 * 「刷新后界面又回原来颜色了」✓ —— 而且**和"数据变大 / 弱网"是同一个根** ✓）。
+		 *
+		 * 病根（旧代码）：`reveal()` 要等背景**媒体真的能播 / 能显示**才 `add('hasbg')` +
+		 * `add('bg-live')` ✓ —— 可那套暖色配色（`--panel` / `--field-line` / `--bubble` …✓）
+		 * 正是挂在 **`body.hasbg.bg-live`** 上的呀 ✓。背景视频 428KB / 静止图 141KB ✗，
+		 * 弱网下**根本下不完** ✓ → `reveal()` **永远不跑** ✗ → **配色一直是默认的** ✓✓
+		 * = 用户看到的"刷新后界面又回原来颜色" ✓✓✓。
+		 *
+		 * 现在把两件事**分开** ✓：
+		 *   · **配色**（`hasbg` + `bg-live`）：一拿到背景信息就挂 ✓ —— 不等一个字节 ✓；
+		 *   · **背景层显不显示**（`bg-shown`）：照旧等媒体真能显示了才挂 ✓
+		 *     （不许给用户一整块黑 ✗ —— 那一条是老规矩，不动 ✓）。
+		 * ⚠️ 只对**带素材的**（图 / 视频）挂配色 ✓：CSS 预设（赛博朋克）走上面那条 ✓。
+		 */
+		const wantsLive = info !== null && info !== undefined && (info.kind === 'video' || info.kind === 'image')
+		if (wantsLive === true) {
+			document.body.classList.add('hasbg')
+			document.body.classList.add('bg-live')
+		} else {
+			document.body.classList.remove('hasbg')
+			document.body.classList.remove('bg-live')
+		}
 		if (key === backdropKey) {
 			/*
 			 * 🔴 4.9.4：**钥匙一样 ≠ 背景还在** ✓（用户 2026-10-15：「一发消息动图就没了」✓）——
-			 * 断线那一下 `offlineShow()` 会 `remove('hasbg')` ✓（有意为之 ✓：素材取不到时留着就是黑屏 ✓），
-			 * 可**重连之后**页面会再调一次 `applyBackdrop(body.background)` ✓ ——
-			 * 那时钥匙**没变** ✓ → 被这条"早退"直接挡掉 ✗ → `hasbg` **再也加不回来** ✗ →
-			 * 背景一直没了 ✓，直到整页刷新才恢复 ✓。而发一条消息往往就带一次连接抖动 ✓
-			 * → 现象正是「**一发消息动图就没了**」✓✓。
-			 * 现在：钥匙一样时**顺手把状态补回来** ✓（元素还在 DOM 里 ✓，加回类就恢复了 ✓）。
+			 * 断线那一下 `offlineShow()` 会把主题类整套摘掉 ✓，重连后再调一次 `applyBackdrop` ✓。
+			 * 4.17.0 起**上面那段已经按"要不要主题"补回来了** ✓（不再依赖 `backdropShown` ✓）——
+			 * 所以这条早退现在只管"元素已经是对的、别重画"✓。
 			 */
-			if (key !== '' && backdropShown === true && document.body.classList.contains('hasbg') === false) {
-				document.body.classList.add('hasbg')
-				if (info.kind === 'video' || info.kind === 'image') document.body.classList.add('bg-live')
-			}
 			return
 		}
 		backdropKey = key
 		layer.querySelectorAll('video, img').forEach((node) => node.remove())
-		if (key === '') {
-			document.body.classList.remove('hasbg')
-			return
-		}
+		// 换了一份新素材：背景层先不显示 ✓（等它真能播 / 真能画了再挂 `bg-shown` ✓）。
+		document.body.classList.remove('bg-shown')
+		if (key === '') return
 		const node = info.kind === 'video' ? document.createElement('video') : document.createElement('img')
 		node.setAttribute('aria-hidden', 'true')
 		if (info.kind === 'video') {
@@ -6310,17 +6027,24 @@
 			shown = true
 			// 4.9.4：记下"**真的铺上去过**" ✓ —— 重连时才知道该不该补回来 ✓（见 `backdropShown` 的说明 ✓）。
 			backdropShown = true
+			/*
+			 * 4.17.0：配色类**在 `applyBackdrop` 里已经挂好了** ✓（不等媒体 ✓）——
+			 * 这里只补 `bg-shown` ✓（媒体真能显示了，才让背景层显示出来 ✓）。
+			 * 两行 add 保留成幂等的 ✓：断线回来 / 旧调用点都靠它兜底 ✓。
+			 */
 			document.body.classList.add('hasbg')
 			/*
 			 * 4.9.0：**图片/视频背景**都要"活"起来 ✓（用户：「一定要是动态图片装上去」✓）——
 			 * `bg-live` 挂上之后：图片会缓慢旋转（4.9.3 起 ✓）、暖色主题生效 ✓、流星放出来 ✓。
 			 */
 			document.body.classList.add('bg-live')
+			document.body.classList.add('bg-shown')
 		}
 		const conceal = () => {
 			shown = false
 			// 4.9.4：收掉了就不再算"铺过" ✓ —— 否则下次重连会把一个从没显示过的背景硬铺上去 ✗（黑屏 ✓）。
 			backdropShown = false
+			document.body.classList.remove('bg-shown')
 			document.body.classList.remove('hasbg')
 			document.body.classList.remove('bg-live')
 			backdropKey = ''
@@ -7274,12 +6998,8 @@
 			}).then((result) => {
 				// 2.7.0 ★8：发出去了就从离线箱里撤掉 ✓（重试路径同一条靠 requestId 认领 ✓）。
 				outboxRemove(clientId)
-				// 4.15.0 桌宠：**发出去了** → 开心一下 ✓（真成功才笑 ✓ —— 不拿"点了发送"当成功 ✗）。
-				window.dshPet?.mood?.('happy')
 				return result
 			}).catch((error) => {
-				// 4.15.0 桌宠：**失败** → 懊恼一下 ✓（这是真出了错 ✓，不是"点了发送" ✓）。
-				window.dshPet?.mood?.('error')
 				/*
 				 * 🔴 4.16.1 回归（用户报"发送图片发不出去"✓）：**带图的失败不能进离线发件箱** ✗。
 				 *
@@ -10579,7 +10299,7 @@
 				title.style.fontWeight = '600'
 				title.textContent = String(item.title ?? '') !== '' ? String(item.title) : '（这个会话没有标题）'
 				const snippet = document.createElement('div')
-				snippet.style.cssText = 'color:#9fb3d0;font-size:13px'
+				snippet.style.cssText = 'color:var(--muted);font-size:13px'
 				snippet.textContent = String(item.snippet ?? '').slice(0, 200)
 				card.appendChild(title)
 				card.appendChild(snippet)
@@ -10658,7 +10378,7 @@
 				const title = String(item.title ?? '')
 				head.textContent = title !== '' ? title : '（没有标题 · 编号 ' + String(item.idShort ?? '') + '）'
 				const meta = document.createElement('div')
-				meta.style.cssText = 'color:#9fb3d0;font-size:13px'
+				meta.style.cssText = 'color:var(--muted);font-size:13px'
 				const when = Number(item.updatedAt) > 0 ? new Date(Number(item.updatedAt)).toLocaleString() : '时间不明'
 				meta.textContent = when + (item.running === true ? ' · 正在跑 ✓' : '')
 				card.appendChild(head)
@@ -10730,6 +10450,64 @@
 		$('panelFrame').setAttribute('src', 'panel/' + encodeURIComponent(String(panel.id)) + '/' + String(panel.entry ?? 'index.html'))
 		show($('panelopen'))
 	}
+
+	/*
+	 * 🔴 4.17.0：**面板也要跟背景一个风格** ✓（用户 2026-10-19：「便签计时器和每日做了什么
+	 * 没有和背景风格一致，你调一下吧」✓）。
+	 *
+	 * 面板是**独立 iframe** ✓（自己的 html/css ✓）—— 它不会继承手机页那套暖色变量 ✗，
+	 * 所以挂上背景之后，手机页是暖色半透明的、面板却是"深蓝灰一整块"✗（一眼就看出来）。
+	 * 但面板与手机页**同源** ✓ → 父页可以往它的 document 里**注入一份主题样式** ✓：
+	 *   · 对所有面板都生效 ✓（包括以后用户自己装的 ✓ —— 不用改人家的文件 ✗）；
+	 *   · **只在挂了背景（`body.bg-live`）时才注入** ✓ —— 没背景时保持面板原样 ✓
+	 *     （那是它作者调过的样子 ✗ 别乱动）；
+	 *   · 配色**逐项抄主题那几个值** ✓（暖白文字 / 金色标题 / 暖色描边 ✓），
+	 *     背景改成透明 ✓ → 露出下面那层半透明纸 ✓（和手机上别的页一致 ✓）。
+	 * ⚠️ 面板自己的样式**不用 !important** ✓ —— 注入的这份必须用 ✓（它写在人家后面 ✓）。
+	 */
+	const PANEL_THEME_ID = 'dshm-panel-theme'
+	const PANEL_THEME_CSS = [
+		':root { color-scheme: dark; }',
+		'html, body { background: transparent !important; }',
+		'body { color: #fdf6ec !important; text-shadow: 0 1px 3px rgba(0,0,0,.7), 0 0 14px rgba(0,0,0,.45); }',
+		'h1, h2, h3, h4, h5, strong, b { color: #ffd9a0 !important; }',
+		'a { color: #ffd9a0 !important; }',
+		'.hint, .muted, small, .state { color: #d8c6ae !important; }',
+		'hr { border-color: rgba(255,196,120,.22) !important; }',
+		'input, textarea, select { background: rgba(12,14,22,.32) !important; color: #fdf6ec !important; border-color: rgba(255,196,120,.30) !important; }',
+		'input::placeholder, textarea::placeholder { color: rgba(253,246,236,.52) !important; }',
+		'button { background: rgba(255,180,84,.16) !important; color: #fdf6ec !important; border-color: rgba(255,196,120,.38) !important; }',
+		'button.primary, button.go, .go { background: linear-gradient(160deg, #ffd9a0, #ffb454) !important; color: #26170a !important; text-shadow: none !important; }',
+	].join('\n')
+
+	/** 把主题注入当前打开的面板 ✓（没开背景 / 面板还没加载好 → 什么都不做 ✓）。 */
+	function applyPanelTheme() {
+		const frame = $('panelFrame')
+		if (frame === null) return
+		let doc = null
+		try { doc = frame.contentDocument } catch { return }
+		if (doc === null || doc === undefined) return
+		const live = document.body.classList.contains('bg-live')
+		const old = doc.getElementById(PANEL_THEME_ID)
+		if (live !== true) {
+			if (old !== null) old.remove()
+			return
+		}
+		// 已经注入过就只补一处：面板可能自己重建了 head（少见）→ 顺手再查一次 ✓。
+		if (old !== null) return
+		const style = doc.createElement('style')
+		style.id = PANEL_THEME_ID
+		style.textContent = PANEL_THEME_CSS
+		// 面板还没加载完时 `head` / `documentElement` 可能是 null ✓ —— 那就先挂到 document 上 ✓
+		//（真机上 `load` 会再调一次 ✓；这里是为了"面板一开、背景已经在"的那一瞬也不落空 ✓）。
+		const head = doc.head ?? doc.documentElement ?? doc
+		if (head === null || head === undefined) return
+		head.appendChild(style)
+	}
+
+	$('panelFrame').addEventListener('load', () => { applyPanelTheme() })
+	// 主题是"随时可能开 / 关"的（断线会摘、回来会加 ✓）→ 盯着 body 的 class ✓。
+	new window.MutationObserver(() => { applyPanelTheme() }).observe(document.body, { attributes: true, attributeFilter: ['class'] })
 
 	$('panelBack').addEventListener('click', () => {
 		// ⚠️ 关掉就把 src 清空 ✓ —— 面板里可能有 `setInterval`（示例里的计时就是 ✓），
@@ -12537,31 +12315,6 @@
 	 */
 	$('moreBtn').addEventListener('click', () => show($('moreopen')))
 	$('moreBack').addEventListener('click', () => hide($('moreopen')))
-	/*
-	 * 🔴 4.15.0 桌宠的**主脚本这一半** ✓（浮层与拖动缩放都在上面那个独立 IIFE 里 ✓）：
-	 *   ① 开机拉一次清单 ✓（`available:false` 时照实交给它 —— 那边会退到代码画的那只 ✓）；
-	 *   ② 「🐳 桌宠」那个键是**藏起来之后回来的路** ✓（不摆它，藏起来就再也找不到了 ✗）；
-	 *   ③ 把"在不在跑"喂给它 ✓ —— 它读不到主脚本里的 `state.running` ✗，所以这儿开一个小口子 ✓。
-	 */
-	window.dshPetRunning = () => state.running === true
-	async function loadPet() {
-		try {
-			window.dshPetApply?.(await api('api/pet'))
-		} catch {
-			// 读不到照样要有一只 ✓（代码画的那只 ✓）—— 所以这里**什么都不用做** ✓，只是别把它当错误喊出来 ✗。
-			window.dshPetApply?.(null)
-		}
-	}
-	if ($('petToggle') !== null) {
-		$('petToggle').addEventListener('click', () => {
-			const now = window.dshPet?.state?.().hidden === true
-			if (now) window.dshPet?.show?.()
-			else window.dshPet?.set?.({ hidden: true })
-			const hint = $('petToggleHint')
-			if (hint !== null) hint.textContent = now ? '已经放出来了 ✓（拖动 / 缩放 / 点一下有反应）' : '已经藏起来了 ✓（点这里再放出来）'
-		})
-	}
-	void loadPet()
 	$('pcBtn').addEventListener('click', () => { show($('pcopen')); void loadPc() })
 	$('pcBack').addEventListener('click', () => hide($('pcopen')))
 	$('pcRefresh').addEventListener('click', () => { pcPanel.state = null; void loadPc() })

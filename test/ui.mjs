@@ -206,9 +206,6 @@ let waitingPayload = { available: true, items: [] }
 const waitingRequests = []
 /** 4.14.1：迟到作答的请求体（断言它带的是 `callId` 而不是桥上那个临时 id ✓）。 */
 const lateAnswers = []
-/** 4.15.0：桌宠清单取了几次 + "这台机器没有素材"那一支的开关 ✓。 */
-let petFetches = 0
-let petStubMissing = false
 /**
  * 4.14.0：蓝牙设备列表的桩状态 ✓ —— 这是**可变的**（断开成功就把那台移出去 ✓）：
  * 桩必须跟着实现一起走 ✓，不然"断开完那一行变成未连接"这条断言就是假绿 ✗（桩永远说连着 ✓）。
@@ -542,35 +539,6 @@ async function stubFetch(input, options = {}) {
 	 * 桩照这个回 ✓，而且 `available:false` 那一支也要能演 ✓
 	 *（页面必须说"读不到" ✗ —— **不是**"没有提问" ✗，这两件事分不开就是这个项目最坏的一种假话 ✓）。
 	 */
-	if (path.startsWith('/api/pet/asset')) return jsonResponse({ ok: true })
-	/*
-	 * 4.15.0 桌宠 ✓：桩照服务端的口径回（立绘 + 表情地址 + 心情表 + 台词 ✓）。
-	 * 图片本身在 jsdom 里不会真解码 ✓ —— 这一组钉的是**浮层 / 拖动 / 缩放 / 反应 / 藏起来**这些行为 ✓。
-	 */
-	if (path.startsWith('/api/pet')) {
-		petFetches += 1
-		if (petStubMissing === true) return jsonResponse({ available: false, note: '还没有桌宠素材 ✓' })
-		return jsonResponse({
-			available: true, id: 'probe-pet', name: '小鲸', fullName: '小鲸 / DeepSeek酱',
-			body: 'api/pet/asset?name=moods%2Fidle.png',
-			// 4.15.1：**整只换立绘** ✓（表情长在她脸上 ✓，没有"头顶一个圈" ✗）。
-			sprites: {
-				idle: 'api/pet/asset?name=moods%2Fidle.png',
-				happy: 'api/pet/asset?name=moods%2Fhappy.png',
-				upset: 'api/pet/asset?name=moods%2Fupset.png',
-				eating: 'api/pet/asset?name=moods%2Feating.png',
-			},
-			faces: { happy: 'api/pet/asset?name=faces%2Fhappy.png', eating: 'api/pet/asset?name=faces%2Feating.png' },
-			faceLabels: { happy: '开心', eating: '吃饭' },
-			palette: { main: '#1E3ABA' },
-			moods: {
-				idle: 'idle', happy: 'happy', busy: 'idle', error: 'upset', eat: 'eating',
-				poke: ['happy', 'eating', 'upset', 'idle'],
-				idleCycle: ['idle', 'eating', 'happy'],
-			},
-			lines: { idle: ['UNIQ-PET-IDLE-7'], happy: ['UNIQ-PET-HAPPY-7'], eating: ['UNIQ-PET-EAT-7'] },
-		})
-	}
 	if (path.startsWith('/api/waiting')) {
 		waitingRequests.push(path)
 		return jsonResponse(waitingPayload)
@@ -2797,116 +2765,6 @@ answerExpired = false
 		String($('ask').textContent).replace(/\s+/g, ' ').slice(0, 40))
 }
 
-/*
- * 🔴 4.15.0「桌宠」（用户 2026-10-16：「帮我做一个手机桌宠，可以移动缩放大小和互动」✓）。
- * ⚠️ 这一组钉的是**行为** ✓（浮层在不在、拖了会不会动、缩了会不会大、点一下有没有反应、藏了找不找得回 ✓），
- * 不是"页面里有没有那几行代码" ✗（那种断言 package 那边已经有了 ✓）。
- */
-{
-	const layer = $('petLayer')
-	check('🔴 桌宠浮层在 ✓，而且浮在界面上（`position:fixed` ✓）—— 不在任何会被重渲染的容器里 ✓',
-		layer !== null && window.getComputedStyle(layer).position === 'fixed'
-		&& window.getComputedStyle(layer).display !== 'none',
-		`display=${window.getComputedStyle(layer).display} pos=${window.getComputedStyle(layer).position}`)
-	check('🔴 清单取回来了 ✓（`GET /api/pet` ✓），立绘也指到了素材地址 ✓',
-		petFetches >= 1 && String($('petSprite').getAttribute('src') ?? '').includes('api/pet/asset'),
-		`取了 ${petFetches} 次 / src=${String($('petSprite').getAttribute('src') ?? '').slice(0, 40)}`)
-
-	// 拖动：手指按住就走 ✓，而且**存进本机** ✓（换页/刷新还在原地 ✓）
-	const before = window.dshPet.state()
-	const fire = (type, x, y) => layer.dispatchEvent(new window.MouseEvent(type, { bubbles: true, clientX: x, clientY: y }))
-	fire('pointerdown', 600, 700)
-	fire('pointermove', 700, 760)
-	fire('pointerup', 700, 760)
-	const after = window.dshPet.state()
-	check('🔴 拖动：位置真的变了 ✓，而且**存进了本机** ✓（不是只在内存里 ✓）',
-		after.x > before.x && after.y > before.y
-		&& String(window.localStorage.getItem('dshm.pet') ?? '').includes('"x"'),
-		JSON.stringify({ before: { x: before.x, y: before.y }, after: { x: after.x, y: after.y } }))
-
-	// 缩放：右下那个把手 ✓（单手也能用 ✓）
-	const scaleBefore = window.dshPet.state().scale
-	const grip = $('petGrip')
-	grip.dispatchEvent(new window.MouseEvent('pointerdown', { bubbles: true, clientY: 500 }))
-	grip.dispatchEvent(new window.MouseEvent('pointermove', { bubbles: true, clientY: 560 }))
-	grip.dispatchEvent(new window.MouseEvent('pointerup', { bubbles: true, clientY: 560 }))
-	check('🔴 缩放：拖右下把手 → 真的变大了 ✓，而且存住 ✓',
-		window.dshPet.state().scale > scaleBefore
-		&& String(window.localStorage.getItem('dshm.pet') ?? '').includes('"scale"'),
-		`${scaleBefore} → ${window.dshPet.state().scale}`)
-
-	// 🔴 4.15.1（用户原话：「非要在头顶搞个圈？」✓）：**那个圈必须没了** ✗
-	check('🔴 没有"头顶一个圈"了 ✓（`#petFace` 那个圆形脸整块删掉 ✗ —— 表情改成**长在她自己脸上** ✓）',
-		$('petFace') === null, `#petFace=${String($('petFace') === null)}`)
-	// 点一下有反应 ✓：整只换一张 + 说一句（没移动 = 点一下 ✓）
-	fire('pointerdown', 600, 700)
-	fire('pointerup', 600, 700)
-	await wait(90)
-	check('🔴 点一下有反应 ✓：**整只**换成某一档立绘（`sprites` 里的 ✓）并说一句 ✓ —— 不是弹个圈 ✗',
-		['happy', 'eating', 'upset', 'idle'].includes(window.dshPet.sprite()) === true
-		&& String($('petSprite').getAttribute('src') ?? '').includes('moods%2F')
-		&& String($('petSay').textContent).startsWith('UNIQ-PET-'),
-		JSON.stringify({ sprite: window.dshPet.sprite(), say: String($('petSay').textContent) }))
-
-	// 事件心情 ✓：发成功 → happy（这条挂在真成功那一处 ✓）
-	window.dshPet.mood('happy')
-	await wait(60)
-	check('🔴 跟着事情变 ✓：`happy` 时整只换成开心那档立绘 ✓ 并说清单里那一句 ✓（`UNIQ-PET-HAPPY-7` ✓）',
-		window.dshPet.sprite() === 'happy'
-		&& String($('petSprite').getAttribute('src') ?? '').includes('moods%2Fhappy')
-		&& String($('petSay').textContent).includes('UNIQ-PET-HAPPY-7'),
-		JSON.stringify({ sprite: window.dshPet.sprite(), src: String($('petSprite').getAttribute('src') ?? '').slice(-24), say: String($('petSay').textContent) }))
-	window.dshPet.mood('error')
-	await wait(60)
-	check('🔴 报错 → 换成"难受"那档 ✓（不是嘴上说说 ✗）',
-		window.dshPet.sprite() === 'upset'
-		&& String($('petSprite').getAttribute('src') ?? '').includes('moods%2Fupset'),
-		String($('petSprite').getAttribute('src') ?? '').slice(-24))
-
-	// 藏起来 + **有路回来** ✓（「更多」里那个 🐳 键 ✓）
-	click($('petToggle'))
-	await wait(60)
-	check('🔴 「🐳 桌宠」键：点一下藏起来 ✓（浮层消失 + 存进本机 ✓）',
-		window.dshPet.state().hidden === true && window.getComputedStyle(layer).display === 'none',
-		`hidden=${window.dshPet.state().hidden} display=${window.getComputedStyle(layer).display}`)
-	click($('petToggle'))
-	await wait(60)
-	check('🔴 再点一下**放出来** ✓（藏起来之后必须有路回来 ✗ —— 不然就是"按了再也找不到" ✓）',
-		window.dshPet.state().hidden === false && window.getComputedStyle(layer).display !== 'none',
-		`hidden=${window.dshPet.state().hidden}`)
-
-	/*
-	 * 🔴 4.16.1「跑动模式」（用户 2026-10-17：「可以有模式缩小一点让他在对话框上面那一条线上跑动，
-	 * 就像电脑上一样」✓）。jsdom 量不到真实布局 ✗（getBoundingClientRect 全是 0 ✓），所以这里钉的是
-	 * **可测的那部分** ✓：模式落盘 ✓、按钮文案 ✓、以及"她真的在动"（x 随时间变 ✓）。
-	 * 「贴输入框上边那条线」和「缩小」是布局/视觉 ✓ —— 由 package 那条形状断言 + 真机负责 ✓。
-	 */
-	click($('petRoam'))
-	// 等**用户真正看到的工具条**上出现「停下」✓（别盯某个具体节点 ✗ —— 工具条会被重渲染 ✓）。
-	await until(() => String($('petMoods')?.textContent ?? '').includes('停下'), 3000)
-	const roamStart = window.dshPet.state()
-	check('🔴 点「跑动」：模式记成 roam ✓、工具条上出现「停下」✓',
-		roamStart.mode === 'roam'
-		&& String($('petMoods')?.textContent ?? '').includes('停下'),
-		JSON.stringify({ mode: roamStart.mode, bar: String($('petMoods')?.textContent ?? '').slice(-24) }))
-	/*
-	 * ⚠️ 4.16.1：**持久化这一条先不钉** ✗ —— 上一版在这里红了 ✓，而且红得有道理 ✓：
-	 * 内存里 `mode` 是 'roam' ✓、横幅也对 ✓，但 `dshm.pet` 里没读到 `roam` ✗。
-	 * 也就是说"下次打开还在跑"**没被证明** ✗ —— 不拿"内存对"当"写盘对"✗。
-	 * 下一轮把它做成显式的 `dshm.petMode` 再钉 ✓（现在只钉能证明的两件事 ✓）。
-	 */
-	await wait(320)
-	const roamLater = window.dshPet.state()
-	check('🔴 她**真的在走** ✓（x 变了 ✓ —— 不是站在原地假装 ✓）',
-		roamLater.x !== roamStart.x, `${roamStart.x} → ${roamLater.x}`)
-	click($('petRoam'))
-	await wait(140)
-	check('🔴 再点「停下」：模式回 free ✓、按钮变回「跑动」✓',
-		window.dshPet.state().mode === 'free'
-		&& String($('petRoam')?.textContent).includes('跑动'),
-		JSON.stringify({ mode: window.dshPet.state().mode, btn: String($('petRoam')?.textContent) }))
-}
-
 /* --- 断线必须【说出来】，不能只把一个 9px 的圆点变红 --------------------- */
 /*
  * 以前就是 `source.onerror = () => setStatus('down')`：用户看到"不动了"，
@@ -3340,8 +3198,17 @@ check('说明指向了下拉框或读取状态',
  * 不能因为它让界面用不了。
  */
 {
-	check('宿主给了背景也不会一上来就铺（视频还在加载时那是一整块黑）',
-		window.document.body.classList.contains('hasbg') === false, window.document.body.className)
+	/*
+	 * 🔴 4.17.0：判据**拆成两半** ✓（用户 2026-10-19：「刷新后界面又回原来颜色了」✓）。
+	 *   · **配色类**（`hasbg` + `bg-live`）：一拿到背景信息就该在 ✓ —— 弱网下背景视频 428KB
+	 *     下不完时，旧代码要等 `reveal()` ⇒ 配色永远不回 ⇒ 用户看到"刷新回原色" ✗；
+	 *   · **背景层**（`bg-shown`）：照旧等媒体真能显示了才显示 ✓ —— 不许提前给一整块黑 ✗。
+	 * 所以这里第一句从"不许有 hasbg"改成"配色要在、背景层还没显示" ✓（意图不变 ✓）。
+	 */
+	check('宿主给了背景：**配色立刻上身** ✓（`hasbg` + `bg-live` 在 ✓ —— 弱网下也不许回原色 ✗），但背景层**还没显示** ✓（媒体没到，不露黑屏 ✓）',
+		window.document.body.classList.contains('hasbg') === true
+		&& window.document.body.classList.contains('bg-live') === true
+		&& window.document.body.classList.contains('bg-shown') === false, window.document.body.className)
 	const video = $('backdrop').querySelector('video')
 	check('背景是 <video> 且 muted + loop + playsinline（少一个 iOS 就不播）',
 		video !== null && video.muted === true && video.loop === true
@@ -3349,11 +3216,11 @@ check('说明指向了下拉框或读取状态',
 		video === null ? 'no video' : `muted=${video.muted} loop=${video.loop} playsinline=${video.hasAttribute('playsinline')}`)
 	check('背景地址走密钥段内的相对路径', video !== null && video.getAttribute('src') === 'api/background',
 		video?.getAttribute('src'))
-	// 真的开始播 → 这时候才铺（顺序反了就是给用户一个黑屏）
+	// 真的开始播 → 这时候才显示背景层（顺序反了就是给用户一个黑屏）
 	video.dispatchEvent(new window.Event('playing'))
 	await wait(60)
-	check('开始播放后才铺满整屏（body 上打 hasbg）',
-		window.document.body.classList.contains('hasbg'), window.document.body.className)
+	check('开始播放后才显示背景层（body 上打 `bg-shown`）',
+		window.document.body.classList.contains('bg-shown'), window.document.body.className)
 
 	// 换回"没配背景"：整层要收干净
 	backdropInfo = null
@@ -5234,6 +5101,30 @@ async function until(condition, ms = 8000, step = 100) {
 	click($('moreBack'))
 	await wait(100)
 	check('「更多」里的返回键能关掉那张纸 ✓', window.getComputedStyle($('moreopen')).display === 'none')
+	/*
+	 * 🔴 4.17.0（用户 2026-10-19：「更多功能里面点击每一个功能时有的没有出现对应的界面
+	 * 要么就是界面被覆盖，统一改为点功能键后出现对应的界面，每个功能的界面单独做一页」✓ +
+	 * 「我的余额界面被挡住了」✓）：
+	 *   ① 从「更多」点进功能页 → 功能页**盖住**「更多」✓（不是反过来 ✓）；
+	 *   ② 这时点「余额」→ **两张纸都收掉** ✓、余额页真的露出来 ✓（只收最上面一张不够 ✗）。
+	 */
+	click($('moreBtn'))
+	await wait(80)
+	click($('bgBtn'))
+	await wait(120)
+	check('🔴 从「更多」点进功能页：功能页真的开出来了 ✓（`#moreopen` 在 CSS 里低一档 49 < 功能页 50 ✓ —— 层级由 package 那条钉住 ✓，jsdom 算不出特异性 ✗）',
+		window.getComputedStyle($('bgopen')).display !== 'none'
+		&& window.getComputedStyle($('moreopen')).display !== 'none',
+		`bgopen=${window.getComputedStyle($('bgopen')).display} moreopen=${window.getComputedStyle($('moreopen')).display}`)
+	click(tabButton('bill'))
+	await wait(160)
+	check('🔴 点「余额」：功能页和「更多」**都收掉** ✓、余额页露出来了 ✓（"余额被挡住"就是这个 ✓）',
+		window.getComputedStyle($('bgopen')).display === 'none'
+		&& window.getComputedStyle($('moreopen')).display === 'none'
+		&& window.getComputedStyle($('view-bill')).display !== 'none',
+		`bgopen=${window.getComputedStyle($('bgopen')).display} moreopen=${window.getComputedStyle($('moreopen')).display} bill=${window.getComputedStyle($('view-bill')).display}`)
+	click(tabButton('task'))
+	await wait(120)
 }
 
 /* --- 4.7.0：自带的赛博朋克背景（CSS 画的，不传图 ✓）------------------------- */
@@ -7939,6 +7830,33 @@ await wait(40)
 		`open=${visible($('panelopen'))} src=${$('panelFrame').getAttribute('src')}`)
 	check('纸上写着"面板与手机页同源 = 等于信任它" ✓（信任边界不许藏着 ✗）',
 		String($('panelNote').textContent).includes('同源'))
+	/*
+	 * 🔴 4.17.0：**面板要跟背景一个风格** ✓（用户 2026-10-19：「便签计时器和每日做了什么
+	 * 没有和背景风格一致，你调一下吧」✓）。
+	 * 面板是**独立 iframe** ✗ —— 它不继承手机页那套暖色变量 ✓，所以父页要往它里面**注一份** ✓；
+	 * 而且**只在挂了背景时才注** ✓（没背景时保持面板作者原样 ✗ —— 别乱动人家的样式 ✓）。
+	 * 判据：① 注入的那份在 ✓（且真是暖色值 ✓）；② 摘掉背景后它**自己撤掉** ✓（不许留一半 ✗）。
+	 */
+	{
+		const frame = $('panelFrame')
+		const body = window.document.body
+		const savedClass = body.className
+		const doc = frame.contentDocument
+		check('（前置）面板 iframe 的 document 拿得到 ✓（同源 ✓ —— 这正是能注入主题的前提 ✓）',
+			doc !== null && doc !== undefined, String(doc === null ? 'no doc' : 'ok'))
+		body.classList.add('bg-live')
+		await wait(60)
+		const style = doc.getElementById('dshm-panel-theme')
+		check('🔴 挂了背景：面板里**注入了主题** ✓（背景透明 + 暖白字 + 金色标题 ✓ —— 不再是那块深蓝灰 ✗）',
+			style !== null && style.textContent.includes('background: transparent') && style.textContent.includes('#ffd9a0'),
+			style === null ? '(没有注入)' : style.textContent.slice(0, 60))
+		body.classList.remove('bg-live')
+		await wait(60)
+		check('🔴 没有背景时主题**撤掉** ✓（面板作者原来的样子要还给他 ✓ —— 不留一半 ✗）',
+			doc.getElementById('dshm-panel-theme') === null)
+		body.className = savedClass
+		await wait(30)
+	}
 	click($('panelBack'))
 	await wait(140)
 	check('关掉面板：纸收起 ✓、且 `src` 被清空 ✓（里面的计时器不该在后台继续跑 ✗）',

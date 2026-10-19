@@ -462,11 +462,19 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
  */
 {
 	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 钥匙一样时**不再无脑早退** ✓ —— 会顺手把 `hasbg` / `bg-live` 补回来 ✓（否则断线一次背景就永久消失 ✗）',
-		/if \(key === backdropKey\) \{[\s\S]{0,700}classList\.contains\('hasbg'\) === false[\s\S]{0,200}classList\.add\('hasbg'\)/.test(page))
-	check('🔴 补状态只补「刚才确实显示过」的情况 ✓（`key !== \'\' && backdropShown === true` ✓ —— '
-		+ '从没铺过就补 = 露出视频的整块黑 ✗，ui 那条「一上来不铺」会当场红 ✓）',
-		/if \(key !== '' && backdropShown === true && document\.body\.classList\.contains\('hasbg'\) === false\)/.test(page))
+	/*
+	 * 🔴 4.17.0：**"刷新后回原色"的根** ✓（用户 2026-10-19）。旧代码把配色（`hasbg` + `bg-live`）
+	 * 绑在 `reveal()` 上 ✓ —— 而 `reveal()` 要等背景媒体**真能播**才跑 ✓，弱网下 428KB 的视频
+	 * 下不完 ⇒ 永远不跑 ⇒ **配色一直默认** ✓✓。现在：配色一拿到信息就挂 ✓，背景层另用
+	 * `bg-shown` 等媒体 ✓（两件事分开 —— "别露黑屏"那条老规矩不动 ✓）。
+	 */
+	check('🔴 配色类**不等媒体** ✓（`wantsLive` 一成立就加 `hasbg` + `bg-live` ✓ —— 弱网/大素材下也不会回原色 ✓）',
+		/const wantsLive = [^\n]*\n\t\tif \(wantsLive === true\) \{[\s\S]{0,120}classList\.add\('hasbg'\)[\s\S]{0,120}classList\.add\('bg-live'\)/.test(page))
+	check('🔴 背景层有**自己的开关** ✓：`body.hasbg.bg-shown #backdrop` ✓（媒体没到就先不显示 ✓ —— 不许一整块黑 ✗）',
+		page.includes('body.hasbg.bg-shown #backdrop { display: block; }'))
+	check('🔴 `bg-shown` **在 reveal 里加、conceal 里摘** ✓（不然它永远不动 = 假开关 ✗）',
+		/const reveal = \(\) => \{[\s\S]{0,1200}classList\.add\('bg-shown'\)/.test(page)
+		&& /const conceal = \(\) => \{[\s\S]{0,1200}classList\.remove\('bg-shown'\)/.test(page))
 	check('🔴 「铺过没有」这个标记**在 reveal 里置真、conceal 里置假** ✓（不然它永远不动 = 假标记 ✗）',
 		/const reveal = \(\) => \{[\s\S]{0,200}backdropShown = true/.test(page)
 		&& /const conceal = \(\) => \{[\s\S]{0,200}backdropShown = false/.test(page))
@@ -887,66 +895,6 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 }
 
 /*
- * 30) 🔴 **4.15.0「桌宠」**（用户 2026-10-16：「帮我做一个手机桌宠，可以移动缩放大小和互动，
- * 参考这张图片，电脑端也要有」✓）。
- *
- * 这一条里最要紧的是**素材规矩** ✓（和"夜行星"那条一字不差 ✓）：
- * 设定图、抠出来的表情、生成的立绘都是**用户自己的东西** ✓ —— **一个字节都不许进插件** ✗
- *（进包就等于跟着 Release 发给所有人 ✓）。插件里只有**玩法** + 一只**代码画的兜底** ✓。
- * 另外三条路径纪律也钉住：文件名只来自 `pet.json` ✓、逐段洗过 ✓、**只许取清单点过名的** ✓。
- */
-{
-	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
-	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-	check('🔴 用户素材**不进插件** ✓：`lib/` 下没有 body.png / faces/ / pet.json ✗（进包就是跟着发给所有人 ✗）',
-		existsSync(join(ROOT, 'lib', 'body.png')) === false
-		&& existsSync(join(ROOT, 'lib', 'faces')) === false
-		&& existsSync(join(ROOT, 'lib', 'pet.json')) === false
-		&& existsSync(join(ROOT, 'lib', 'pets')) === false)
-	check('🔴 素材只从**用户本机目录**读 ✓（`~/.dsh/mobile-bridge-pets/<id>/` ✓ —— 不是插件目录 ✗）',
-		host.includes("join(dshHome(), 'mobile-bridge-pets')") && host.includes('function petDir(id)'))
-	check('🔴 取素材走**白名单 + 逐段洗 + 落在目录内** ✓（文件名只来自 `pet.json` ✗ —— 不拿 URL 拼路径 ✗）',
-		/const allowed = new Set\(\[meta\.body[^\]]*\]\)/.test(host)
-		&& host.includes('allowed.has(wanted) === false')
-		&& host.includes('function petAssetRef(dir, rel)')
-		&& host.includes('full.startsWith(root + sep) === false'))
-	check('🔴 两条桌宠路由都**要登录** ✓（素材是用户自己的东西 ✓）',
-		/GET \/api\/pet'\)\s*return\s+guard\(\)/.test(host)
-		&& /GET \/api\/pet\/asset'\)\s*return\s+guard\(\)/.test(host))
-	check('🔴 没有素材时回 `available:false` + 一句人话 ✓（不是"读不到" ✗、也不假装有一只 ✗）',
-		host.includes('还没有桌宠素材 ✓ —— 把素材放进') && host.includes('available: false'))
-	check('🔴 手机上的桌宠是**静态节点** ✓（绝不挂在会被重渲染的容器里 ✗ —— 3.5.0 那个入口就是这么栽的 ✓）',
-		page.includes('<div id="petLayer"') && page.includes('#petLayer { position: fixed'))
-	check('🔴 三件事都在：拖动 ✓ / 缩放（把手 + 双指 ✓）/ 点一下有反应 ✓',
-		page.includes("layer.addEventListener('pointerdown'")
-		&& page.includes("grip.addEventListener('pointermove'")
-		&& page.includes("event.touches.length !== 2")
-		&& page.includes('function poke()'))
-	check('🔴 位置与大小**存本机** ✓（各端各一份 ✓），而且是**百分比 + 倍率** ✓（横竖屏切换不会跑到屏幕外 ✗）',
-		page.includes("localStorage.setItem('dshm.pet'") && page.includes('petState.x = Math.max(0.04'))
-	check('🔴 跟着事情变表情 ✓（发成功 → happy ✓ / 报错 → error ✓）—— 挂在**真成功 / 真失败**那两处 ✓',
-		page.includes("window.dshPet?.mood?.('happy')") && page.includes("window.dshPet?.mood?.('error')"))
-	check('🔴 没有素材也**不会空着** ✓：代码画的那只（内联 SVG ✓，插件自带 ✓）',
-		page.includes('id="petFallback"') && page.includes('<svg id="petFallback"'))
-	/*
-	 * 🔴 4.15.1（用户原话：「非要在头顶搞个圈？」✓）：**那个圈不许回来** ✗ ——
-	 * 表情改成**整只换立绘** ✓（`sprites` ✓），脸是长在她自己身上的 ✓。
-	 * ⚠️ 连**死代码**都要清掉 ✗：留着 `#petFace` 的 CSS/注释会让人以为那个圈还在 ✓。
-	 */
-	check('🔴 头圈**一个字节都不许留** ✗（`petFace` / `petFaceImg` 在页面里彻底没有 ✓ —— 含 CSS 与注释 ✓）',
-		page.includes('petFace') === false)
-	check('🔴 表情是**整只换立绘** ✓：手机按清单里的 `sprites` 换 `#petSprite` ✓，空闲时还会在 `idleCycle` 里轮换 ✓',
-		page.includes('function showSprite(key)')
-		&& page.includes('pet.sprites') && page.includes('idleCycle')
-		&& page.includes('}, 7000)'))
-	check('🔴 服务端也要把 `sprites` 给出来 ✓，而且**白名单里带上它们** ✓（不然整只换立绘会 404 ✗）',
-		host.includes('sprites: Object.fromEntries(Object.entries(meta.sprites)')
-		&& host.includes('const allowed = new Set([meta.body, ...Object.values(meta.sprites), ...Object.values(meta.faces)])'))
-	check('🔴 藏起来之后**有路回来** ✓（「更多」里那个 🐳 键 ✓ —— 不摆它就是"按了再也找不到" ✗）',
-		page.includes('id="petToggle"') && page.includes("$('petToggle').addEventListener"))
-}
-
-/*
  * 31) 🔴 **4.16.0「侧栏预览」**（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓ ——
  * 电脑端 GUI 的**右侧栏**能挂着文档边读边聊 ✓，而手机这边原来只有**整屏纸** ✗，
  * 打开文档就把对话整个盖住 ✓）。
@@ -994,22 +942,64 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		script.includes("$urlIsTailscale = ($url -match '\\.ts\\.net')")
 		&& script.includes('cloudflaredMissing')
 		&& script.includes('Tailscale 已把外网转发到本机'))
-	check('🔴 桌宠清单可以**自带装扮名** ✓（`spriteLabels` ✓ —— 长按工具条按它显示 ✓，没写退回内置四个字 ✓）',
-		(/pet\?\.spriteLabels\?\.\[key\] \?\? LABELS\[key\] \?\? key/).test(await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')))
-	/*
-	 * 🔴 4.16.1「跑动模式」（用户 2026-10-17：「可以有模式缩小一点让他在对话框上面那一条线上跑动，
-	 * 就像电脑上一样」✓）：判据钉在**那三件事**上 ✓ —— 缩小 ✓、贴着**输入框上边**那条线 ✓、会走会掉头 ✓。
-	 */
-	{
-		const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
-		check('🔴 跑动时**缩小** ✓（`Math.min(petState.scale, 0.62)` ✓ —— 不覆盖用户手调的倍率 ✓）',
-			page.includes('Math.min(petState.scale, 0.62)'))
-		check('🔴 地面 = **输入框上边那条线** ✓（`$(\'text\').getBoundingClientRect().top` ✓ —— 不是随便飘 ✓）',
-			page.includes("textarea.getBoundingClientRect()") && page.includes('rect.top - (width * 4 / 3)'))
-		check('🔴 会走 ✓ 会掉头 ✓ 有按钮 ✓ 有碎步 ✓（`setRoam` / `roamDir` / `petRoam` / `petwalk` ✓）',
-			page.includes('function setRoam(') && page.includes('roamDir = -1')
-			&& page.includes("roamBtn.id = 'petRoam'") && page.includes('#petBody.petwalk'))
-	}
+}
+
+/*
+ * 33) 🔴 **4.17.0「面板上色 + 手机桌宠下线」**（用户 2026-10-19：
+ * 「便签计时器和每日做了什么没有和背景风格一致，你调一下吧」✓、
+ * 「手机桌宠不要了，电脑桌宠不用动」✓）。
+ *
+ * ① 面板是**独立 iframe** ✗ —— 不继承手机页那套暖色变量 ✓，所以要父页**注一份**进去 ✓，
+ *    而且**只在挂了背景时才注** ✓（没背景时把人家的原样还给他 ✓）；
+ * ② 桌宠**整块下线** ✓（页面 / 宿主接口 / 用例一起 ✓ —— 只删一半比不删更糟 ✗）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	check('🔴 面板主题：注入的那份有 `id` ✓、用 `!important` 压住面板自己的样式 ✓、`html, body` 透明 ✓（露出下面那层纸 ✓）',
+		page.includes("const PANEL_THEME_ID = 'dshm-panel-theme'")
+		&& page.includes('html, body { background: transparent !important; }')
+		&& page.includes("body { color: #fdf6ec !important;"))
+	check('🔴 只有在**挂了背景**时才注入 ✓（`body.classList.contains(\'bg-live\')` ✓ —— 没背景时保持面板作者原样 ✗）',
+		/function applyPanelTheme\(\) \{[\s\S]{0,600}classList\.contains\('bg-live'\)/.test(page))
+	check('🔴 主题开 / 关都要跟得上 ✓（如果面板开着时断线摘掉背景、回来又挂上 ✓ —— `MutationObserver` 盯 body 的 class ✓）',
+		page.includes("new window.MutationObserver(() => { applyPanelTheme() }).observe(document.body"))
+	check('🔴 面板 iframe 自己的底不再是那块深蓝灰 ✗（改成透明 ✓ —— 否则注入了也看不见背景 ✓）',
+		page.includes('id="panelFrame"') && page.includes('background:transparent'))
+	check('🔴 目标卡 / 会话检索卡也走**主题变量** ✓（原来写死 #161d33 / #9fb3d0 ✗ —— 挂暖色背景就是一块蓝板子 ✓）',
+		page.includes('.goalcard { border: 1px solid var(--line)') && page.includes('background: var(--panel-2)')
+		&& page.includes('color:var(--muted);font-size:13px')
+		&& page.includes('color:#9fb3d0') === false)
+	check('🔴 手机桌宠**整块下线** ✓：页面里没有浮层 / 键 ✓，宿主里没有 `/api/pet` ✓（只删一半比不删更糟 ✗）',
+		page.includes('petLayer') === false && page.includes('petToggle') === false
+		&& page.includes('dshPet') === false
+		&& host.includes('/api/pet') === false && host.includes('mobile-bridge-pets') === false)
+}
+
+/*
+ * 34) 🔴 **4.17.0「每个功能单独一页」**（用户 2026-10-19：「更多功能里面点击每一个功能时
+ * 有的没有出现对应的界面要么就是界面被覆盖，统一改为点功能键后出现对应的界面，
+ * 每个功能的界面单独做一页」✓ + 「我的余额界面被挡住了」✓）。
+ *
+ * 病根是**层级打平 + 手写清单** ✗：
+ *   · 所有 `.sheet` 都是 50 ✓，打平时后写的赢 ✗ —— 而 `#moreopen` 写在中间 ✗，
+ *     排在它前面的功能页（目标 / 背景 / 搜一搜 / 工作流 / 面板…）一点开就被它盖住 ✓；
+ *   · 「切页签先把纸收掉」靠一份**手写清单** ✗ —— 漏登一张就出现"余额被盖住"✓。
+ * 判据钉在三处：① 更多低一档 ✓；② 抽屉清单**按 DOM 自动取最上面那张** ✓（不再手写 ✗）；
+ * ③ 切到页面本身（任务 / 新建 / 余额）时**全收** ✓（只收最上面一张不够 ✗）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 「更多」低一档 ✓（`#moreopen { z-index: 49; }` ✓ —— 任何功能页都盖得住它 ✓）',
+		page.includes('#moreopen { z-index: 49; }'))
+	check('🔴 抽屉清单**按 DOM 自动取最上面那张** ✓（扫 `.sheet` ✓、`moreopen` 只有当兜底 ✓ —— 不再手写清单 ✗）',
+		/function openToolPanel\(\) \{[\s\S]{0,900}querySelectorAll\('\.sheet'\)[\s\S]{0,400}more = node[\s\S]{0,200}return top \?\? more/.test(page))
+	check('🔴 切到页面本身时**全收** ✓（`closeAllSheets()` ✓ 并且在 `goPage` 里被调用 ✓ —— 只收最上面一张 ⇒ 更多还盖着余额 ✗）',
+		/function closeAllSheets\(\) \{[\s\S]{0,600}hide\(node\)/.test(page)
+		&& /if \(name === 'task' \|\| name === 'new' \|\| name === 'bill'\) closeAllSheets\(\)/.test(page))
+	check('🔴 功能页都留着自己的「← 返回」✓（收掉后「更多」自己露出来 ✓ —— 这就是"一页一页"的手感 ✓）',
+		['goalBack', 'bgBack', 'sysBack', 'pcBack', 'schBack', 'expBack', 'secBack', 'checkBack']
+			.every((id) => page.includes('id="' + id + '"')))
 }
 
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
