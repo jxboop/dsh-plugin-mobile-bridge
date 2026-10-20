@@ -1071,5 +1071,26 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& host.includes('tailscale funnel --bg ${state.config.port}'))
 }
 
+/*
+ * 38) 🔴 **5.0.4「本地缓存把启动卡死」**（用户 2026-10-20：「新加了狼人杀以后手机桥又打不开了」✓）。
+ *
+ * 现场：手机页面能打开（`GET /` 到了 ✓、`manifest` 也到了 ✓），可**桥这边一条 `/api/boot` 都没有** ✗。
+ * 真凶：`bootRun()` 先 `await loadTranscriptSnapshot()` ✓；而 `openBgDb()` 的 `indexedDB.open(version)`
+ * 在**另一个旧连接还开着**时只会发 `onblocked`（既不 success 也不 error ✗，而且没人处理 ✗）
+ * → 永远不返回 ✗ → `/api/boot` 根本没发出去 ✓ → 用户看到"打开了但一直转" ✓。
+ * 规矩：本地缓存**只配加速** ✓ —— 读不出来/读太慢都必须让路 ✓，绝不能卡启动 ✗。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 IndexedDB `onblocked` 有处理 + 有**硬超时** ✓（旧连接占着旧版本时 open 会一直挂着 ✗ —— 这就是"页面在加载、桥一条请求都没有"的真凶 ✓）',
+		page.includes("request.onblocked = () => finish(reject, new Error('idb open blocked'))")
+		&& page.includes('idb open timeout') && page.includes('const IDB_TIMEOUT_MS = 2000'))
+	check('🔴 事务也有上限 + 中止处理 ✓（`idb tx timeout` / `tx.onabort` ✓ —— 别让一次读缓存把页面钉死 ✗）',
+		page.includes('idb tx timeout') && page.includes('tx.onabort'))
+	check('🔴 启动时读本地缓存**最多等 1.5 秒** ✓，超时当没有、继续 `/api/boot` ✓（缓存只配加速，不是启动前置 ✗）',
+		page.includes('new Promise((resolve) => setTimeout(() => resolve(null), 1500))')
+		&& page.includes('loadTranscriptSnapshot(remembered).catch(() => null)'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
