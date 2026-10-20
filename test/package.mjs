@@ -1092,5 +1092,26 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& page.includes('loadTranscriptSnapshot(remembered).catch(() => null)'))
 }
 
+/*
+ * 39) 🔴 **5.0.5「狼人杀面板黑屏」**（用户 2026-10-20：「这个新增的狼人杀是黑屏的」✓）。
+ *
+ * 面板是**同页 iframe** ✓。iPhone 上黑屏、桌面 Chrome 完全正常 ✓ —— 这类差异里最常见的一条是：
+ * **iOS Safari 在祖先带 `backdrop-filter` 时不绘制 iframe** ✗（面板那张 `.sheet` 正好带毛玻璃 ✓）。
+ * 两条一起上 ✓：① 面板纸**撤掉模糊 + 不透明底** ✓；② 同源父页**黑屏兜底** ✓
+ *（4 秒还是空 → 自动重载一次 ✓ → 再空就明说 + 「重试」✓，并写进桥日志 ✓）。
+ */
+{
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	check('🔴 面板这张纸**撤掉 backdrop-filter + 不透明底** ✓（iOS 在带模糊的祖先里可能整块不画 iframe ✗ —— 黑屏真因候选 ✓）',
+		page.includes('#panelopen { background: var(--bg);')
+		&& page.includes('-webkit-backdrop-filter: none; backdrop-filter: none;'))
+	check('🔴 同源 iframe **黑屏兜底** ✓：打开 4 秒还是空的就自动重载一次 ✓、再空就明说 + 给「重试」✓（不许让用户对着黑屏猜 ✗）',
+		page.includes('panel-blank-retry') && page.includes('PANEL_EMPTY_HINT')
+		&& page.includes("button.textContent = '重试'"))
+	check('🔴 兜底不误伤「正在加载」✓（`readyState` 没 complete 不算空 ✗）—— 而且重载动作**写进桥日志** ✓（下次不用再猜 ✓）',
+		page.includes("if (doc.readyState !== 'complete') return false")
+		&& page.includes("reportToBridge('panel-blank-retry'"))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

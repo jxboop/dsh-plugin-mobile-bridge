@@ -1282,6 +1282,16 @@
 		/* 半透明 + blur：背景视频还在后面，但盖一层足够厚的纱，读长文不费眼。 */
 		background: color-mix(in srgb, var(--bg) 88%, transparent);
 	}
+
+	/*
+	 * 🔴 5.0.5（用户 2026-10-20：「这个新增的狼人杀是黑屏的」✓）：
+	 * 面板是**同页 iframe** ✓ —— 而 iOS Safari 在**祖先带 `backdrop-filter`** 时，
+	 * iframe 有概率整块不绘制（黑/空白）✗；桌面 Chrome 完全正常 ✓，所以这边一直复现不出来 ✓。
+	 * 面板是全屏交互页，玻璃模糊本来就没意义 ✗ → 给面板这张纸**不透明底 + 撤掉模糊** ✓；
+	 * iframe 自己也给一块实底（面板主题注入会把它的 body 设成透明 ✓）。
+	 */
+	#panelopen { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+	#panelFrame { background: var(--bg) !important; }
 	/*
 	 * 🔴 4.16.0「侧栏预览」（用户 2026-10-16：「在侧边栏预览这个你也做一下」✓ ——
 	 * 电脑端 GUI 的右侧栏挂文档预览 ✓，手机这边原来只有**整屏纸** ✗）。
@@ -10493,9 +10503,11 @@
 	}
 
 	function openPanel(panel) {
+		resetPanelNote()
 		$('panelTitle').textContent = String(panel.title ?? '面板')
 		$('panelFrame').setAttribute('src', 'panel/' + encodeURIComponent(String(panel.id)) + '/' + String(panel.entry ?? 'index.html'))
 		show($('panelopen'))
+		watchPanelOnce()
 	}
 
 	/*
@@ -10556,9 +10568,74 @@
 	// 主题是"随时可能开 / 关"的（断线会摘、回来会加 ✓）→ 盯着 body 的 class ✓。
 	new window.MutationObserver(() => { applyPanelTheme() }).observe(document.body, { attributes: true, attributeFilter: ['class'] })
 
+	/*
+	 * 🔴 5.0.5：**面板黑屏兜底** ✓（用户 2026-10-20：「这个新增的狼人杀是黑屏的」✓）。
+	 *
+	 * 面板与手机页**同源** ✓ → 父页能直接读 `contentDocument` ✓。所以：
+	 *   · 打开 4 秒后里面还是**一个字都没有** ✓ → 自动重载 iframe **一次** ✓（并写进桥日志 ✓）；
+	 *   · 重载后还是空 ✓ → 在面板下面**明说**「面板没显示出来」并给「重试」✓ —— 别让用户对着黑屏猜 ✗。
+	 * 这是兜底，不是根因修复 ✓：真因（iOS 在 backdrop-filter 祖先里不画 iframe ✓）已在上面 CSS 里撤掉 ✓。
+	 */
+	const PANEL_NOTE_DEFAULT = $('panelNote') === null ? '' : $('panelNote').textContent
+	const PANEL_EMPTY_HINT = '面板没显示出来（可能是手机浏览器没画出 iframe）—— 点右边「重试」再来一次；还不行就把这一行截图给电脑那边 ✓'
+	let panelWatchTimer = 0
+	let panelRetried = false
+	function resetPanelNote() {
+		clearTimeout(panelWatchTimer)
+		panelRetried = false
+		const note = $('panelNote')
+		if (note !== null && PANEL_NOTE_DEFAULT !== '') note.textContent = PANEL_NOTE_DEFAULT
+	}
+	function setPanelNote(text, retry) {
+		const note = $('panelNote')
+		if (note === null) return
+		note.textContent = text + ' '
+		if (retry !== true) return
+		const button = document.createElement('button')
+		button.textContent = '重试'
+		button.style.cssText = 'margin-left:6px;padding:2px 12px;border-radius:9px'
+		button.addEventListener('click', () => {
+			const frame = $('panelFrame')
+			const src = frame === null ? '' : String(frame.getAttribute('src') ?? '')
+			if (frame !== null && src !== '' && src !== 'about:blank') frame.setAttribute('src', src)
+			setPanelNote('正在重试…', false)
+			watchPanelOnce()
+		})
+		note.appendChild(button)
+	}
+	function panelLooksEmpty() {
+		const frame = $('panelFrame')
+		if (frame === null) return true
+		let doc = null
+		try { doc = frame.contentDocument } catch { return true }
+		if (doc === null || doc === undefined) return true
+		// 还在加载：**不算空** ✓（别把"正在下载"当成黑屏重载 ✗）。
+		if (doc.readyState !== 'complete') return false
+		return String(doc.body?.innerText ?? '').trim() === ''
+	}
+	function watchPanelOnce() {
+		clearTimeout(panelWatchTimer)
+		panelWatchTimer = setTimeout(() => {
+			if (panelLooksEmpty() === false) return
+			if (panelRetried === false) {
+				panelRetried = true
+				const frame = $('panelFrame')
+				const src = frame === null ? '' : String(frame.getAttribute('src') ?? '')
+				reportToBridge('panel-blank-retry', 'panel iframe looked blank after 4s; reloading once: ' + src)
+				if (frame !== null && src !== '' && src !== 'about:blank') frame.setAttribute('src', src)
+				panelWatchTimer = setTimeout(() => {
+					if (panelLooksEmpty() === true) setPanelNote(PANEL_EMPTY_HINT, true)
+				}, 4000)
+				return
+			}
+			setPanelNote(PANEL_EMPTY_HINT, true)
+		}, 4000)
+	}
+
 	$('panelBack').addEventListener('click', () => {
 		// ⚠️ 关掉就把 src 清空 ✓ —— 面板里可能有 `setInterval`（示例里的计时就是 ✓），
 		// 留在后台继续跑 = 白耗电 ✓（而用户以为已经关掉了 ✓）。
+		resetPanelNote()
 		const frame = $('panelFrame')
 		if (frame !== null) frame.setAttribute('src', 'about:blank')
 		hide($('panelopen'))

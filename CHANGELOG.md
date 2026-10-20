@@ -1,3 +1,40 @@
+## 5.0.5 — 2026-10-20
+
+**主题：狼人杀面板黑屏（iOS 上同页 iframe 不画）+ 黑屏兜底** ✓
+（用户 2026-10-20：「这个新增的狼人杀是黑屏的，你来帮我继续做」✓）。
+
+### 现场与判断（从桥日志对出来的 ✓）
+
+- 手机确实**打开了面板** ✓：19:52:32 `GET /panel/wolf/index.html`（来自手机 IP ✓、200 ✓）；
+- 但**之后没有一条 `state.json` 请求** ✓ —— 桌面 Chrome 打开同一个面板时，面板脚本**立刻**会轮询
+  `state.json`（实测 4 次 ✓）→ 手机那边要么**脚本没跑** ✗、要么**整块 iframe 没画** ✗；
+- 桌面面板本身是好的 ✓（headless Chrome 加载同一文件：空状态/牌桌都正常 ✓、无 JS 异常 ✓）；
+- 这台机器上**复现不了 iOS 的绘制差异** ✓ —— 但这类"桌面正常、iPhone 黑屏"最常见的一条是：
+  **iOS Safari 在祖先带 `backdrop-filter` 时可能整块不绘制 iframe** ✗；而面板那张 `.sheet` 正好带毛玻璃 ✓。
+
+### 改（两条一起上 ✓）
+
+- **面板这张纸撤掉毛玻璃 + 给不透明底** ✓：`#panelopen { background: var(--bg); backdrop-filter: none }`、
+  `#panelFrame { background: var(--bg) !important }` —— 面板是全屏交互页，玻璃模糊本来就没意义 ✗；
+- **同源父页黑屏兜底** ✓（面板与手机页同源 → 父页能读 `contentDocument` ✓）：
+  打开 4 秒后里面**一个字都没有** → 自动重载 iframe **一次** ✓（并 `reportToBridge('panel-blank-retry')` ✓）；
+  重载后还是空 → 面板下面**明说**「面板没显示出来」+「**重试**」✓ —— 别让用户对着黑屏猜 ✗；
+  `readyState !== 'complete'` 不算空 ✓（别把"正在下载"当黑屏重载 ✗）。
+- 面板自己（`~/.dsh/mobile-panels/wolf/index.html` ✓ 用户目录，不在插件包里）也补了**自查** ✓：
+  未捕获错误画成看得见的一屏说明 ✓ + 报 `/api/clientlog` ✓；打开时报 UA / 视口 / iframe 高度 ✓，
+  第一次读局面无论成败都报一行 ✓ —— 下次真出问题，电脑 `mobile-bridge.log` 里直接能看到原因 ✓。
+
+### 测试
+
+- package **177/177** ✓（+3：撤模糊 + 不透明底 ✓ / 黑屏兜底与重试 ✓ / 不误伤加载中 + 写日志 ✓）、
+  harness 614 ✓、qr 12 ✓、ui 841 ✓、security 54 ✓、crashprobe 17 ✓、addresses 16 ✓、offline 17 ✓、platform 27 ✓
+  → 九个套件 **1775 项全绿** ✓；`check-counts` exit 0 ✓。
+
+### 用户要做的
+
+- 手机上**重新打开一次 🐺** ✓；如果面板还是黑的，现在它会**自己说出来**（并且重载一次 ✓），
+  把屏幕上那行字（或「没显示出来」提示）发我，我按 `mobile-bridge.log` 里的 `client wolf-panel-*` 继续查 ✓。
+
 ## 5.0.4 — 2026-10-20
 
 **主题：本地 IndexedDB 卡住时，启动必须让路（修「打开了但一直转，桥一条 `/api/boot` 都没有」）** ✓
