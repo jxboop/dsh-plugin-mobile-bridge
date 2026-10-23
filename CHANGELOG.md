@@ -1,3 +1,46 @@
+## 5.1.0 — 2026-10-23
+
+**主题：PPT 与表格在手机上直接渲染（电脑转一次、手机看图片/真表格）** ✓
+（用户 2026-10-23：「手机桥帮我加上 ppt 和表格渲染功能」✓）。
+
+### 原来什么样、为什么不能直接做
+
+- 文档预览（2.1.0）里，`pptx` / `xlsx` 落在「Office 文档」那一档：页面只说「浏览器渲染不了」，
+  给「下载」让用户用手机上的 WPS/Office 打开 ✗ —— 用户要的是「在手机桥里就能看」✓；
+- 手机浏览器没有 pptx/xlsx 渲染器 ✗，所以只能**在电脑上转** ✓：
+  - **PPT** → PowerPoint COM **逐页导出 JPG**（1280×720，按页面比例 ✓；最多 40 页 ✓）；
+  - **Excel** → Excel COM 读 `UsedRange.Value2` → **行×列**（最多 300×30 ✓，多张表给页签 ✓）；
+  - **CSV/TSV** → 服务端直接解析（引号/逗号/换行 ✓，不用启 Excel ✓）。
+
+### 改了什么
+
+- 新接口（都要登录 cookie，和 `/api/file` 同一条边界 ✓）：
+  - `GET /api/preview?path=<绝对路径>` → PPT 回 `{count,exported,truncated,...}`、表格回 `{sheets:[{name,rows,...}]}`；
+  - `GET /api/preview/asset?path=...&n=<第几页>` → 幻灯片 JPG；
+- 安全：只认 `ppt/pptx/pptm`、`xls/xlsx/xlsm/xlsb`、`csv/tsv` 白名单 ✓；必须在桥认识的目录里 ✓；
+  密钥类文件 403 ✓；超过 25MB 文档上限 413 ✓；资产只能从**这个接口算出来的缓存目录**取 ✓；
+- 转换在 `tools/office-preview.ps1`（PowerPoint / Excel COM），**串行**执行 ✓（COM 并发会互卡 ✗），
+  产物缓存到 `~/.dsh/mobile-bridge/preview-cache/<sha1(路径+大小+mtime)>` ✓ —— 第二次打开不再启 Office ✓
+  （实测 PPT 首开 2.9s、缓存 27ms ✓）、缓存自动清理（>60 份或 >7 天 ✓）；
+- 手机页面：PPT → **左右滑 / 上一页下一页** 的逐页图片 + 页码 ✓；Excel/CSV → **真表格**
+  （表头固定、宽表横滑、多表页签 ✓）；失败时**说清原因 + 指向上角「下载」** ✓（不留白屏 ✗）；
+- 说明页 / README 的「Office 只能下载」文案一起改掉 ✓；`WHATS_NEW_THEMES` 加「📊 PPT · 表格」一条 ✓。
+
+### 测试
+
+- package **183/183** ✓（+6：预览路由 ✓ / 边界检查 ✓ / 转换脚本 COM+JPG+result.json ✓ / 缓存与串行 ✓ /
+  前端两种渲染 ✓ / 失败不沉默 ✓）、harness 614 ✓、qr 12 ✓、ui **848/848** ✓（+7：Excel 真表格 / 截断照实说 /
+  横滑容器 / PPT 逐页图片 / 页码 / 翻页 / 页数截断 ✓）、security 54 ✓、crashprobe 17 ✓、addresses 16 ✓、
+  offline 17 ✓、platform 27 ✓ → 九个套件 **1788 项全绿** ✓；`check-counts` exit 0 ✓。
+- 线上实测（真文件）：`motion-probe.pptx` → 2 页、首开 2.9s / 缓存 27ms、`/api/preview/asset` 回 `image/jpeg` ✓；
+  `rawdata.xlsx` → 1 张表 170 行 × 20 列（超上限会标 `truncated`）✓；CSV → 4×4 表格 ✓；
+  未登录 401 ✓、密钥文件 403 ✓、目录外 403 ✓、不支持类型 415 ✓、不存在 404 ✓。
+
+### 用户要做的
+
+- 手机上**刷新一次页面**（版本变 5.1.0）→ 会话里出现 PPT / Excel / CSV 时点「打开 ›」就能直接看 ✓；
+- 第一次打开 PPT/Excel 会慢几秒（要叫起 PowerPoint/Excel）；之后同一份文件秒开 ✓。
+
 ## 5.0.5 — 2026-10-20
 
 **主题：狼人杀面板黑屏（iOS 上同页 iframe 不画）+ 黑屏兜底** ✓

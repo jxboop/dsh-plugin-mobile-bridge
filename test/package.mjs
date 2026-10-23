@@ -1113,5 +1113,40 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		&& page.includes("reportToBridge('panel-blank-retry'"))
 }
 
+/*
+ * 40) 🔴 **5.1.0「PPT / 表格在手机上直接渲染」**（用户 2026-10-23：「手机桥帮我加上 ppt 和表格渲染功能」✓）。
+ *
+ * 为什么必须服务端转：手机浏览器没有 pptx/xlsx 渲染器 ✗，只给"下载"等于没加 ✓。
+ * 设计三条硬要求：
+ *   ① 转一次、**按 路径+大小+mtime 缓存** ✓（第二次打开不能还等 PowerPoint 起壳 ✗）；
+ *   ② **串行**转（COM 并发会互相卡 ✓）；失败**如实说 + 给下载出路** ✓（不留白屏 ✗）；
+ *   ③ 安全边界和 `/api/file` 一样：目录白名单 ✓、密钥文件不给 ✓、大小上限 ✓、扩展名白名单 ✓。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const scriptPath = join(ROOT, 'tools', 'office-preview.ps1')
+	check('🔴 后端有预览接口 ✓（`GET /api/preview` 出 JSON、`GET /api/preview/asset` 出逐页 JPG ✓）',
+		host.includes("route === 'GET /api/preview'") && host.includes("route === 'GET /api/preview/asset'"))
+	check('🔴 预览接口守住和 `/api/file` 同一条边界 ✓（密钥不给 ✓、目录白名单 ✓、扩展名白名单 ✓、超过文档上限 413 ✓）',
+		host.includes('async function handlePreview') && host.includes('isSensitivePath(path)')
+		&& host.includes('isServablePath(path) === false') && host.includes('previewKindOf(path)'))
+	check('🔴 转换走 PowerPoint / Excel COM（`tools/office-preview.ps1` ✓），产物是逐页 JPG + result.json ✓',
+		existsSync(scriptPath)
+		&& (await readFile(scriptPath, 'utf8')).includes('PowerPoint.Application')
+		&& (await readFile(scriptPath, 'utf8')).includes('Excel.Application')
+		&& (await readFile(scriptPath, 'utf8')).includes("$slide.Export($file, 'JPG'")
+		&& (await readFile(scriptPath, 'utf8')).includes('result.json'))
+	check('🔴 转换结果**按 路径+大小+mtime 缓存** ✓、并且**串行**跑（`enqueuePreview` ✓ —— COM 不能并发 ✗）',
+		host.includes('function previewCacheDir') && host.includes('createHash')
+		&& host.includes('function enqueuePreview') && host.includes('slide-${index}.jpg'))
+	check('🔴 手机端：PPT → 逐页图片（`renderSlides` + `api/preview/asset` ✓）、Excel/CSV → 真表格（`renderSheet` + `table.sheet` ✓）',
+		page.includes('function renderSlides') && page.includes('function renderSheet')
+		&& page.includes("api/preview/asset?path=") && page.includes('table.sheet')
+		&& page.includes("if (kind === 'slides')") && page.includes("if (kind === 'sheet' || kind === 'delimited')"))
+	check('🔴 失败**不许沉默/白屏** ✓：转不出来要说原因 + 指向上角「下载」（PPT / 表格两条路都有 ✓）',
+		page.includes('PPT 没转出来') && page.includes('表格没读出来') && page.includes('用手机上的 WPS / Office 打开'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)

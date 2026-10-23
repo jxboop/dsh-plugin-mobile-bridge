@@ -464,7 +464,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1775 项**（package **177** · harness **614** · qr 12 · ui **841** · security 54 · crashprobe 17 ·
+**九个套件共 1788 项**（package **183** · harness **614** · qr 12 · ui **848** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。
@@ -1006,16 +1006,25 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 
 | 类型 | 手机上怎么呈现 |
 |---|---|
-| Markdown / 文本 / 日志 / YAML / 代码 / CSV / JSON | **直接在页面里渲染**（Markdown 会做标题/加粗/列表格式化） |
+| Markdown / 文本 / 日志 / YAML / 代码 / JSON | **直接在页面里渲染**（Markdown 会做标题/加粗/列表格式化） |
+| CSV / TSV | **渲染成表格**（表头固定、宽表横着滑） |
+| Excel（`.xls` / `.xlsx`） | **电脑上的 Excel 转成表格**给手机看（最多 300 行 × 30 列；第一次要几秒、之后走缓存） |
+| PPT（`.ppt` / `.pptx`） | **电脑上的 PowerPoint 转成逐页 JPG**，手机上左右滑或点「上一页/下一页」翻页（最多 40 页） |
 | PDF | 用 iframe 打开，手机浏览器自己翻页 |
 | 图片 / 音频 / 视频 | 直接看 / 听（原有能力） |
-| Word / Excel / PPT / 压缩包 | 浏览器**渲染不了** → 页面会明说，并指向右上角「下载」（用手机上的 WPS/Office 打开） |
+| Word / 压缩包 | 浏览器**渲染不了** → 页面会明说，并指向右上角「下载」（用手机上的 WPS/Office 打开） |
+
+PPT / Excel 的转换**在电脑上做一次**，产物缓存在 `~/.dsh/mobile-bridge/preview-cache`（按
+「路径 + 大小 + mtime」分开存，第二次打开就不再启 PowerPoint/Excel）。这台电脑没装 Office、
+或文件转不出来时，页面会**说清原因**并照旧给「下载」，不会留一片白 ✓。
+
 
 范围是**最小方案**：只服务**会话里给你的文件**，不做目录浏览 ✓。
 
 安全上有两条硬的：
 
-- 文档走 `/api/file`，路径必须在桥认识的目录里（工作区 / 会话目录 / `~/.dsh` / 临时目录）✓；
+- 文档走 `/api/file`（PPT / Excel 的预览走 `/api/preview`，转换产物只从缓存目录取），
+  路径必须在桥认识的目录里（工作区 / 会话目录 / `~/.dsh` / 临时目录）✓；
 - **密钥类文件一律 403**：`mobile-bridge.json`（PIN 明文）、`.credentials.yaml`（模型 key）、
   `image-gen.json`（生图 key）、`.env*`、`*.key/*.pem/*.pfx/*.p12/*.keystore` 都不通过手机发送 ✓
   （加文档类型时发现的洞：`.json` 一度让它们变成"点一下就下载"）。

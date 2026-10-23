@@ -920,6 +920,28 @@ async function stubFetch(input, options = {}) {
 		return jsonResponse({ groups: [{ id: 'deepseek-official', name: 'DeepSeek', models: [{ id: 'deepseek-chat', name: 'deepseek-chat' }] }] })
 	}
 	if (path.startsWith('/api/attachment')) return jsonResponse({ mediaType: 'image/png', data: 'iVBORw0KGgo=' })
+	/*
+	 * 🔴 2026-10-23（用户：「手机桥帮我加上 ppt 和表格渲染功能」✓）：
+	 * PPT / Excel / CSV 现在由**电脑转一次**再给手机 ✓ —— 这里按路径回两种形状 ✓：
+	 *   · pptx → { kind:'slides', count, exported, truncated }
+	 *   · 其它 → { kind:'sheet', sheets:[{ name, rows, totalRows, totalCols, truncated }] }
+	 */
+	if (path.startsWith('/api/preview/asset')) return textResponse('fake-jpg')
+	if (path.startsWith('/api/preview')) {
+		const wanted = /path=([^&]+)/.exec(path)
+		const target = wanted === null ? '' : decodeURIComponent(wanted[1])
+		if (/\.pptx?$|\.pptm$/i.test(target)) {
+			return jsonResponse({ ok: true, kind: 'slides', count: 4, exported: 3, truncated: true, width: 1280, height: 720 })
+		}
+		return jsonResponse({
+			ok: true, kind: 'sheet', path: target, name: '报表.xlsx',
+			sheets: [{
+				name: '期末报表',
+				rows: [['姓名', '分数', '备注'], ['小明', '95', '稳定'], ['小红', '88', '进步']],
+				totalRows: 120, totalCols: 8, truncated: true,
+			}],
+		})
+	}
 	// 文档预览（2.1.0）：页面会把文档取回来渲染，桩里给一段 Markdown 原文。
 	if (path.startsWith('/api/file')) {
 		return textResponse('# 文案草稿\n\n这是正文第一段。\n\n- 要点一\n- 要点二\n')
@@ -1785,7 +1807,7 @@ check('history image element is present', window.document.querySelectorAll('#log
 	await wait(40)
 	check('返回就收起预览面板', window.getComputedStyle($('docopen')).display === 'none')
 
-	// Office 这类：浏览器渲染不了 → 必须**说清楚**并指向下载，而不是给一个空白页。
+	// Office 这类：现在**电脑转一次**（2026-10-23）—— Excel 渲染成真表格、PPT 逐页图片 ✓。
 	source.emit({
 		t: 'event',
 		event: {
@@ -1797,11 +1819,51 @@ check('history image element is present', window.document.querySelectorAll('#log
 	const xlsxRow = window.document.querySelector('#log [data-doc-path$=".xlsx"]')
 	check('Excel 这类也给了可点条目', xlsxRow !== null, xlsxRow === null ? '没有找到 .xlsx 条目' : 'ok')
 	xlsxRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
-	await wait(80)
-	check('点开 Excel：明说"浏览器渲染不了"+ 指引下载（不假装能看，还说清是什么类型）',
-		$('docBody').textContent.includes('渲染不了') && $('docBody').textContent.includes('.xlsx')
-		&& $('docBody').textContent.includes('下载'),
+	await wait(150)
+	check('🔴 点开 Excel：渲染成**真表格** ✓（表头/单元格都在 ✓，不再是一句"渲染不了" ✗）',
+		$('docBody').querySelector('table.sheet') !== null
+		&& $('docBody').textContent.includes('姓名') && $('docBody').textContent.includes('小明')
+		&& $('docBody').textContent.includes('渲染不了') === false,
+		$('docBody').textContent.trim().slice(0, 80))
+	check('表格被截断时**照实说** ✓（只显示…原表…，并指向上角「下载」✓）',
+		$('docBody').textContent.includes('只显示') && $('docBody').textContent.includes('下载'),
+		$('docBody').textContent.trim().slice(0, 100))
+	check('表格是横着能滑的容器（手机上宽表不被挤成一列）',
+		$('docBody').querySelector('.sheet-scroll') !== null && $('docBody').querySelector('.sheet-scroll table.sheet') !== null)
+	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(40)
+
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'deliverables/presented', seq: 44, time: 44,
+			data: { turn: 4, callId: 'c44', files: [{ description: '宣讲稿', path: 'D:\\自媒体\\宣讲.pptx' }] },
+		},
+	})
+	await wait(120)
+	const pptxRow = window.document.querySelector('#log [data-doc-path$=".pptx"]')
+	check('PPT 也给了可点条目', pptxRow !== null, pptxRow === null ? '没有找到 .pptx 条目' : 'ok')
+	pptxRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(150)
+	const slideImg = $('docBody').querySelector('img')
+	check('🔴 点开 PPT：把每一页转成图片显示 ✓（img 指向 api/preview/asset ✓，不是下载页 ✗）',
+		slideImg !== null
+		&& String(slideImg.getAttribute('src')).includes('api/preview/asset?path=')
+		&& String(slideImg.getAttribute('src')).includes('&n=1'),
+		String(slideImg?.getAttribute('src')).slice(0, 100))
+	check('PPT 有翻页控件 + 页码（第 1 / 3 页）',
+		$('docBody').querySelector('.slide-nav') !== null
+		&& $('docBody').textContent.includes('第 1 / 3 页'),
 		$('docBody').textContent.trim().slice(0, 60))
+	const nextSlide = [...$('docBody').querySelectorAll('.slide-nav button')].find((node) => node.textContent.includes('下一页'))
+	nextSlide?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(60)
+	check('点「下一页」真的换页（n=2 + 页码 2 / 3 ✓）',
+		String($('docBody').querySelector('img')?.getAttribute('src')).includes('&n=2')
+		&& $('docBody').textContent.includes('第 2 / 3 页'),
+		$('docBody').textContent.trim().slice(0, 60))
+	check('PPT 页数被截断时**照实说** ✓（只显示了前 3 页 + 提醒下载原文件 ✓）',
+		$('docBody').textContent.includes('只显示了前 3 页') && $('docBody').textContent.includes('下载'))
 	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(40)
 

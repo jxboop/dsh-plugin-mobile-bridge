@@ -1564,6 +1564,23 @@
 	.askcard .ok { background: var(--ok); color: #05230f; }
 	.askcard .no { background: var(--err); color: var(--err-ink); }
 	.askcard .err { margin-top: 6px; min-height: 16px; font-size: 12.5px; color: var(--err); }
+	/* 文档预览：PPT 幻灯片 / 表格（2026-10-23） */
+	#docBody .slides { display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px }
+	#docBody .slide-wrap { border-radius: 10px; overflow: hidden; background: #0b111a; border: 1px solid var(--line) }
+	#docBody .slide-wrap img { display: block; width: 100%; height: auto }
+	#docBody .slide-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; color: var(--muted) }
+	#docBody .slide-nav button { padding: 7px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 13px }
+	#docBody .slide-nav button:disabled { opacity: .4 }
+	#docBody .slide-hint, #docBody .sheet-note { font-size: 12px; color: var(--muted); text-align: center; margin-top: 2px }
+	#docBody .doc-loading { padding: 24px 12px; text-align: center; color: var(--muted); font-size: 13px; line-height: 1.7 }
+	#docBody .sheet-tabs { display: flex; gap: 6px; overflow-x: auto; padding: 2px 0 8px }
+	#docBody .sheet-tabs button { flex: none; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 12px }
+	#docBody .sheet-tabs button.on { border-color: var(--accent); color: var(--accent) }
+	#docBody .sheet-scroll { overflow: auto; max-height: 72vh; border: 1px solid var(--line); border-radius: 10px; -webkit-overflow-scrolling: touch }
+	#docBody table.sheet { border-collapse: collapse; font-size: 12.5px; min-width: 100%; background: var(--panel) }
+	#docBody table.sheet th, #docBody table.sheet td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; max-width: 44vw; word-break: break-word }
+	#docBody table.sheet th { position: sticky; top: 0; background: var(--panel-2); font-weight: 600; z-index: 1 }
+	#docBody table.sheet tr:nth-child(even) td { background: rgba(255, 255, 255, .02) }
 </style>
 </head>
 <body>
@@ -1912,7 +1929,7 @@
 						<li>划到头会有提示（"已经是最右边了（余额）"），不会闷着不动 ✓。</li>
 						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
 						<li>「新建」/「生图」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。<strong>只有说明页和提问卡片会让滑动整个失效</strong>（那两处得先处理掉）。</li>
-						<li><strong>电脑上给你的文档，手机上能直接打开</strong>（2.1.0 起）：会话里出现的文稿会多一个「打开 ›」—— Markdown / 文本 / 代码直接渲染，PDF 能翻，Word/Excel/PPT 这类浏览器渲染不了的会给「下载」（用手机上的 WPS/Office 打开）。</li>
+						<li><strong>电脑上给你的文档，手机上能直接打开</strong>（2.1.0 起）：会话里出现的文稿会多一个「打开 ›」—— Markdown / 文本 / 代码直接渲染，PDF 能翻，<strong>PPT 会转成逐页图片、Excel / CSV 直接变成表格</strong>（2026-10-23）；Word / 压缩包这类浏览器渲染不了的会给「下载」（用手机上的 WPS/Office 打开）。</li>
 						<li><strong>会话列表就在顶上那一行</strong>（点它打开）：<strong>点一行</strong>切过去、<strong>📌</strong>钉到最上面、<strong>⭐</strong>标成常用、<strong>🗑</strong>删除。<strong>agent 子会话和自检会话默认不摆出来</strong>（不占位置），想看在列表底部勾「显示全部会话」。<strong>删除要输 PIN</strong>；删掉的会话在电脑端「已归档」里还能取消归档找回来。</li>
 						<li><strong>网页最顶上那一行写着"现在用的是哪个模型"</strong>（点开就能换，按会话生效）—— 在电脑上换过模型，这里也会跟着变 ✓。</li>
 					</ul>
@@ -13197,10 +13214,14 @@
 		const lower = String(name).toLowerCase()
 		if (/\.(md|markdown)$/.test(lower)) return 'markdown'
 		if (/\.(txt|log|ini|ya?ml|xml)$/.test(lower)) return 'text'
-		if (/\.(csv|tsv)$/.test(lower)) return 'csv'
+		// 2026-10-23：CSV/TSV 也是表格（渲染成真表格 ✓，不再是一坨逗号文本 ✗）
+		if (/\.(csv|tsv)$/.test(lower)) return 'delimited'
 		if (/\.(json)$/.test(lower)) return 'json'
 		if (/\.(py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|sql)$/.test(lower)) return 'code'
 		if (/\.pdf$/.test(lower)) return 'pdf'
+		// PPT / Excel：手机浏览器渲染不了 → 电脑转一次（见 renderSlides / renderSheet ✓）
+		if (/\.(ppt|pptx|pptm)$/.test(lower)) return 'slides'
+		if (/\.(xls|xlsx|xlsm|xlsb)$/.test(lower)) return 'sheet'
 		if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
 		if (/\.(mp3|m4a|wav|ogg|opus|aac|flac|mp4|mov|webm|m4v)$/.test(lower)) return 'av'
 		return 'binary'
@@ -13272,11 +13293,14 @@
 			return
 		}
 		if (kind === 'pdf') { body.innerHTML = '<iframe src="' + src + '&inline=1" title="PDF"></iframe>'; return }
+		// 2026-10-23：PPT → 逐页图片；Excel/CSV → 真表格（都走电脑转一次 + 缓存 ✓）
+		if (kind === 'slides') { void renderSlides(body, path); return }
+		if (kind === 'sheet' || kind === 'delimited') { void renderSheet(body, path); return }
 		if (kind === 'binary') {
 			// 文件名后缀是重要线索：同一句"看不了"可能对应很多事，把类型写出来才好排查。
 			const ext = (String(name).match(/\.[A-Za-z0-9]+$/) ?? [''])[0]
 			body.innerHTML = '<div id="docNote">' + escapeHtml(ext === '' ? '这类文件' : ext + ' 文件')
-				+ '浏览器渲染不了（Word / Excel / PPT / 压缩包都算）—— 点右上角「新标签」或「下载」，'
+				+ '浏览器渲染不了（Word / 压缩包这类）—— 点右上角「新标签」或「下载」，'
 				+ '用手机上的 WPS / Office 打开。</div>'
 			return
 		}
@@ -13293,6 +13317,118 @@
 				+ '）。可以点右上角「新标签」让浏览器自己处理，或「下载」用别的 App 打开。</div>'
 		}
 	}
+
+		/**
+		 * 🔴 2026-10-23（用户：「手机桥帮我加上 ppt 和表格渲染功能」✓）：
+		 * PPT 交给电脑上的 PowerPoint 转成**逐页 JPG** ✓（浏览器本来渲染不了 pptx ✗），
+		 * Excel 交给 Excel COM 读成**行×列** ✓，CSV/TSV 自己解析 ✓ —— 手机这边只负责显示 ✓。
+		 *
+		 * 失败一律**说人话 + 给下载出路** ✓（"转换失败"四个字帮不了用户 ✗）。
+		 */
+		async function renderSlides(body, path) {
+			body.innerHTML = '<div class="doc-loading">正在把 PPT 转成图片…<br>第一次会慢几秒（要叫起 PowerPoint）</div>'
+			try {
+				const response = await fetch('api/preview?path=' + encodeURIComponent(path))
+				const data = await response.json().catch(() => null)
+				if (response.ok !== true || data?.ok !== true) throw new Error(String(data?.error ?? data?.hint ?? ('HTTP ' + response.status)))
+				const count = Number(data.exported ?? 0)
+				const total = Number(data.count ?? count)
+				if (count < 1) throw new Error('这份 PPT 没有可显示的页面')
+				body.innerHTML = ''
+				const nav = mk('div', 'slide-nav')
+				const prev = mk('button', '', '‹ 上一页')
+				const info = mk('span', '', '')
+				const next = mk('button', '', '下一页 ›')
+				nav.append(prev, info, next)
+				const wrap = mk('div', 'slide-wrap')
+				const img = mk('img', '')
+				img.alt = '幻灯片'
+				wrap.append(img)
+				const hint = mk('div', 'slide-hint', '')
+				body.append(nav, wrap, hint)
+				let page = 1
+				const show = (target) => {
+					page = Math.max(1, Math.min(count, target))
+					img.src = 'api/preview/asset?path=' + encodeURIComponent(path) + '&n=' + page
+					img.alt = '第 ' + page + ' 页'
+					info.textContent = '第 ' + page + ' / ' + count + ' 页'
+					prev.disabled = page <= 1
+					next.disabled = page >= count
+				}
+				prev.addEventListener('click', () => show(page - 1))
+				next.addEventListener('click', () => show(page + 1))
+				let startX = null
+				img.addEventListener('touchstart', (event) => { startX = event.touches[0]?.clientX ?? null }, { passive: true })
+				img.addEventListener('touchend', (event) => {
+					if (startX === null) return
+					const dx = (event.changedTouches[0]?.clientX ?? startX) - startX
+					startX = null
+					if (Math.abs(dx) > 40) show(page + (dx < 0 ? 1 : -1))
+				}, { passive: true })
+				hint.textContent = data.truncated === true
+					? '只显示了前 ' + count + ' 页（原 PPT 共 ' + total + ' 页）· 点右上角可下载原文件'
+					: '左右滑动 / 点按钮翻页 · 点右上角可下载原文件'
+				show(1)
+			} catch (error) {
+				body.innerHTML = '<div id="docNote">PPT 没转出来：' + escapeHtml(String(error?.message ?? error))
+					+ ' —— 点右上角「新标签」或「下载」，用手机上的 WPS / Office 打开。</div>'
+			}
+		}
+
+		/** 表格：Excel 走电脑上的 Excel 转成 JSON；CSV/TSV 服务端直接解析 ✓。多张表给页签 ✓。 */
+		async function renderSheet(body, path) {
+			body.innerHTML = '<div class="doc-loading">正在读表格…</div>'
+			try {
+				const response = await fetch('api/preview?path=' + encodeURIComponent(path))
+				const data = await response.json().catch(() => null)
+				if (response.ok !== true || data?.ok !== true) throw new Error(String(data?.error ?? data?.hint ?? ('HTTP ' + response.status)))
+				const sheets = Array.isArray(data.sheets) ? data.sheets : []
+				if (sheets.length === 0) throw new Error('这张表是空的')
+				body.innerHTML = ''
+				const tabs = mk('div', 'sheet-tabs')
+				const scroll = mk('div', 'sheet-scroll')
+				const note = mk('div', 'sheet-note', '')
+				body.append(tabs, scroll, note)
+				let active = 0
+				const draw = () => {
+					const sheet = sheets[active] ?? { rows: [] }
+					const rows = Array.isArray(sheet.rows) ? sheet.rows : []
+					const table = mk('table', 'sheet')
+					if (rows.length > 0) {
+						const head = mk('thead')
+						const headRow = mk('tr')
+						for (const cell of rows[0]) headRow.append(mk('th', '', String(cell ?? '')))
+						head.append(headRow)
+						table.append(head)
+						const tbody = mk('tbody')
+						for (const row of rows.slice(1)) {
+							const tr = mk('tr')
+							for (const cell of row) tr.append(mk('td', '', String(cell ?? '')))
+							tbody.append(tr)
+						}
+						table.append(tbody)
+					}
+					scroll.innerHTML = ''
+					scroll.append(table)
+					const totalRows = Number(sheet.totalRows ?? rows.length)
+					const totalCols = Number(sheet.totalCols ?? (rows[0]?.length ?? 0))
+					const shownCols = rows[0]?.length ?? 0
+					note.textContent = sheet.truncated === true
+						? '只显示 ' + rows.length + ' 行 × ' + shownCols + ' 列（原表 ' + totalRows + ' 行 × ' + totalCols + ' 列）· 点右上角可下载原文件'
+						: (totalRows + ' 行 × ' + totalCols + ' 列 · 点右上角可下载原文件')
+					;[...tabs.children].forEach((button, index) => button.className = index === active ? 'on' : '')
+				}
+				sheets.forEach((sheet, index) => {
+					const button = mk('button', '', String(sheet.name ?? ('表 ' + (index + 1))))
+					button.addEventListener('click', () => { active = index; draw() })
+					tabs.append(button)
+				})
+				draw()
+			} catch (error) {
+				body.innerHTML = '<div id="docNote">表格没读出来：' + escapeHtml(String(error?.message ?? error))
+					+ ' —— 点右上角「新标签」或「下载」，用手机上的 WPS / Office 打开。</div>'
+			}
+		}
 
 	// ⚠️ 返回**不重置形态** ✗ —— 用户选了「侧栏」就该记住 ✓（下一份文档还是侧栏 ✓）；类留着无害 ✓。
 	$('docBack').addEventListener('click', () => { hide($('docopen')); $('docBody').textContent = '' })
