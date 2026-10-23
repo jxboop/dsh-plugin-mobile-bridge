@@ -927,6 +927,9 @@ async function stubFetch(input, options = {}) {
 	 *   · 其它 → { kind:'sheet', sheets:[{ name, rows, totalRows, totalCols, truncated }] }
 	 */
 	if (path.startsWith('/api/preview/asset')) return textResponse('fake-jpg')
+	if (path.startsWith('/api/preview/word')) {
+		return textResponse('<!doctype html><html><head><meta charset="utf-8"></head><body><h1>Word 测试标题</h1><p>正文一段</p><table><tr><th>科目</th><th>建议</th></tr></table></body></html>')
+	}
 	if (path.startsWith('/api/preview')) {
 		const wanted = /path=([^&]+)/.exec(path)
 		const target = wanted === null ? '' : decodeURIComponent(wanted[1])
@@ -1864,6 +1867,33 @@ check('history image element is present', window.document.querySelectorAll('#log
 		$('docBody').textContent.trim().slice(0, 60))
 	check('PPT 页数被截断时**照实说** ✓（只显示了前 3 页 + 提醒下载原文件 ✓）',
 		$('docBody').textContent.includes('只显示了前 3 页') && $('docBody').textContent.includes('下载'))
+	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(40)
+
+	/*
+	 * 🔴 2026-10-23 用户：「可以下载，预览」✓ —— Word（.docx）也要能看，
+	 * 下载入口照旧保留 ✓。页面用 **sandbox iframe + srcdoc** 显示后端解析好的静态 HTML ✓。
+	 */
+	source.emit({
+		t: 'event',
+		event: {
+			type: 'deliverables/presented', seq: 45, time: 45,
+			data: { turn: 4, callId: 'c45', files: [{ description: '家长会提纲', path: 'D:\\自媒体\\家长会.docx' }] },
+		},
+	})
+	await wait(120)
+	const docxRow = window.document.querySelector('#log [data-doc-path$=".docx"]')
+	check('Word 也给了可点条目', docxRow !== null, docxRow === null ? '没有找到 .docx 条目' : 'ok')
+	docxRow.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+	await wait(160)
+	const wordFrame = $('docBody').querySelector('iframe.word-frame')
+	check('🔴 点开 Word：用 sandbox iframe 显示**排版好的内容** ✓（srcdoc 里就是文档 HTML ✓）',
+		wordFrame !== null && String(wordFrame.getAttribute('srcdoc')).includes('Word 测试标题')
+		&& String(wordFrame.getAttribute('sandbox')).includes('allow-same-origin'))
+	check('Word 预览**不执行文档里的脚本** ✓（sandbox 不带 allow-scripts ✓）',
+		wordFrame !== null && String(wordFrame.getAttribute('sandbox')).includes('allow-scripts') === false)
+	check('Word 下载入口照旧在 ✓（手机上看不完还能拿走原文件 ✓）',
+		String($('docDownload').getAttribute('href')).startsWith('api/file?path='))
 	$('docBack').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 	await wait(40)
 

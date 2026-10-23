@@ -1,3 +1,41 @@
+## 5.2.0 — 2026-10-23
+
+**主题：Word（.docx）也能在手机上预览了（下载照旧）** ✓
+（用户 2026-10-23：「可以下载，预览」✓）。
+
+### 为什么不是「再调一次 Word COM」
+
+- 试过 Word COM：`Documents.Open` 能开 ✓，但 `SaveAs2(..., wdFormatFilteredHTML)` 会**一直挂着**
+  >60 秒（实测两次，像卡在不可见对话框）✗ —— 手机等不起 ✓；
+- 改走 **docx = ZIP + XML**：`lib/docx.js` 自己读 `word/document.xml` ✓，
+  解析段落 / 加粗 / 斜体 / 下划线 / 标题（Heading + 中文「标题 1」）/ 表格（首行当表头）/
+  内联图片（从 `word/media/*` 转 data URI ✓）；几百 KB 的文档**毫秒级** ✓（实测 40ms / 19ms）。
+
+### 改了什么
+
+- 新路由 `GET /api/preview/word?path=<绝对路径>` → 返回一段**静态 HTML** ✓
+  （文本全转义 ✓、无脚本 ✓、图片 data URI ✓）；路径 / 密钥 / 大小边界和 `/api/file` 一样 ✓；
+- `/api/preview?path=` 对 docx 回 `{ok:true, kind:'word', url}` ✓（前端可用）；
+- 手机页面：`docKindOf` 认 `.docx/.docm/.dotx/.dotm` → `renderWord` ✓；
+  显示用 **`<iframe sandbox="allow-same-origin" srcdoc=...>`**（样式隔离 ✓、**不执行文档里的脚本** ✓），
+  按内容自动长高 ✓；**右上角「下载」照旧** ✓（用户明确要的 ✓）；
+- 老式二进制 `.doc` 仍不给预览（照旧下载 ✓）；失败时写清原因 + 指向下载 ✓；
+- 说明页 / README 的「Word 只能下载」文案一起改 ✓；`WHATS_NEW_THEMES` 那条扩成「PPT · 表格 · Word」✓；
+- 新增 `lib/docx.js`（ZIP 读取 / XML 解析 / HTML 生成 / 移动端纸面样式）✓，**未新增任何依赖** ✓。
+
+### 测试
+
+- package **186/186** ✓（+3：Word 路由与边界 ✓ / docx 自己解（含 inflateRawSync 与 document.xml）✓ /
+  前端 sandbox iframe 与下载入口 ✓）、harness 614 ✓、qr 12 ✓、ui **852/852** ✓（+4：Word 可点条目 /
+  srcdoc 排版内容 / sandbox 不带 allow-scripts / 下载入口 ✓）、security 54 ✓、crashprobe 17 ✓、
+  addresses 16 ✓、offline 17 ✓、platform 27 ✓ → 九个套件 **1795 项全绿** ✓；`check-counts` exit 0 ✓。
+- 线上实测：`sample-min.docx`（标题+加粗+表格）→ 200、40ms、h1/strong/table 都在 ✓；
+  `sample-image.docx` → 200、19ms、`data:image/png` ✓；`/api/preview` 元信息 ✓；拿 pptx 调 word 路由 → 415 ✓。
+
+### 用户要做的
+
+- 手机上**刷新一次页面**（版本 5.2.0）→ 会话里出现 `.docx` 时点「打开 ›」直接看排版；右上角仍可下载 ✓。
+
 ## 5.1.0 — 2026-10-23
 
 **主题：PPT 与表格在手机上直接渲染（电脑转一次、手机看图片/真表格）** ✓

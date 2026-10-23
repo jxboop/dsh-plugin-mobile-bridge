@@ -464,7 +464,7 @@ node test/security.mjs && node test/crashprobe.mjs && node test/addresses.mjs &&
 node test/platform.mjs
 ```
 
-**九个套件共 1788 项**（package **183** · harness **614** · qr 12 · ui **848** · security 54 · crashprobe 17 ·
+**九个套件共 1795 项**（package **186** · harness **614** · qr 12 · ui **852** · security 54 · crashprobe 17 ·
 addresses 16 · offline 17 · platform 27）。另有 `test/voice.mjs` **33 条语音草稿** —— 语音那一版
 按用户要求先跳过，文件留在仓库里、能单独跑，但**不并进**这项门槛（`tools/check-counts.mjs` 只管上面九个）。
 **改完必跑全套** ✓ —— 只跑某一个会漏掉内容规矩与界面回归（2.7.2 就是这么漏了两版的 ✓）。
@@ -1010,13 +1010,16 @@ powershell -File tools\heic-to-jpg.ps1 -In <HEIC 文件> [-Out 输出.jpg] [-Max
 | CSV / TSV | **渲染成表格**（表头固定、宽表横着滑） |
 | Excel（`.xls` / `.xlsx`） | **电脑上的 Excel 转成表格**给手机看（最多 300 行 × 30 列；第一次要几秒、之后走缓存） |
 | PPT（`.ppt` / `.pptx`） | **电脑上的 PowerPoint 转成逐页 JPG**，手机上左右滑或点「上一页/下一页」翻页（最多 40 页） |
+| Word（`.docx` / `.docm` / `.dotx`） | **在电脑上直接解析文档**（标题 / 正文 / 加粗斜体 / 表格 / 文档图片），几十毫秒打开、`sandbox` 纸面显示（不执行文档脚本）；右上角仍可下载 ✓ |
 | PDF | 用 iframe 打开，手机浏览器自己翻页 |
 | 图片 / 音频 / 视频 | 直接看 / 听（原有能力） |
-| Word / 压缩包 | 浏览器**渲染不了** → 页面会明说，并指向右上角「下载」（用手机上的 WPS/Office 打开） |
+| 老式 `.doc` / 压缩包 | 浏览器**渲染不了** → 页面会明说，并指向右上角「下载」（用手机上的 WPS/Office 打开） |
 
-PPT / Excel 的转换**在电脑上做一次**，产物缓存在 `~/.dsh/mobile-bridge/preview-cache`（按
-「路径 + 大小 + mtime」分开存，第二次打开就不再启 PowerPoint/Excel）。这台电脑没装 Office、
-或文件转不出来时，页面会**说清原因**并照旧给「下载」，不会留一片白 ✓。
+Word 的解析**不经过 Microsoft Word**（这台机器上 Word 的「另存为网页」会挂住）：直接解 docx 这个
+ZIP + XML（`lib/docx.js`），所以又快又不依赖 Office；PPT / Excel 的转换**在电脑上做一次**，
+产物缓存在 `~/.dsh/mobile-bridge/preview-cache`（按「路径 + 大小 + mtime」分开存，
+第二次打开就不再启 PowerPoint/Excel）。文件转不出来时，页面会**说清原因**并照旧给「下载」，
+不会留一片白 ✓。
 
 
 范围是**最小方案**：只服务**会话里给你的文件**，不做目录浏览 ✓。

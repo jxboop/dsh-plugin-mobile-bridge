@@ -1581,6 +1581,9 @@
 	#docBody table.sheet th, #docBody table.sheet td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; vertical-align: top; max-width: 44vw; word-break: break-word }
 	#docBody table.sheet th { position: sticky; top: 0; background: var(--panel-2); font-weight: 600; z-index: 1 }
 	#docBody table.sheet tr:nth-child(even) td { background: rgba(255, 255, 255, .02) }
+	/* Word 预览：纸面白底，iframe 按内容自动长高（2026-10-23） */
+	#docBody .word-wrap { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: #fff }
+	#docBody .word-frame { display: block; width: 100%; height: 62vh; border: 0; background: #fff; color-scheme: light }
 </style>
 </head>
 <body>
@@ -1929,7 +1932,7 @@
 						<li>划到头会有提示（"已经是最右边了（余额）"），不会闷着不动 ✓。</li>
 						<li>正在<strong>上下滚动看历史</strong>时不会被误判成翻页（竖着滑永远是滚动）；在输入框里左右滑是选文字，也不会翻页。</li>
 						<li>「新建」/「生图」里写了东西还没用时，划走会先问你一句 —— 免得把写好的内容丢掉。<strong>只有说明页和提问卡片会让滑动整个失效</strong>（那两处得先处理掉）。</li>
-						<li><strong>电脑上给你的文档，手机上能直接打开</strong>（2.1.0 起）：会话里出现的文稿会多一个「打开 ›」—— Markdown / 文本 / 代码直接渲染，PDF 能翻，<strong>PPT 会转成逐页图片、Excel / CSV 直接变成表格</strong>（2026-10-23）；Word / 压缩包这类浏览器渲染不了的会给「下载」（用手机上的 WPS/Office 打开）。</li>
+						<li><strong>电脑上给你的文档，手机上能直接打开</strong>（2.1.0 起）：会话里出现的文稿会多一个「打开 ›」—— Markdown / 文本 / 代码直接渲染，PDF 能翻，<strong>PPT 会转成逐页图片、Excel / CSV 直接变成表格、Word（.docx）直接排版显示</strong>（2026-10-23）；Word / 压缩包这类浏览器渲染不了的会给「下载」（用手机上的 WPS/Office 打开）。</li>
 						<li><strong>会话列表就在顶上那一行</strong>（点它打开）：<strong>点一行</strong>切过去、<strong>📌</strong>钉到最上面、<strong>⭐</strong>标成常用、<strong>🗑</strong>删除。<strong>agent 子会话和自检会话默认不摆出来</strong>（不占位置），想看在列表底部勾「显示全部会话」。<strong>删除要输 PIN</strong>；删掉的会话在电脑端「已归档」里还能取消归档找回来。</li>
 						<li><strong>网页最顶上那一行写着"现在用的是哪个模型"</strong>（点开就能换，按会话生效）—— 在电脑上换过模型，这里也会跟着变 ✓。</li>
 					</ul>
@@ -13220,6 +13223,7 @@
 		if (/\.(py|js|mjs|ts|ps1|sh|bat|c|h|cpp|java|go|rs|sql)$/.test(lower)) return 'code'
 		if (/\.pdf$/.test(lower)) return 'pdf'
 		// PPT / Excel：手机浏览器渲染不了 → 电脑转一次（见 renderSlides / renderSheet ✓）
+		if (/\.(docx|docm|dotx|dotm)$/.test(lower)) return 'word'
 		if (/\.(ppt|pptx|pptm)$/.test(lower)) return 'slides'
 		if (/\.(xls|xlsx|xlsm|xlsb)$/.test(lower)) return 'sheet'
 		if (/\.(png|jpe?g|gif|webp|bmp)$/.test(lower)) return 'image'
@@ -13294,13 +13298,14 @@
 		}
 		if (kind === 'pdf') { body.innerHTML = '<iframe src="' + src + '&inline=1" title="PDF"></iframe>'; return }
 		// 2026-10-23：PPT → 逐页图片；Excel/CSV → 真表格（都走电脑转一次 + 缓存 ✓）
+		if (kind === 'word') { void renderWord(body, path); return }
 		if (kind === 'slides') { void renderSlides(body, path); return }
 		if (kind === 'sheet' || kind === 'delimited') { void renderSheet(body, path); return }
 		if (kind === 'binary') {
 			// 文件名后缀是重要线索：同一句"看不了"可能对应很多事，把类型写出来才好排查。
 			const ext = (String(name).match(/\.[A-Za-z0-9]+$/) ?? [''])[0]
 			body.innerHTML = '<div id="docNote">' + escapeHtml(ext === '' ? '这类文件' : ext + ' 文件')
-				+ '浏览器渲染不了（Word / 压缩包这类）—— 点右上角「新标签」或「下载」，'
+				+ '浏览器渲染不了（老式 .doc / 压缩包这类）—— 点右上角「新标签」或「下载」，'
 				+ '用手机上的 WPS / Office 打开。</div>'
 			return
 		}
@@ -13427,6 +13432,39 @@
 			} catch (error) {
 				body.innerHTML = '<div id="docNote">表格没读出来：' + escapeHtml(String(error?.message ?? error))
 					+ ' —— 点右上角「新标签」或「下载」，用手机上的 WPS / Office 打开。</div>'
+			}
+		}
+
+		/** Word（.docx）：后端已经把它转成一段静态 HTML ✓，这里用 sandbox iframe 显示（样式隔离 + 不跑脚本 ✓）。 */
+		async function renderWord(body, path) {
+			body.innerHTML = '<div class="doc-loading">正在读 Word 文档…（首次会解析一下，通常很快）</div>'
+			try {
+				const response = await fetch('api/preview/word?path=' + encodeURIComponent(path))
+				if (response.ok !== true) {
+					let data = null
+					try { data = await response.json() } catch { data = null }
+					throw new Error(String(data?.error ?? data?.hint ?? ('HTTP ' + response.status)))
+				}
+				const html = await response.text()
+				if (html.trim() === '') throw new Error('文档里没有可显示的内容')
+				body.innerHTML = ''
+				const wrap = mk('div', 'word-wrap')
+				const frame = mk('iframe', 'word-frame')
+				frame.setAttribute('sandbox', 'allow-same-origin')
+				frame.setAttribute('title', 'Word 文档')
+				frame.srcdoc = html
+				wrap.append(frame)
+				const hint = mk('div', 'sheet-note', 'Word 预览 · 点右上角可下载原文件')
+				body.append(wrap, hint)
+				frame.addEventListener('load', () => {
+					try {
+						const height = frame.contentDocument?.documentElement?.scrollHeight ?? 0
+						if (height > 0) frame.style.height = Math.max(360, Math.min(height + 10, 30000)) + 'px'
+					} catch { /* 量不到就让 iframe 用默认高度 */ }
+				})
+			} catch (error) {
+				body.innerHTML = '<div id="docNote">Word 没读出来：' + escapeHtml(String(error?.message ?? error))
+					+ ' —— 点右上角「下载」，用手机上的 WPS / Office 打开。</div>'
 			}
 		}
 

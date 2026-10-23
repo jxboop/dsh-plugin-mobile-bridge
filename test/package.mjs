@@ -1148,5 +1148,32 @@ check('files 覆盖整个 lib/（而不是逐个文件列举）',
 		page.includes('PPT 没转出来') && page.includes('表格没读出来') && page.includes('用手机上的 WPS / Office 打开'))
 }
 
+/*
+ * 41) 🔴 **Word（.docx）预览**（用户 2026-10-23：「可以下载，预览」✓）。
+ *
+ * 为什么不用 Word COM：实测 `Word.Documents.Open` 能开，但 `SaveAs2(..., wdFormatFilteredHTML/16)`
+ * 会一直挂着（>60 秒，像卡在不可见对话框）✗ —— 手机等不起。
+ * 改成 `lib/docx.js` **自己解 OOXML**（ZIP + XML）✓：段落 / 加粗 / 斜体 / 标题 / 表格 / 内联图片；
+ * 页面用 **sandbox iframe + srcdoc** 显示（样式隔离、不跑脚本 ✓），下载入口照旧 ✓。
+ */
+{
+	const host = await readFile(join(ROOT, 'lib', 'index.js'), 'utf8')
+	const page = await readFile(join(ROOT, 'lib', 'mobile.html'), 'utf8')
+	const parser = join(ROOT, 'lib', 'docx.js')
+	check('🔴 后端有 Word 预览路由 ✓（`/api/preview/word`；和 /api/file 同一条路径/密钥/大小边界 ✓）',
+		host.includes("route === 'GET /api/preview/word'") && host.includes('async function handleWordPreview')
+		&& host.includes('previewKindOf(path) !== \'word\''))
+	check('🔴 docx 是**自己解的**（`lib/docx.js` ✓：读 ZIP + 解 XML，不依赖 Word COM ✗ —— COM 另存会挂 ✓）',
+		existsSync(parser)
+		&& (await readFile(parser, 'utf8')).includes('export function docxToHtml')
+		&& (await readFile(parser, 'utf8')).includes('inflateRawSync')
+		&& (await readFile(parser, 'utf8')).includes('word/document.xml')
+		&& (await readFile(parser, 'utf8')).includes('export function wrapDocxHtml'))
+	check('🔴 手机端：docx → `renderWord` ✓，用 **sandbox iframe**（不带 allow-scripts ✓）显示，下载入口照旧 ✓',
+		page.includes("if (kind === 'word')") && page.includes('function renderWord')
+		&& page.includes("frame.setAttribute('sandbox', 'allow-same-origin')")
+		&& page.includes("return 'word'") && page.includes('Word 预览 · 点右上角可下载原文件'))
+}
+
 console.log(`\n  ${pass}/${pass + fail} checks passed`)
 process.exit(fail === 0 ? 0 : 1)
